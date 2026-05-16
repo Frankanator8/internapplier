@@ -68,7 +68,7 @@ class _AnalyzeWorker(QObject):
     def run(self):
         from app.ai_provider import get_provider
         try:
-            result = get_provider().analyze_bullet(self._bullet, self._context)
+            result = get_provider(tier="fast").analyze_bullet(self._bullet, self._context)
             self.finished.emit(result)
         except Exception as exc:
             self.error.emit(str(exc))

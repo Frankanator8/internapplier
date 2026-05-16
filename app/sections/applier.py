@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import html
 from typing import Callable
 
-from PyQt6.QtCore import QObject, QThread, Qt, pyqtSignal
+from PyQt6.QtCore import QObject, QThread, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QGuiApplication
+from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import (
-    QFileDialog, QFrame, QHBoxLayout, QLabel, QScrollArea,
-    QSizePolicy, QSplitter, QTextEdit, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QLineEdit, QScrollArea,
+    QSizePolicy, QSplitter, QTabWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from .base import _label, _primary_btn, _secondary_btn
@@ -25,6 +27,26 @@ class _TailorWorker(QObject):
         from app.ai_provider import get_provider
         try:
             result = get_provider().tailor_resume(self._profile, self._jd)
+            self.finished.emit(result)
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+
+class _ResearchWorker(QObject):
+    finished = pyqtSignal(dict)
+    error = pyqtSignal(str)
+
+    def __init__(self, company_name: str, url: str):
+        super().__init__()
+        self._company_name = company_name
+        self._url = url
+
+    def run(self):
+        from app.ai_provider import get_provider
+        from app.web_scraper import fetch_company_pages
+        try:
+            text = fetch_company_pages(self._url)
+            result = get_provider().research_company(self._company_name, text)
             self.finished.emit(result)
         except Exception as exc:
             self.error.emit(str(exc))
@@ -53,13 +75,20 @@ class ApplierPage(QWidget):
         super().__init__(parent)
         self._get_profile = get_profile
         self._threads: list[QThread] = []
+        self._research_last_result: dict = {}
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(28, 24, 28, 16)
         outer.setSpacing(14)
 
-        outer.addWidget(_label("AI Resume Tailor", "section-title"))
+        outer.addWidget(_label("Applier", "section-title"))
 
+        tabs = QTabWidget()
+        tabs.addTab(self._build_tailor_tab(), "✦  Tailor Resume")
+        tabs.addTab(self._build_research_tab(), "🔍  Research Company")
+        outer.addWidget(tabs, 1)
+
+    def _build_tailor_tab(self) -> QWidget:
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setChildrenCollapsible(False)
 
@@ -81,13 +110,16 @@ class ApplierPage(QWidget):
         self._tailor_btn.clicked.connect(self._tailor)
         left_layout.addWidget(self._tailor_btn)
 
-        self._pdf_btn = _secondary_btn("Generate Resume PDF", 200)
+        self._pdf_btn = _secondary_btn("Open in Overleaf", 200)
         self._pdf_btn.clicked.connect(self._generate_pdf)
         left_layout.addWidget(self._pdf_btn)
 
         splitter.addWidget(left)
 
         # ── Right panel ──────────────────────────────────────────
+        right_split = QSplitter(Qt.Orientation.Vertical)
+        right_split.setChildrenCollapsible(False)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -100,11 +132,187 @@ class ApplierPage(QWidget):
         self._results_layout.setSpacing(10)
         self._results_layout.setContentsMargins(12, 0, 4, 16)
         scroll.setWidget(self._results_content)
+        right_split.addWidget(scroll)
 
-        splitter.addWidget(scroll)
+        self._overleaf_view = QWebEngineView()
+        self._overleaf_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        right_split.addWidget(self._overleaf_view)
+        right_split.setSizes([300, 500])
+
+        splitter.addWidget(right_split)
         splitter.setSizes([400, 560])
 
-        outer.addWidget(splitter, 1)
+        return splitter
+
+    def _build_research_tab(self) -> QWidget:
+        wrap = QWidget()
+        layout = QVBoxLayout(wrap)
+        layout.setContentsMargins(0, 8, 0, 0)
+        layout.setSpacing(10)
+
+        form_row = QHBoxLayout()
+        form_row.setSpacing(8)
+
+        name_col = QVBoxLayout()
+        name_col.setSpacing(4)
+        name_col.addWidget(_label("Company Name"))
+        self._research_name_input = QLineEdit()
+        self._research_name_input.setPlaceholderText("e.g. Anthropic")
+        name_col.addWidget(self._research_name_input)
+        form_row.addLayout(name_col, 1)
+
+        url_col = QVBoxLayout()
+        url_col.setSpacing(4)
+        url_col.addWidget(_label("Website URL"))
+        self._research_url_input = QLineEdit()
+        self._research_url_input.setPlaceholderText("https://www.example.com")
+        url_col.addWidget(self._research_url_input)
+        form_row.addLayout(url_col, 2)
+
+        layout.addLayout(form_row)
+
+        self._research_btn = _primary_btn("🔍  Research Company")
+        self._research_btn.clicked.connect(self._research)
+        layout.addWidget(self._research_btn)
+
+        self._research_status = QLabel("")
+        self._research_status.setWordWrap(True)
+        self._research_status.setStyleSheet("color: #555; font-size: 12px;")
+        layout.addWidget(self._research_status)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._research_results_content = QWidget()
+        self._research_results_content.setStyleSheet("background: transparent;")
+        self._research_results_layout = QVBoxLayout(self._research_results_content)
+        self._research_results_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self._research_results_layout.setSpacing(10)
+        self._research_results_layout.setContentsMargins(4, 0, 4, 16)
+        scroll.setWidget(self._research_results_content)
+        layout.addWidget(scroll, 1)
+
+        return wrap
+
+    def _research(self):
+        name = self._research_name_input.text().strip()
+        url = self._research_url_input.text().strip()
+        if not name or not url:
+            self._research_status.setText("Enter both a company name and a website URL.")
+            self._research_status.setStyleSheet("color: #cc3300; font-size: 12px;")
+            return
+
+        self._clear_research_results()
+        self._research_btn.setEnabled(False)
+        self._research_btn.setText("Researching…")
+        self._research_status.setStyleSheet("color: #555; font-size: 12px;")
+        self._research_status.setText(
+            f"Fetching pages from {url} (respecting robots.txt)…"
+        )
+
+        worker = _ResearchWorker(name, url)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+
+        def on_finished(result: dict):
+            self._research_btn.setEnabled(True)
+            self._research_btn.setText("🔍  Research Company")
+            self._research_status.setText("")
+            self._research_last_result = result
+            self._populate_research_results(result)
+            thread.quit()
+
+        def on_error(msg: str):
+            self._research_btn.setEnabled(True)
+            self._research_btn.setText("🔍  Research Company")
+            self._research_status.setStyleSheet("color: #cc3300; font-size: 12px;")
+            self._research_status.setText(f"Error: {msg}")
+            thread.quit()
+
+        worker.finished.connect(on_finished)
+        worker.error.connect(on_error)
+        thread.started.connect(worker.run)
+        thread.finished.connect(thread.deleteLater)
+        self._threads.append(thread)
+        thread.start()
+
+    def _populate_research_results(self, result: dict):
+        summary = (result.get("summary") or "").strip()
+        values = result.get("core_values") or []
+        projects = result.get("recent_projects") or []
+
+        if not summary and not values and not projects:
+            empty = QLabel("No information could be extracted from the site.")
+            empty.setStyleSheet("color: #777; font-size: 13px;")
+            self._research_results_layout.addWidget(empty)
+            return
+
+        if summary:
+            self._research_results_layout.addWidget(
+                self._research_section_header("SUMMARY")
+            )
+            self._research_results_layout.addWidget(
+                self._research_text_row(summary)
+            )
+
+        if values:
+            self._research_results_layout.addWidget(
+                self._research_section_header("CORE VALUES")
+            )
+            for v in values:
+                self._research_results_layout.addWidget(
+                    self._research_text_row(f"• {v}")
+                )
+
+        if projects:
+            self._research_results_layout.addWidget(
+                self._research_section_header("RECENT PROJECTS / NEWS")
+            )
+            for p in projects:
+                self._research_results_layout.addWidget(
+                    self._research_text_row(f"• {p}")
+                )
+
+    def _research_section_header(self, text: str) -> QLabel:
+        header = QLabel(text)
+        header.setObjectName("applier-section-header")
+        return header
+
+    def _research_text_row(self, text: str) -> QFrame:
+        frame = QFrame()
+        frame.setObjectName("result-bullet-row")
+        row_layout = QVBoxLayout(frame)
+        row_layout.setContentsMargins(12, 10, 12, 10)
+        lbl = QLabel(text)
+        lbl.setWordWrap(True)
+        lbl.setStyleSheet("color: #1d1d1d; font-size: 13px;")
+        row_layout.addWidget(lbl)
+        return frame
+
+    def _clear_research_results(self):
+        while self._research_results_layout.count():
+            item = self._research_results_layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+
+    def get_research_data(self) -> dict:
+        return {
+            "company_name": self._research_name_input.text().strip(),
+            "url": self._research_url_input.text().strip(),
+            "result": self._research_last_result or {},
+        }
+
+    def load_research_data(self, data: dict):
+        if not data:
+            return
+        self._research_name_input.setText(data.get("company_name", ""))
+        self._research_url_input.setText(data.get("url", ""))
+        result = data.get("result") or {}
+        self._research_last_result = result
+        self._clear_research_results()
+        if result:
+            self._populate_research_results(result)
 
     def _tailor(self):
         jd = self._jd_input.toPlainText().strip()
@@ -213,7 +421,7 @@ class ApplierPage(QWidget):
 
         profile = self._get_profile()
         self._pdf_btn.setEnabled(False)
-        self._pdf_btn.setText("Generating…")
+        self._pdf_btn.setText("Opening Overleaf…")
 
         worker = _GenerateResumeWorker(profile, jd)
         thread = QThread(self)
@@ -221,13 +429,13 @@ class ApplierPage(QWidget):
 
         def on_finished(tex: str):
             self._pdf_btn.setEnabled(True)
-            self._pdf_btn.setText("Generate Resume PDF")
+            self._pdf_btn.setText("Open in Overleaf")
             thread.quit()
-            self._save_pdf(tex)
+            self._open_in_overleaf(tex)
 
         def on_error(msg: str):
             self._pdf_btn.setEnabled(True)
-            self._pdf_btn.setText("Generate Resume PDF")
+            self._pdf_btn.setText("Open in Overleaf")
             err_label = QLabel(f"Error: {msg}")
             err_label.setWordWrap(True)
             err_label.setStyleSheet("color: #cc3300; font-size: 13px;")
@@ -241,29 +449,19 @@ class ApplierPage(QWidget):
         self._threads.append(thread)
         thread.start()
 
-    def _save_pdf(self, tex: str):
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save Resume PDF", "resume.pdf", "PDF Files (*.pdf)"
+    def _open_in_overleaf(self, tex: str):
+        escaped = html.escape(tex, quote=True)
+        page = (
+            "<!doctype html><html><body>"
+            "<form id='f' action='https://www.overleaf.com/docs' method='post' target='_self'>"
+            f"<input type='hidden' name='snip' value=\"{escaped}\">"
+            "<input type='hidden' name='snip_name' value='resume.tex'>"
+            "<input type='hidden' name='engine' value='pdflatex'>"
+            "</form>"
+            "<script>document.getElementById('f').submit();</script>"
+            "</body></html>"
         )
-        if not path:
-            return
-        if not path.lower().endswith(".pdf"):
-            path += ".pdf"
-
-        from app.pdf_export import compile_latex_to_pdf
-        try:
-            compile_latex_to_pdf(tex, path)
-        except Exception as exc:
-            err_label = QLabel(f"PDF error: {exc}")
-            err_label.setWordWrap(True)
-            err_label.setStyleSheet("color: #cc3300; font-size: 13px;")
-            self._results_layout.addWidget(err_label)
-            return
-
-        ok_label = QLabel(f"Resume saved to {path}")
-        ok_label.setWordWrap(True)
-        ok_label.setStyleSheet("color: #1d7a3a; font-size: 13px;")
-        self._results_layout.addWidget(ok_label)
+        self._overleaf_view.setHtml(page, QUrl("https://www.overleaf.com/"))
 
     def _clear_results(self):
         while self._results_layout.count():

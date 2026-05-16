@@ -1,7 +1,48 @@
 import os
+import pathlib
 from abc import ABC, abstractmethod
 
 import requests
+
+
+_APP_DIR = pathlib.Path.home() / "Library" / "Application Support" / "InternApplier"
+_MODELS_FILE = _APP_DIR / "models.txt"
+
+DEFAULT_FAST_MODEL = "google/gemini-2.0-flash-exp:free"
+DEFAULT_POWERFUL_MODEL = "openai/gpt-4o-mini"
+
+_model_config_cache: dict[str, str] | None = None
+
+
+def _load_model_config() -> dict[str, str]:
+    global _model_config_cache
+    if _model_config_cache is not None:
+        return _model_config_cache
+
+    defaults = {"fast": DEFAULT_FAST_MODEL, "powerful": DEFAULT_POWERFUL_MODEL}
+
+    _APP_DIR.mkdir(parents=True, exist_ok=True)
+    if not _MODELS_FILE.exists():
+        with open(_MODELS_FILE, "w", encoding="utf-8") as f:
+            f.write(f"fast={DEFAULT_FAST_MODEL}\n")
+            f.write(f"powerful={DEFAULT_POWERFUL_MODEL}\n")
+        _model_config_cache = defaults
+        return _model_config_cache
+
+    config = dict(defaults)
+    with open(_MODELS_FILE, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip().lower()
+            value = value.strip()
+            if key in defaults and value:
+                config[key] = value
+
+    _model_config_cache = config
+    return _model_config_cache
 
 
 class AIProvider(ABC):
@@ -20,14 +61,27 @@ class AIProvider(ABC):
         """Returns a complete, compilable LaTeX resume tailored to the JD."""
         ...
 
+    @abstractmethod
+    def research_company(self, company_name: str, scraped_text: str) -> dict:
+        """Returns {"core_values": [str], "recent_projects": [str], "summary": str}."""
+        ...
+
 
 class OpenRouterProvider(AIProvider):
     BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
-    DEFAULT_MODEL = "openai/gpt-4o-mini"
 
-    def __init__(self, api_key: str | None = None, model: str | None = None):
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model: str | None = None,
+        tier: str = "powerful",
+    ):
         self.api_key = api_key or os.environ.get("OPENROUTER_API_KEY", "")
-        self.model = model or self.DEFAULT_MODEL
+        if model:
+            self.model = model
+        else:
+            config = _load_model_config()
+            self.model = config.get(tier, config["powerful"])
 
     def analyze_bullet(self, bullet: str, context: dict) -> str:
         if not self.api_key:
@@ -228,6 +282,77 @@ class OpenRouterProvider(AIProvider):
         return raw
 
 
+    def research_company(self, company_name: str, scraped_text: str) -> dict:
+        if not self.api_key:
+            raise ValueError(
+                "No API key found. Set the OPENROUTER_API_KEY environment variable."
+            )
+
+        import json as _json
+
+        user_message = (
+            f"Company: {company_name}\n\n"
+            f"Scraped content from the company's own website:\n{scraped_text}\n\n"
+            "From the scraped content above, extract a shallow research brief. "
+            "Return a JSON object with exactly these keys:\n"
+            '  "core_values": array of 3-6 short strings capturing the company\'s '
+            "stated values, mission, or culture pillars.\n"
+            '  "recent_projects": array of 3-6 short strings describing recent '
+            "products, launches, initiatives, or news mentioned on the site.\n"
+            '  "summary": a 2-3 sentence plain-text summary of what the company does '
+            "and its current focus.\n"
+            "If a field cannot be inferred from the content, return an empty array "
+            "or empty string for it. Return ONLY the JSON object, no markdown."
+        )
+
+        response = requests.post(
+            self.BASE_URL,
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": self.model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a career-prep assistant. Summarize companies "
+                            "concisely and faithfully from provided source text. "
+                            "Do not invent facts not present in the source."
+                        ),
+                    },
+                    {"role": "user", "content": user_message},
+                ],
+            },
+            timeout=60,
+        )
+        response.raise_for_status()
+        raw = response.json()["choices"][0]["message"]["content"].strip()
+
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+            raw = raw.strip()
+
+        try:
+            data = _json.loads(raw)
+        except _json.JSONDecodeError:
+            raise ValueError("AI returned unexpected format — please try again.")
+
+        def _str_list(v) -> list[str]:
+            if not isinstance(v, list):
+                return []
+            return [str(x).strip() for x in v if str(x).strip()]
+
+        return {
+            "core_values": _str_list(data.get("core_values")),
+            "recent_projects": _str_list(data.get("recent_projects")),
+            "summary": str(data.get("summary", "")).strip(),
+        }
+
+
 def _format_context(context: dict) -> str:
     kind = context.get("type", "")
     if kind == "experience":
@@ -245,6 +370,19 @@ def _format_context(context: dict) -> str:
     return ""
 
 
-def get_provider() -> AIProvider:
-    """Factory — change this function to swap the AI provider."""
-    return OpenRouterProvider()
+def save_model_config(fast: str, powerful: str) -> None:
+    global _model_config_cache
+    _APP_DIR.mkdir(parents=True, exist_ok=True)
+    with open(_MODELS_FILE, "w", encoding="utf-8") as f:
+        f.write(f"fast={fast.strip()}\n")
+        f.write(f"powerful={powerful.strip()}\n")
+    _model_config_cache = {"fast": fast.strip(), "powerful": powerful.strip()}
+
+
+def get_provider(tier: str = "powerful") -> AIProvider:
+    """Factory — change this function to swap the AI provider.
+
+    tier: "fast" for cheap/free model (single-bullet rewrites);
+          "powerful" for higher-quality model (resume tailoring/generation/research).
+    """
+    return OpenRouterProvider(tier=tier)

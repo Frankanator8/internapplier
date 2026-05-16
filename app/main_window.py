@@ -15,6 +15,7 @@ from .sections.skills import SkillsPage
 from .sections.hobbies import HobbiesPage
 from .sections.tracker import TrackerPage
 from .sections.applier import ApplierPage
+from .sections.settings import SettingsPage
 
 _SIDEBAR_ITEMS = [
     ("💼  Experience", ExperiencePage),
@@ -120,6 +121,10 @@ class MainWindow(QMainWindow):
         self._tracker_page = TrackerPage()
         self._tabs.addTab(self._tracker_page, "📋  Tracker")
 
+        # ── Tab 3: Settings ───────────────────────────────────────
+        self._settings_page = SettingsPage(status_bar=self.status_bar)
+        self._tabs.addTab(self._settings_page, "⚙️  Settings")
+
         self._load()
 
     def _register_global_skill(self, skill: str):
@@ -154,6 +159,7 @@ class MainWindow(QMainWindow):
         self._hobbies_page.load(data.get("hobbies", []))
         for entry in data.get("applications", []):
             self._tracker_page.add_entry(entry)
+        self._applier_page.load_research_data(data.get("research", {}))
 
     def _show_import_instructions(self) -> bool:
         """Show a how-to dialog. Returns True if user wants to proceed to file picker."""
@@ -294,6 +300,7 @@ class MainWindow(QMainWindow):
             "skills": self._skills_page.get_data(),
             "hobbies": self._hobbies_page.get_data(),
             "applications": self._tracker_page.get_data(),
+            "research": self._applier_page.get_research_data(),
         }
         data_store.save(data)
         self.status_bar.showMessage("✓  Saved successfully.", 3000)
