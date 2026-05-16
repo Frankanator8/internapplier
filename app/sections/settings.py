@@ -46,11 +46,15 @@ class SettingsPage(QWidget):
         self._fast_edit = QLineEdit()
         self._fast_edit.setText(config.get("fast", ai_provider.DEFAULT_FAST_MODEL))
         self._fast_edit.setPlaceholderText(ai_provider.DEFAULT_FAST_MODEL)
-        self._fast_edit.setMinimumWidth(300)
 
         self._powerful_edit = QLineEdit()
         self._powerful_edit.setText(config.get("powerful", ai_provider.DEFAULT_POWERFUL_MODEL))
         self._powerful_edit.setPlaceholderText(ai_provider.DEFAULT_POWERFUL_MODEL)
+
+        self._resize_edit(self._fast_edit, self._fast_edit.text())
+        self._resize_edit(self._powerful_edit, self._powerful_edit.text())
+        self._fast_edit.textChanged.connect(lambda t: self._resize_edit(self._fast_edit, t))
+        self._powerful_edit.textChanged.connect(lambda t: self._resize_edit(self._powerful_edit, t))
 
         fast_label = _label("Fast model")
         powerful_label = _label("Powerful model")
@@ -71,6 +75,11 @@ class SettingsPage(QWidget):
 
         outer.addWidget(card)
         outer.addStretch()
+
+    def _resize_edit(self, edit: QLineEdit, text: str) -> None:
+        fm = edit.fontMetrics()
+        text_px = fm.horizontalAdvance(text or edit.placeholderText())
+        edit.setFixedWidth(max(120, min(text_px + 24, 400)))
 
     def _save(self):
         fast = self._fast_edit.text().strip()

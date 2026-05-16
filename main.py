@@ -1,7 +1,34 @@
+import logging
+import pathlib
 import sys
 from dotenv import load_dotenv
 
 load_dotenv()
+
+_LOG_DIR = pathlib.Path.home() / "Library" / "Application Support" / "InternApplier"
+_LOG_FILE = _LOG_DIR / "app.log"
+
+
+def _setup_logging() -> None:
+    _LOG_DIR.mkdir(parents=True, exist_ok=True)
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s — %(message)s")
+    root = logging.getLogger()
+    root.setLevel(logging.DEBUG)
+
+    fh = logging.FileHandler(_LOG_FILE, encoding="utf-8")
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(fmt)
+    root.addHandler(fh)
+
+    sh = logging.StreamHandler(sys.stderr)
+    sh.setLevel(logging.DEBUG)
+    sh.setFormatter(fmt)
+    root.addHandler(sh)
+
+    print(f"Logging to: {_LOG_FILE}", file=sys.stderr)
+
+
+_setup_logging()
 
 from PyQt6.QtWidgets import QApplication
 from app.main_window import MainWindow

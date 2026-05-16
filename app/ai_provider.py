@@ -1,12 +1,20 @@
+import logging
 import os
 import pathlib
+import time
 from abc import ABC, abstractmethod
 
 import requests
 
+logger = logging.getLogger(__name__)
 
 _APP_DIR = pathlib.Path.home() / "Library" / "Application Support" / "InternApplier"
 _MODELS_FILE = _APP_DIR / "models.txt"
+_PROMPTS_DIR = pathlib.Path(__file__).parent.parent / "prompts"
+
+
+def _load_prompt(name: str) -> str:
+    return (_PROMPTS_DIR / name).read_text(encoding="utf-8").strip()
 
 DEFAULT_FAST_MODEL = "google/gemini-2.0-flash-exp:free"
 DEFAULT_POWERFUL_MODEL = "openai/gpt-4o-mini"
@@ -83,8 +91,13 @@ class OpenRouterProvider(AIProvider):
             config = _load_model_config()
             self.model = config.get(tier, config["powerful"])
 
+        key_hint = f"...{self.api_key[-6:]}" if len(self.api_key) >= 6 else ("(set)" if self.api_key else "(MISSING)")
+        logger.debug("OpenRouterProvider init — tier=%s model=%s api_key=%s", tier, self.model, key_hint)
+
     def analyze_bullet(self, bullet: str, context: dict) -> str:
+        logger.info("analyze_bullet — bullet=%r context=%s", bullet[:120], context)
         if not self.api_key:
+            logger.error("analyze_bullet — API key missing")
             raise ValueError(
                 "No API key found. Set the OPENROUTER_API_KEY environment variable."
             )
@@ -100,33 +113,42 @@ class OpenRouterProvider(AIProvider):
             "3. REWRITE B: A second, alternative improved version."
         )
 
-        response = requests.post(
-            self.BASE_URL,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": self.model,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are an expert resume coach helping candidates "
-                            "write strong, impact-driven resume bullet points. "
-                            "Be concise and specific."
-                        ),
-                    },
-                    {"role": "user", "content": user_message},
-                ],
-            },
-            timeout=30,
-        )
-        response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"]
+        logger.debug("analyze_bullet — POST %s model=%s timeout=30", self.BASE_URL, self.model)
+        t0 = time.perf_counter()
+        try:
+            response = requests.post(
+                self.BASE_URL,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": self.model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": _load_prompt("analyze_bullet.txt"),
+                        },
+                        {"role": "user", "content": user_message},
+                    ],
+                },
+                timeout=30,
+            )
+            elapsed = time.perf_counter() - t0
+            logger.info("analyze_bullet — HTTP %s in %.2fs", response.status_code, elapsed)
+            logger.debug("analyze_bullet — raw response: %s", response.text[:300])
+            response.raise_for_status()
+            result = response.json()["choices"][0]["message"]["content"]
+            logger.info("analyze_bullet — success, response length=%d chars", len(result))
+            return result
+        except Exception:
+            logger.exception("analyze_bullet — request failed")
+            raise
 
     def tailor_resume(self, profile: dict, job_description: str) -> list[dict]:
+        logger.info("tailor_resume — jd=%r", job_description[:120])
         if not self.api_key:
+            logger.error("tailor_resume — API key missing")
             raise ValueError(
                 "No API key found. Set the OPENROUTER_API_KEY environment variable."
             )
@@ -151,8 +173,10 @@ class OpenRouterProvider(AIProvider):
                     )
 
         if not lines:
+            logger.warning("tailor_resume — no bullets found in profile")
             return []
 
+        logger.debug("tailor_resume — %d bullets to tailor", len(lines))
         bullets_block = "\n".join(lines)
         user_message = (
             f"Job Description:\n{job_description}\n\n"
@@ -165,30 +189,35 @@ class OpenRouterProvider(AIProvider):
             "Return ONLY the JSON array, no markdown, no explanation."
         )
 
-        response = requests.post(
-            self.BASE_URL,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": self.model,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are an expert resume coach. Given a job description "
-                            "and a candidate's resume bullets, rewrite each bullet to "
-                            "better match the role. Be specific, use strong action verbs, "
-                            "and emphasize relevant impact."
-                        ),
-                    },
-                    {"role": "user", "content": user_message},
-                ],
-            },
-            timeout=60,
-        )
-        response.raise_for_status()
+        logger.debug("tailor_resume — POST %s model=%s timeout=60", self.BASE_URL, self.model)
+        t0 = time.perf_counter()
+        try:
+            response = requests.post(
+                self.BASE_URL,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": self.model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": _load_prompt("tailor_resume.txt"),
+                        },
+                        {"role": "user", "content": user_message},
+                    ],
+                },
+                timeout=60,
+            )
+            elapsed = time.perf_counter() - t0
+            logger.info("tailor_resume — HTTP %s in %.2fs", response.status_code, elapsed)
+            logger.debug("tailor_resume — raw response: %s", response.text[:300])
+            response.raise_for_status()
+        except Exception:
+            logger.exception("tailor_resume — request failed")
+            raise
+
         raw = response.json()["choices"][0]["message"]["content"].strip()
 
         if raw.startswith("```"):
@@ -200,9 +229,10 @@ class OpenRouterProvider(AIProvider):
         try:
             items = _json.loads(raw)
         except _json.JSONDecodeError:
+            logger.error("tailor_resume — JSON parse failed, raw=%r", raw[:500])
             raise ValueError("AI returned unexpected format — please try again.")
 
-        return [
+        result = [
             {
                 "section": item.get("section", ""),
                 "entry": item.get("entry", ""),
@@ -212,10 +242,14 @@ class OpenRouterProvider(AIProvider):
             for item in items
             if item.get("section") in ("experience", "projects", "education")
         ]
+        logger.info("tailor_resume — success, %d items returned", len(result))
+        return result
 
 
     def generate_resume(self, profile: dict, job_description: str) -> str:
+        logger.info("generate_resume — jd=%r", job_description[:120])
         if not self.api_key:
+            logger.error("generate_resume — API key missing")
             raise ValueError(
                 "No API key found. Set the OPENROUTER_API_KEY environment variable."
             )
@@ -244,29 +278,35 @@ class OpenRouterProvider(AIProvider):
             "no markdown fences, no commentary, no explanation."
         )
 
-        response = requests.post(
-            self.BASE_URL,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": self.model,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are an expert resume writer who outputs only "
-                            "compilable LaTeX source. Never include commentary "
-                            "or markdown fences."
-                        ),
-                    },
-                    {"role": "user", "content": user_message},
-                ],
-            },
-            timeout=90,
-        )
-        response.raise_for_status()
+        logger.debug("generate_resume — POST %s model=%s timeout=90", self.BASE_URL, self.model)
+        t0 = time.perf_counter()
+        try:
+            response = requests.post(
+                self.BASE_URL,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": self.model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": _load_prompt("generate_resume.txt"),
+                        },
+                        {"role": "user", "content": user_message},
+                    ],
+                },
+                timeout=90,
+            )
+            elapsed = time.perf_counter() - t0
+            logger.info("generate_resume — HTTP %s in %.2fs", response.status_code, elapsed)
+            logger.debug("generate_resume — raw response: %s", response.text[:300])
+            response.raise_for_status()
+        except Exception:
+            logger.exception("generate_resume — request failed")
+            raise
+
         raw = response.json()["choices"][0]["message"]["content"].strip()
 
         if raw.startswith("```"):
@@ -279,11 +319,14 @@ class OpenRouterProvider(AIProvider):
             if raw.endswith("```"):
                 raw = raw[:-3].strip()
 
+        logger.info("generate_resume — success, LaTeX length=%d chars", len(raw))
         return raw
 
 
     def research_company(self, company_name: str, scraped_text: str) -> dict:
+        logger.info("research_company — company=%r scraped_chars=%d", company_name, len(scraped_text))
         if not self.api_key:
+            logger.error("research_company — API key missing")
             raise ValueError(
                 "No API key found. Set the OPENROUTER_API_KEY environment variable."
             )
@@ -305,29 +348,35 @@ class OpenRouterProvider(AIProvider):
             "or empty string for it. Return ONLY the JSON object, no markdown."
         )
 
-        response = requests.post(
-            self.BASE_URL,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": self.model,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a career-prep assistant. Summarize companies "
-                            "concisely and faithfully from provided source text. "
-                            "Do not invent facts not present in the source."
-                        ),
-                    },
-                    {"role": "user", "content": user_message},
-                ],
-            },
-            timeout=60,
-        )
-        response.raise_for_status()
+        logger.debug("research_company — POST %s model=%s timeout=60", self.BASE_URL, self.model)
+        t0 = time.perf_counter()
+        try:
+            response = requests.post(
+                self.BASE_URL,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": self.model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": _load_prompt("research_company.txt"),
+                        },
+                        {"role": "user", "content": user_message},
+                    ],
+                },
+                timeout=60,
+            )
+            elapsed = time.perf_counter() - t0
+            logger.info("research_company — HTTP %s in %.2fs", response.status_code, elapsed)
+            logger.debug("research_company — raw response: %s", response.text[:300])
+            response.raise_for_status()
+        except Exception:
+            logger.exception("research_company — request failed")
+            raise
+
         raw = response.json()["choices"][0]["message"]["content"].strip()
 
         if raw.startswith("```"):
@@ -339,6 +388,7 @@ class OpenRouterProvider(AIProvider):
         try:
             data = _json.loads(raw)
         except _json.JSONDecodeError:
+            logger.error("research_company — JSON parse failed, raw=%r", raw[:500])
             raise ValueError("AI returned unexpected format — please try again.")
 
         def _str_list(v) -> list[str]:
@@ -346,11 +396,13 @@ class OpenRouterProvider(AIProvider):
                 return []
             return [str(x).strip() for x in v if str(x).strip()]
 
-        return {
+        result = {
             "core_values": _str_list(data.get("core_values")),
             "recent_projects": _str_list(data.get("recent_projects")),
             "summary": str(data.get("summary", "")).strip(),
         }
+        logger.info("research_company — success, values=%d projects=%d", len(result["core_values"]), len(result["recent_projects"]))
+        return result
 
 
 def _format_context(context: dict) -> str:

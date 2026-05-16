@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import logging
 from typing import Callable
 
 from PyQt6.QtCore import QObject, QThread, Qt, QUrl, pyqtSignal
@@ -12,6 +13,8 @@ from PyQt6.QtWidgets import (
 )
 
 from .base import _label, _primary_btn, _secondary_btn
+
+logger = logging.getLogger(__name__)
 
 
 class _TailorWorker(QObject):
@@ -25,10 +28,13 @@ class _TailorWorker(QObject):
 
     def run(self):
         from app.ai_provider import get_provider
+        logger.info("_TailorWorker.run — jd=%r", self._jd[:80])
         try:
             result = get_provider().tailor_resume(self._profile, self._jd)
+            logger.info("_TailorWorker.run — success, %d items", len(result))
             self.finished.emit(result)
         except Exception as exc:
+            logger.exception("_TailorWorker.run — failed")
             self.error.emit(str(exc))
 
 
@@ -44,11 +50,15 @@ class _ResearchWorker(QObject):
     def run(self):
         from app.ai_provider import get_provider
         from app.web_scraper import fetch_company_pages
+        logger.info("_ResearchWorker.run — company=%r url=%r", self._company_name, self._url)
         try:
             text = fetch_company_pages(self._url)
+            logger.debug("_ResearchWorker.run — scraped %d chars", len(text))
             result = get_provider().research_company(self._company_name, text)
+            logger.info("_ResearchWorker.run — success")
             self.finished.emit(result)
         except Exception as exc:
+            logger.exception("_ResearchWorker.run — failed")
             self.error.emit(str(exc))
 
 
@@ -63,10 +73,13 @@ class _GenerateResumeWorker(QObject):
 
     def run(self):
         from app.ai_provider import get_provider
+        logger.info("_GenerateResumeWorker.run — jd=%r", self._jd[:80])
         try:
             tex = get_provider().generate_resume(self._profile, self._jd)
+            logger.info("_GenerateResumeWorker.run — success, LaTeX length=%d", len(tex))
             self.finished.emit(tex)
         except Exception as exc:
+            logger.exception("_GenerateResumeWorker.run — failed")
             self.error.emit(str(exc))
 
 
@@ -75,6 +88,7 @@ class ApplierPage(QWidget):
         super().__init__(parent)
         self._get_profile = get_profile
         self._threads: list[QThread] = []
+        self._workers: list[QObject] = []
         self._research_last_result: dict = {}
 
         outer = QVBoxLayout(self)
@@ -234,6 +248,8 @@ class ApplierPage(QWidget):
         thread.started.connect(worker.run)
         thread.finished.connect(thread.deleteLater)
         self._threads.append(thread)
+        self._workers.append(worker)
+        thread.finished.connect(lambda: self._workers.remove(worker) if worker in self._workers else None)
         thread.start()
 
     def _populate_research_results(self, result: dict):
@@ -348,6 +364,8 @@ class ApplierPage(QWidget):
         thread.started.connect(worker.run)
         thread.finished.connect(thread.deleteLater)
         self._threads.append(thread)
+        self._workers.append(worker)
+        thread.finished.connect(lambda: self._workers.remove(worker) if worker in self._workers else None)
         thread.start()
 
     def _populate_results(self, items: list[dict]):
@@ -447,6 +465,8 @@ class ApplierPage(QWidget):
         thread.started.connect(worker.run)
         thread.finished.connect(thread.deleteLater)
         self._threads.append(thread)
+        self._workers.append(worker)
+        thread.finished.connect(lambda: self._workers.remove(worker) if worker in self._workers else None)
         thread.start()
 
     def _open_in_overleaf(self, tex: str):

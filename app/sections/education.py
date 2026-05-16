@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout
-from .base import CardPage, BulletsWidget, ChipsWidget, CoursesWidget, make_field, make_line_edit
+from .base import CardPage, BulletsWidget, CoursesWidget, make_field, make_line_edit
 
 
 class EducationPage(CardPage):
@@ -48,13 +48,6 @@ class EducationPage(CardPage):
         )
         vbox.addWidget(bullets)
 
-        skills = ChipsWidget(
-            data.get("skills", []),
-            on_add=lambda s: self.on_skill_added and self.on_skill_added(s),
-            get_common_skills=self.get_common_skills,
-        )
-        vbox.addWidget(skills)
-
         courses = CoursesWidget(
             data.get("courses", []),
             get_common_skills=self.get_common_skills,
@@ -72,7 +65,6 @@ class EducationPage(CardPage):
         card.setProperty("_end", end)
         card.setProperty("_gpa", gpa)
         card.setProperty("_bullets", bullets)
-        card.setProperty("_skills", skills)
         card.setProperty("_courses", courses)
 
         self._cards_layout.addWidget(card)
@@ -90,7 +82,6 @@ class EducationPage(CardPage):
                 "end": card.property("_end").text(),
                 "gpa": card.property("_gpa").text(),
                 "bullets": card.property("_bullets").get_bullets(),
-                "skills": card.property("_skills").get_items(),
                 "courses": card.property("_courses").get_courses(),
             })
         return result
