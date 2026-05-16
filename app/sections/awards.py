@@ -2,9 +2,9 @@ from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout
 from .base import CardPage, BulletsWidget, ChipsWidget, make_field, make_line_edit
 
 
-class ProjectsPage(CardPage):
-    section_title = "Projects"
-    add_label = "+ Add Project"
+class AwardsPage(CardPage):
+    section_title = "Awards"
+    add_label = "+ Add Award"
 
     def add_entry(self, data: dict | None = None):
         data = data or {}
@@ -13,23 +13,27 @@ class ProjectsPage(CardPage):
         vbox.setContentsMargins(20, 18, 20, 16)
         vbox.setSpacing(12)
 
-        name = make_line_edit("My Awesome Project")
-        url = make_line_edit("https://github.com/…  (optional)")
+        title = make_line_edit("Dean's List")
+        issuer = make_line_edit("UC Berkeley")
+        date = make_line_edit("May 2025")
 
-        name.setText(data.get("name", ""))
-        url.setText(data.get("url", ""))
+        title.setText(data.get("title", ""))
+        issuer.setText(data.get("issuer", ""))
+        date.setText(data.get("date", ""))
 
         row1 = QHBoxLayout()
         row1.setSpacing(16)
-        row1.addLayout(make_field("Project Name", name), 2)
-        row1.addLayout(make_field("URL", url), 2)
+        row1.addLayout(make_field("Title", title), 3)
+        row1.addLayout(make_field("Issuer", issuer), 3)
+        row1.addLayout(make_field("Date", date), 2)
         vbox.addLayout(row1)
 
         bullets = BulletsWidget(
             data.get("bullets", []),
             get_context=lambda: {
-                "type": "project",
-                "name": name.text(),
+                "type": "award",
+                "title": title.text(),
+                "issuer": issuer.text(),
             },
         )
         vbox.addWidget(bullets)
@@ -46,8 +50,9 @@ class ProjectsPage(CardPage):
         footer.addWidget(self._make_remove_btn(card))
         vbox.addLayout(footer)
 
-        card.setProperty("_name", name)
-        card.setProperty("_url", url)
+        card.setProperty("_title", title)
+        card.setProperty("_issuer", issuer)
+        card.setProperty("_date", date)
         card.setProperty("_bullets", bullets)
         card.setProperty("_skills", skills)
 
@@ -60,8 +65,9 @@ class ProjectsPage(CardPage):
             if card is None:
                 continue
             result.append({
-                "name": card.property("_name").text(),
-                "url": card.property("_url").text(),
+                "title": card.property("_title").text(),
+                "issuer": card.property("_issuer").text(),
+                "date": card.property("_date").text(),
                 "bullets": card.property("_bullets").get_bullets(),
                 "skills": card.property("_skills").get_items(),
             })

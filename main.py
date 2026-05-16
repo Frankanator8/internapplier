@@ -1,4 +1,8 @@
 import sys
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from PyQt6.QtWidgets import QApplication
 from app.main_window import MainWindow
 from app.style import GLOBAL_STYLESHEET

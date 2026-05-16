@@ -180,6 +180,7 @@ QListWidget#bullets-list {
     border-radius: 6px;
     padding: 2px;
     outline: none;
+    font-size: 13px;
 }
 QListWidget#bullets-list::item { border: none; background: transparent; }
 QListWidget#bullets-list::item:selected { background: transparent; }
@@ -204,7 +205,7 @@ QLabel#section-title {
 
 /* ── Bullets section label ──────────────────────────────────── */
 QLabel#bullets-label {
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     color: #0a66c2;
     text-transform: uppercase;

@@ -10,7 +10,9 @@ from . import data_store, linkedin_import
 from .sections.experience import ExperiencePage
 from .sections.projects import ProjectsPage
 from .sections.education import EducationPage
+from .sections.awards import AwardsPage
 from .sections.skills import SkillsPage
+from .sections.hobbies import HobbiesPage
 from .sections.tracker import TrackerPage
 from .sections.applier import ApplierPage
 
@@ -18,7 +20,9 @@ _SIDEBAR_ITEMS = [
     ("💼  Experience", ExperiencePage),
     ("🚀  Projects", ProjectsPage),
     ("🎓  Education", EducationPage),
+    ("🏆  Awards", AwardsPage),
     ("🛠  Skills", SkillsPage),
+    ("🎯  Hobbies", HobbiesPage),
 ]
 
 
@@ -78,13 +82,21 @@ class MainWindow(QMainWindow):
         self._experience_page = ExperiencePage()
         self._projects_page = ProjectsPage()
         self._education_page = EducationPage()
+        self._awards_page = AwardsPage()
         self._skills_page = SkillsPage()
+        self._hobbies_page = HobbiesPage()
+
+        for page in (self._experience_page, self._projects_page, self._education_page, self._awards_page):
+            page.on_skill_added = self._register_global_skill
+            page.get_common_skills = self._get_global_skills
 
         pages = [
             self._experience_page,
             self._projects_page,
             self._education_page,
+            self._awards_page,
             self._skills_page,
+            self._hobbies_page,
         ]
         for (label, _), page in zip(_SIDEBAR_ITEMS, pages):
             item = QListWidgetItem(label)
@@ -110,11 +122,22 @@ class MainWindow(QMainWindow):
 
         self._load()
 
+    def _register_global_skill(self, skill: str):
+        existing = {s.lower() for s in self._skills_page.get_data()}
+        if skill.lower() in existing:
+            return
+        self._skills_page._add_item(skill)
+
+    def _get_global_skills(self) -> list[str]:
+        return self._skills_page.get_data()
+
     def _get_profile_data(self) -> dict:
         return {
             "experience": self._experience_page.get_data(),
             "projects": self._projects_page.get_data(),
             "education": self._education_page.get_data(),
+            "awards": self._awards_page.get_data(),
+            "hobbies": self._hobbies_page.get_data(),
         }
 
     def _load(self):
@@ -125,7 +148,10 @@ class MainWindow(QMainWindow):
             self._projects_page.add_entry(entry)
         for entry in data.get("education", []):
             self._education_page.add_entry(entry)
+        for entry in data.get("awards", []):
+            self._awards_page.add_entry(entry)
         self._skills_page.load(data.get("skills", []))
+        self._hobbies_page.load(data.get("hobbies", []))
         for entry in data.get("applications", []):
             self._tracker_page.add_entry(entry)
 
@@ -143,7 +169,7 @@ class MainWindow(QMainWindow):
             "<li>Go to the <b>Data Privacy</b> tab.</li>"
             "<li>Click <b>Get a copy of your data</b>.</li>"
             "<li>Choose <b>Want something in particular?</b> and tick:<br>"
-            "&nbsp;&nbsp;• Positions &nbsp;• Projects &nbsp;• Education &nbsp;• Skills</li>"
+            "&nbsp;&nbsp;• Positions &nbsp;• Projects &nbsp;• Education &nbsp;• Honors &nbsp;• Skills</li>"
             "<li>Click <b>Request archive</b>. LinkedIn emails you a ZIP "
             "within ~10 minutes.</li>"
             "<li>Download the ZIP, then click <b>Choose ZIP…</b> below to import it.</li>"
@@ -183,7 +209,7 @@ class MainWindow(QMainWindow):
             return
 
         summary = linkedin_import.summarize(data)
-        if not any(data[k] for k in ("experience", "projects", "education", "skills")):
+        if not any(data[k] for k in ("experience", "projects", "education", "awards", "skills")):
             QMessageBox.warning(
                 self, "Nothing to import",
                 "The archive parsed successfully but contained no resume data.\n\n"
@@ -196,6 +222,7 @@ class MainWindow(QMainWindow):
             self._experience_page.get_data()
             or self._projects_page.get_data()
             or self._education_page.get_data()
+            or self._awards_page.get_data()
             or self._skills_page.get_data()
         )
 
@@ -215,18 +242,40 @@ class MainWindow(QMainWindow):
                 return
             mode = "replace" if clicked is replace_btn else "append"
 
+        import_category = "relevant"
+        if data["experience"]:
+            cat_box = QMessageBox(self)
+            cat_box.setIcon(QMessageBox.Icon.Question)
+            cat_box.setWindowTitle("Categorize imported positions")
+            cat_box.setText(
+                f"Where should the {len(data['experience'])} imported "
+                "position(s) go?"
+            )
+            relevant_btn = cat_box.addButton(
+                "Relevant Experience", QMessageBox.ButtonRole.AcceptRole
+            )
+            other_btn = cat_box.addButton(
+                "Leadership / Other", QMessageBox.ButtonRole.AcceptRole
+            )
+            cat_box.setDefaultButton(relevant_btn)
+            cat_box.exec()
+            import_category = "other" if cat_box.clickedButton() is other_btn else "relevant"
+
         if mode == "replace":
             self._experience_page.clear()
             self._projects_page.clear()
             self._education_page.clear()
+            self._awards_page.clear()
             self._skills_page.load([])
 
         for entry in data["experience"]:
-            self._experience_page.add_entry(entry)
+            self._experience_page.add_entry(entry, category=import_category)
         for entry in data["projects"]:
             self._projects_page.add_entry(entry)
         for entry in data["education"]:
             self._education_page.add_entry(entry)
+        for entry in data.get("awards", []):
+            self._awards_page.add_entry(entry)
 
         if mode == "replace":
             self._skills_page.load(data["skills"])
@@ -241,7 +290,9 @@ class MainWindow(QMainWindow):
             "experience": self._experience_page.get_data(),
             "projects": self._projects_page.get_data(),
             "education": self._education_page.get_data(),
+            "awards": self._awards_page.get_data(),
             "skills": self._skills_page.get_data(),
+            "hobbies": self._hobbies_page.get_data(),
             "applications": self._tracker_page.get_data(),
         }
         data_store.save(data)

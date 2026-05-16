@@ -9,7 +9,9 @@ _EMPTY: dict = {
     "experience": [],
     "projects": [],
     "education": [],
+    "awards": [],
     "skills": [],
+    "hobbies": [],
     "applications": [],
 }
 

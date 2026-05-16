@@ -5,6 +5,7 @@ We read these CSVs if present:
     Positions.csv    → experience
     Projects.csv     → projects
     Education.csv    → education
+    Honors.csv       → awards
     Skills.csv       → skills
 """
 from __future__ import annotations
@@ -59,13 +60,15 @@ def _bullets_from_description(text: str) -> list[str]:
 
 def parse_zip(zip_path: str) -> dict:
     """Parse a LinkedIn data export ZIP and return a resume dict."""
-    result: dict = {"experience": [], "projects": [], "education": [], "skills": []}
+    result: dict = {"experience": [], "projects": [], "education": [], "awards": [], "skills": []}
 
     with zipfile.ZipFile(zip_path, "r") as zf:
         positions = _open_csv(zf, "Positions.csv") or []
         projects = _open_csv(zf, "Projects.csv") or []
         education = _open_csv(zf, "Education.csv") or []
         skills = _open_csv(zf, "Skills.csv") or []
+        courses_rows = _open_csv(zf, "Courses.csv") or []
+        honors = _open_csv(zf, "Honors.csv", "Awards.csv") or []
 
     for row in positions:
         result["experience"].append({
@@ -93,6 +96,33 @@ def parse_zip(zip_path: str) -> dict:
             "bullets": _bullets_from_description(
                 _get(row, "Notes", "Description", "Activities")
             ),
+            "courses": [],
+        })
+
+    school_index = {
+        ed["school"].lower(): ed for ed in result["education"] if ed["school"]
+    }
+    for row in courses_rows:
+        name = _get(row, "Name", "Course Name", "Title")
+        if not name:
+            continue
+        school = _get(row, "School Name", "School")
+        target = school_index.get(school.lower()) if school else None
+        if target is None and result["education"]:
+            target = result["education"][0]
+        if target is not None:
+            target["courses"].append({"name": name, "grade": "", "skills": []})
+
+    for row in honors:
+        title = _get(row, "Title", "Name", "Honor")
+        if not title:
+            continue
+        result["awards"].append({
+            "title": title,
+            "issuer": _get(row, "Issuer", "Issued By", "Organization"),
+            "date": _get(row, "Issued On", "Date", "Issue Date"),
+            "bullets": _bullets_from_description(_get(row, "Description")),
+            "skills": [],
         })
 
     for row in skills:
@@ -109,5 +139,6 @@ def summarize(data: dict) -> str:
         f"{len(data['experience'])} experience · "
         f"{len(data['projects'])} projects · "
         f"{len(data['education'])} education · "
+        f"{len(data.get('awards', []))} awards · "
         f"{len(data['skills'])} skills"
     )
