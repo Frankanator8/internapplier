@@ -1,6 +1,7 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QFrame, QLineEdit, QLabel, QStatusBar, QTabWidget, QPlainTextEdit,
+    QScrollArea,
 )
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QFont
@@ -14,7 +15,17 @@ class SettingsPage(QWidget):
         super().__init__()
         self._status_bar = status_bar
 
-        outer = QVBoxLayout(self)
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.addWidget(scroll)
+
+        inner = QWidget()
+        scroll.setWidget(inner)
+
+        outer = QVBoxLayout(inner)
         outer.setContentsMargins(40, 40, 40, 40)
         outer.setSpacing(0)
 

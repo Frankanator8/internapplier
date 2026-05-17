@@ -31,7 +31,6 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("InternApplier — Resume Builder")
-        self.resize(980, 700)
 
         # ── Toolbar ──────────────────────────────────────────────
         toolbar = QToolBar("Main Toolbar")
@@ -129,6 +128,7 @@ class MainWindow(QMainWindow):
         self._tabs.addTab(self._settings_page, "⚙️  Settings")
 
         self._load()
+        self.resize(1100, 750)
 
     def _register_global_skill(self, skill: str):
         existing = {s.lower() for s in self._skills_page.get_data()}
