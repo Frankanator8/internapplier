@@ -209,7 +209,41 @@ class ApplierPage(QWidget):
         return self._wrap_page("Tailor Resume", splitter)
 
     def _build_generate_resume_page(self) -> QWidget:
-        return self._wrap_page("Generate Resume", QWidget())
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 8, 0, 0)
+        layout.setSpacing(10)
+
+        form_row = QHBoxLayout()
+        form_row.setSpacing(8)
+
+        name_col = QVBoxLayout()
+        name_col.setSpacing(4)
+        name_col.addWidget(_label("Company Name *"))
+        self._gen_name_input = QLineEdit()
+        self._gen_name_input.setPlaceholderText("e.g. Anthropic")
+        name_col.addWidget(self._gen_name_input)
+        form_row.addLayout(name_col, 1)
+
+        url_col = QVBoxLayout()
+        url_col.setSpacing(4)
+        url_col.addWidget(_label("Website (optional)"))
+        self._gen_url_input = QLineEdit()
+        self._gen_url_input.setPlaceholderText("https://www.example.com")
+        url_col.addWidget(self._gen_url_input)
+        form_row.addLayout(url_col, 2)
+
+        layout.addLayout(form_row)
+
+        layout.addWidget(_label("Job Description"))
+        self._gen_jd_input = QTextEdit()
+        self._gen_jd_input.setPlaceholderText("Paste the job description here…")
+        layout.addWidget(self._gen_jd_input, 1)
+
+        self._gen_btn = _primary_btn("📄  Generate Resume & Open in Overleaf")
+        layout.addWidget(self._gen_btn)
+
+        return self._wrap_page("Generate Resume", container)
 
     def _build_research_page(self) -> QWidget:
         splitter = QSplitter(Qt.Orientation.Horizontal)
