@@ -250,48 +250,23 @@ class OpenRouterProvider(AIProvider):
             logger.exception("analyze_bullet_stream — request failed")
             raise
 
-    def tailor_resume(self, profile: dict, job_description: str) -> list[dict]:
-        logger.info("tailor_resume — jd=%r", job_description[:120])
+    def tailor_resume(self, bullets: list[str], job_description: str) -> list[str]:
+        logger.info("tailor_resume — jd=%r bullets=%d", job_description[:120], len(bullets))
+        if not bullets:
+            return []
         if not self.api_key:
             logger.error("tailor_resume — API key missing")
             raise ValueError(
                 "No API key found. Set the OPENROUTER_API_KEY environment variable."
             )
 
-        import json as _json
-
-        lines = []
-        for section_key, entry_name_key in [
-            ("experience", "company"),
-            ("projects", "name"),
-            ("education", "school"),
-        ]:
-            for entry in profile.get(section_key, []):
-                entry_name = entry.get(entry_name_key, "")
-                for bullet in entry.get("bullets", []):
-                    lines.append(
-                        _json.dumps({
-                            "section": section_key,
-                            "entry": entry_name,
-                            "original": bullet,
-                        })
-                    )
-
-        if not lines:
-            logger.warning("tailor_resume — no bullets found in profile")
-            return []
-
-        logger.debug("tailor_resume — %d bullets to tailor", len(lines))
-        bullets_block = "\n".join(lines)
+        numbered = "\n".join(f"{i + 1}. {b}" for i, b in enumerate(bullets))
         user_message = (
             f"Job Description:\n{job_description}\n\n"
-            f"Resume Bullets (JSON, one per line):\n{bullets_block}\n\n"
-            "For each bullet, write a tailored version that highlights the most relevant "
-            "skills and impact for this specific job. "
-            "Return a JSON array where each element is: "
-            '{"section": <same section>, "entry": <same entry>, '
-            '"original": <original text>, "tailored": <new text>}. '
-            "Return ONLY the JSON array, no markdown, no explanation."
+            f"Resume Bullets:\n{numbered}\n\n"
+            f"Rewrite each bullet to highlight the skills and impact most relevant to "
+            f"this job. Return ONLY a JSON array of {len(bullets)} strings, in the same "
+            "order as the input. No markdown, no numbering, no explanation."
         )
 
         logger.debug("tailor_resume — POST %s model=%s timeout=60", self.BASE_URL, self.model)
@@ -332,23 +307,23 @@ class OpenRouterProvider(AIProvider):
             raw = raw.strip()
 
         try:
-            items = _json.loads(raw)
-        except _json.JSONDecodeError:
+            items = json.loads(raw)
+        except json.JSONDecodeError:
             logger.error("tailor_resume — JSON parse failed, raw=%r", raw[:500])
             raise ValueError("AI returned unexpected format — please try again.")
 
-        result = [
-            {
-                "section": item.get("section", ""),
-                "entry": item.get("entry", ""),
-                "original": item.get("original", ""),
-                "tailored": item.get("tailored", ""),
-            }
-            for item in items
-            if item.get("section") in ("experience", "projects", "education")
-        ]
-        logger.info("tailor_resume — success, %d items returned", len(result))
-        return result
+        if not isinstance(items, list) or not all(isinstance(s, str) for s in items):
+            logger.error("tailor_resume — expected list[str], got %r", type(items).__name__)
+            raise ValueError("AI returned unexpected format — please try again.")
+
+        if len(items) != len(bullets):
+            logger.error(
+                "tailor_resume — length mismatch: sent %d, got %d", len(bullets), len(items)
+            )
+            raise ValueError("AI returned unexpected format — please try again.")
+
+        logger.info("tailor_resume — success, %d bullets returned", len(items))
+        return items
 
 
     def generate_resume(self, profile: dict, job_description: str) -> str:

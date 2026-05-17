@@ -33,13 +33,25 @@ class _TailorWorker(QObject):
         from app.ai_provider import get_provider
         logger.info("_TailorWorker.run — jd=%r", self._jd[:80])
         try:
-            bullet_count = sum(
-                len(entry.get("bullets", []))
-                for section in ("experience", "projects", "education")
-                for entry in self._profile.get(section, [])
-            )
-            self.progress.emit(f"Sending {bullet_count} bullets to AI…")
-            result = get_provider().tailor_resume(self._profile, self._jd)
+            metadata: list[tuple[str, str, str]] = []
+            bullets: list[str] = []
+            for section_key, entry_name_key in (
+                ("experience", "company"),
+                ("projects", "name"),
+                ("education", "school"),
+            ):
+                for entry in self._profile.get(section_key, []):
+                    entry_name = entry.get(entry_name_key, "")
+                    for bullet in entry.get("bullets", []):
+                        metadata.append((section_key, entry_name, bullet))
+                        bullets.append(bullet)
+
+            self.progress.emit(f"Sending {len(bullets)} bullets to AI…")
+            tailored = get_provider(tier="fast").tailor_resume(bullets, self._jd)
+            result = [
+                {"section": sec, "entry": entry, "original": orig, "tailored": new}
+                for (sec, entry, orig), new in zip(metadata, tailored)
+            ]
             logger.info("_TailorWorker.run — success, %d items", len(result))
             self.finished.emit(result)
         except Exception as exc:
