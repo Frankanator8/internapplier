@@ -1,8 +1,10 @@
+import json
 import logging
 import os
 import pathlib
 import time
 from abc import ABC, abstractmethod
+from typing import Iterator
 
 import requests
 
@@ -57,6 +59,11 @@ class AIProvider(ABC):
     @abstractmethod
     def analyze_bullet(self, bullet: str, context: dict) -> str:
         """Returns plain-text feedback + rewrite suggestions for a resume bullet."""
+        ...
+
+    @abstractmethod
+    def analyze_bullet_stream(self, bullet: str, context: dict) -> Iterator[str]:
+        """Yields incremental text chunks for a resume bullet analysis."""
         ...
 
     @abstractmethod
@@ -143,6 +150,81 @@ class OpenRouterProvider(AIProvider):
             return result
         except Exception:
             logger.exception("analyze_bullet — request failed")
+            raise
+
+    def analyze_bullet_stream(self, bullet: str, context: dict) -> Iterator[str]:
+        logger.info("analyze_bullet_stream — bullet=%r context=%s", bullet[:120], context)
+        if not self.api_key:
+            logger.error("analyze_bullet_stream — API key missing")
+            raise ValueError(
+                "No API key found. Set the OPENROUTER_API_KEY environment variable."
+            )
+
+        context_line = _format_context(context)
+        user_message = (
+            f"{context_line}\n\n"
+            f'Resume bullet: "{bullet}"\n\n'
+            "Please provide:\n"
+            "1. CRITIQUE: A 1-2 sentence assessment of this bullet's weaknesses "
+            "(e.g., missing metrics, weak action verb, unclear impact).\n"
+            "2. REWRITE A: An improved version of this bullet.\n"
+            "3. REWRITE B: A second, alternative improved version."
+        )
+
+        logger.debug("analyze_bullet_stream — POST %s model=%s stream=True", self.BASE_URL, self.model)
+        t0 = time.perf_counter()
+        chunk_count = 0
+        try:
+            with requests.post(
+                self.BASE_URL,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                    "Accept": "text/event-stream",
+                },
+                json={
+                    "model": self.model,
+                    "stream": True,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": _load_prompt("analyze_bullet.txt"),
+                        },
+                        {"role": "user", "content": user_message},
+                    ],
+                },
+                stream=True,
+                timeout=60,
+            ) as response:
+                response.raise_for_status()
+                response.encoding = "utf-8"
+                for line in response.iter_lines(decode_unicode=True):
+                    if not line:
+                        continue
+                    if line.startswith(": "):
+                        continue
+                    if not line.startswith("data: "):
+                        continue
+                    payload = line[6:].strip()
+                    if payload == "[DONE]":
+                        break
+                    try:
+                        data = json.loads(payload)
+                    except json.JSONDecodeError:
+                        logger.debug("analyze_bullet_stream — skipping non-JSON line: %r", payload[:120])
+                        continue
+                    choices = data.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta") or {}
+                    content = delta.get("content")
+                    if content:
+                        chunk_count += 1
+                        yield content
+            elapsed = time.perf_counter() - t0
+            logger.info("analyze_bullet_stream — done in %.2fs, %d chunks", elapsed, chunk_count)
+        except Exception:
+            logger.exception("analyze_bullet_stream — request failed")
             raise
 
     def tailor_resume(self, profile: dict, job_description: str) -> list[dict]:

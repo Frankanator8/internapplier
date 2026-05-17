@@ -11,57 +11,6 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QObject, QThread, QStringListModel, pyqtSignal
 
-
-_REWRITE_HEADERS = ("CRITIQUE:", "REWRITE A:", "REWRITE B:")
-
-
-def _strip_line_prefix(line: str) -> str:
-    """Strip markdown/list prefixes like '**', '1.', '- ', '#', leading spaces."""
-    s = line.strip()
-    changed = True
-    while changed:
-        changed = False
-        for token in ("**", "__", "*", "#", "-", "•", ">"):
-            if s.startswith(token):
-                s = s[len(token):].lstrip()
-                changed = True
-        if s[:2].isdigit() if len(s) >= 2 and s[0].isdigit() and s[1] == "." else False:
-            pass
-        if len(s) >= 2 and s[0].isdigit() and s[1] in ".):":
-            s = s[2:].lstrip()
-            changed = True
-        elif len(s) >= 3 and s[0].isdigit() and s[1].isdigit() and s[2] in ".):":
-            s = s[3:].lstrip()
-            changed = True
-    return s
-
-
-def _parse_rewrite_result(text: str) -> tuple[str, str, str]:
-    """Split AI response into (critique, rewrite_a, rewrite_b)."""
-    buckets: dict[str, list[str]] = {h: [] for h in _REWRITE_HEADERS}
-    current: str | None = None
-    for raw in text.split("\n"):
-        cleaned = _strip_line_prefix(raw)
-        upper = cleaned.upper()
-        matched_header = None
-        for h in _REWRITE_HEADERS:
-            if upper.startswith(h):
-                matched_header = h
-                remainder = cleaned[len(h):].strip().strip("*_").strip()
-                if remainder:
-                    buckets[h].append(remainder)
-                break
-        if matched_header is not None:
-            current = matched_header
-            continue
-        if current is not None and cleaned:
-            buckets[current].append(cleaned.strip("*_").strip())
-    return (
-        " ".join(buckets["CRITIQUE:"]).strip(),
-        " ".join(buckets["REWRITE A:"]).strip(),
-        " ".join(buckets["REWRITE B:"]).strip(),
-    )
-
 logger = logging.getLogger(__name__)
 
 
@@ -111,6 +60,7 @@ def _ai_btn() -> QPushButton:
 
 
 class _AnalyzeWorker(QObject):
+    chunk = pyqtSignal(str)
     finished = pyqtSignal(str)
     error = pyqtSignal(str)
 
@@ -123,7 +73,11 @@ class _AnalyzeWorker(QObject):
         from app.ai_provider import get_provider
         logger.info("_AnalyzeWorker.run — bullet=%r", self._bullet[:80])
         try:
-            result = get_provider(tier="fast").analyze_bullet(self._bullet, self._context)
+            buf: list[str] = []
+            for delta in get_provider(tier="fast").analyze_bullet_stream(self._bullet, self._context):
+                buf.append(delta)
+                self.chunk.emit(delta)
+            result = "".join(buf)
             logger.info("_AnalyzeWorker.run — success, result length=%d", len(result))
             self.finished.emit(result)
         except Exception as exc:
@@ -235,22 +189,31 @@ class BulletsWidget(QWidget):
         btn.setEnabled(False)
         btn.setText("…")
 
+        self._begin_suggestions(item, row)
+        chunks_received = {"n": 0}
+
         worker = _AnalyzeWorker(bullet, context)
         thread = QThread(self)
         worker.moveToThread(thread)
 
-        def on_finished(result: str):
+        def on_chunk(delta: str):
+            chunks_received["n"] += 1
+            self._append_suggestion_text(item, row, delta)
+
+        def on_finished(_result: str):
             btn.setText("✦")
             btn.setEnabled(True)
-            self._show_suggestions(item, row, result)
             thread.quit()
 
         def on_error(msg: str):
             btn.setText("✦")
             btn.setEnabled(True)
+            if chunks_received["n"] == 0:
+                self._hide_suggestions(item, row)
             QMessageBox.warning(self, "AI Analysis Failed", msg)
             thread.quit()
 
+        worker.chunk.connect(on_chunk)
         worker.finished.connect(on_finished)
         worker.error.connect(on_error)
         thread.started.connect(worker.run)
@@ -272,62 +235,7 @@ class BulletsWidget(QWidget):
                 if sub is not None:
                     self._clear_panel(sub)
 
-    def _hide_suggestions(self, item: QListWidgetItem, row: QWidget):
-        panel: QFrame = row.property("_panel")
-        layout: QVBoxLayout = row.property("_panel_layout")
-        if panel is None:
-            return
-        self._clear_panel(layout)
-        panel.setVisible(False)
-        item.setSizeHint(row.sizeHint())
-        self._resize_to_contents()
-
-    def _show_suggestions(self, item: QListWidgetItem, row: QWidget, result: str):
-        panel: QFrame = row.property("_panel")
-        layout: QVBoxLayout = row.property("_panel_layout")
-        if panel is None or layout is None:
-            return
-
-        self._clear_panel(layout)
-
-        critique, rewrite_a, rewrite_b = _parse_rewrite_result(result)
-        if not (critique or rewrite_a or rewrite_b):
-            critique = result.strip()
-
-        header_row = QHBoxLayout()
-        header_row.setContentsMargins(0, 0, 0, 0)
-        header_row.setSpacing(4)
-        title = QLabel("AI Suggestions")
-        title.setObjectName("analyze-quote-title")
-        header_row.addWidget(title)
-        header_row.addStretch()
-        dismiss_btn = _icon_btn("✕")
-        dismiss_btn.setToolTip("Dismiss suggestions")
-        dismiss_btn.clicked.connect(lambda: self._hide_suggestions(item, row))
-        header_row.addWidget(dismiss_btn)
-        layout.addLayout(header_row)
-
-        if critique:
-            crit_label = QLabel("Critique")
-            crit_label.setObjectName("analyze-quote-title")
-            layout.addWidget(crit_label)
-            crit_body = QLabel(critique)
-            crit_body.setObjectName("analyze-bullet-text")
-            crit_body.setWordWrap(True)
-            layout.addWidget(crit_body)
-
-        for letter, rewrite in (("A", rewrite_a), ("B", rewrite_b)):
-            if not rewrite:
-                continue
-            r_label = QLabel(f"Rewrite {letter}")
-            r_label.setObjectName("analyze-quote-title")
-            layout.addWidget(r_label)
-            r_text = QLabel(rewrite)
-            r_text.setObjectName("analyze-bullet-text")
-            r_text.setWordWrap(True)
-            layout.addWidget(r_text)
-
-        panel.setVisible(True)
+    def _refresh_row_size(self, item: QListWidgetItem, row: QWidget):
         width = self.list_widget.viewport().width()
         if width > 0:
             row.setFixedWidth(width)
@@ -339,6 +247,63 @@ class BulletsWidget(QWidget):
         item.setSizeHint(hint)
         self.list_widget.doItemsLayout()
         self._resize_to_contents()
+
+    def _hide_suggestions(self, item: QListWidgetItem, row: QWidget):
+        panel: QFrame = row.property("_panel")
+        layout: QVBoxLayout = row.property("_panel_layout")
+        if panel is None:
+            return
+        self._clear_panel(layout)
+        row.setProperty("_body_label", None)
+        row.setProperty("_body_text", "")
+        panel.setVisible(False)
+        self._refresh_row_size(item, row)
+
+    def _begin_suggestions(self, item: QListWidgetItem, row: QWidget):
+        panel: QFrame = row.property("_panel")
+        layout: QVBoxLayout = row.property("_panel_layout")
+        if panel is None or layout is None:
+            return
+
+        self._clear_panel(layout)
+
+        body_row = QHBoxLayout()
+        body_row.setContentsMargins(0, 0, 0, 0)
+        body_row.setSpacing(6)
+
+        body = QLabel("")
+        body.setObjectName("analyze-bullet-text")
+        body.setWordWrap(True)
+        body.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard
+        )
+        body.setCursor(Qt.CursorShape.IBeamCursor)
+        body.setAlignment(Qt.AlignmentFlag.AlignTop)
+        body_row.addWidget(body, 1)
+
+        dismiss_btn = _icon_btn("✕")
+        dismiss_btn.setToolTip("Dismiss")
+        dismiss_btn.clicked.connect(lambda: self._hide_suggestions(item, row))
+        body_row.addWidget(dismiss_btn, 0, Qt.AlignmentFlag.AlignTop)
+
+        layout.addLayout(body_row)
+
+        row.setProperty("_body_label", body)
+        row.setProperty("_body_text", "")
+
+        panel.setVisible(True)
+        self._refresh_row_size(item, row)
+
+    def _append_suggestion_text(self, item: QListWidgetItem, row: QWidget, delta: str):
+        body: QLabel = row.property("_body_label")
+        if body is None:
+            return
+        current = row.property("_body_text") or ""
+        new_text = current + delta
+        row.setProperty("_body_text", new_text)
+        body.setText(new_text.lstrip())
+        self._refresh_row_size(item, row)
 
     def get_bullets(self) -> list[str]:
         result = []
@@ -484,10 +449,7 @@ class ChipsWidget(QWidget):
         completer.activated.connect(self._on_completer_activated)
         self._input.setCompleter(completer)
         self._input.textEdited.connect(lambda _t: self._refresh_completer())
-        add_btn = _secondary_btn("+", 32)
-        add_btn.clicked.connect(self._add_from_input)
         input_row.addWidget(self._input)
-        input_row.addWidget(add_btn)
         layout.addLayout(input_row)
 
         self._chips_host = QWidget()
