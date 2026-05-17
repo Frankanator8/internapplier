@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import html
 import logging
+import os
+import tempfile
 from typing import Callable
 
 from PyQt6.QtCore import QObject, QThread, Qt, QUrl, pyqtSignal
-from PyQt6.QtGui import QGuiApplication
-from PyQt6.QtWebEngineWidgets import QWebEngineView
+from PyQt6.QtGui import QDesktopServices, QGuiApplication
 from PyQt6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QLineEdit, QScrollArea,
     QSizePolicy, QSplitter, QTabWidget, QTextEdit, QVBoxLayout, QWidget,
@@ -49,14 +50,20 @@ class _ResearchWorker(QObject):
 
     def run(self):
         from app.ai_provider import get_provider
-        from app.web_scraper import fetch_company_pages
+        from app.web_scraper import SiteBlockedError, fetch_company_pages
         logger.info("_ResearchWorker.run — company=%r url=%r", self._company_name, self._url)
         try:
             text = fetch_company_pages(self._url)
             logger.debug("_ResearchWorker.run — scraped %d chars", len(text))
-            result = get_provider().research_company(self._company_name, text)
+            result = get_provider(tier="fast").research_company(self._company_name, text)
             logger.info("_ResearchWorker.run — success")
             self.finished.emit(result)
+        except SiteBlockedError:
+            logger.exception("_ResearchWorker.run — site blocked")
+            self.error.emit(
+                "This site appears to block automated tools — try a different URL "
+                "or scrape manually."
+            )
         except Exception as exc:
             logger.exception("_ResearchWorker.run — failed")
             self.error.emit(str(exc))
@@ -131,9 +138,6 @@ class ApplierPage(QWidget):
         splitter.addWidget(left)
 
         # ── Right panel ──────────────────────────────────────────
-        right_split = QSplitter(Qt.Orientation.Vertical)
-        right_split.setChildrenCollapsible(False)
-
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -146,14 +150,8 @@ class ApplierPage(QWidget):
         self._results_layout.setSpacing(10)
         self._results_layout.setContentsMargins(12, 0, 4, 16)
         scroll.setWidget(self._results_content)
-        right_split.addWidget(scroll)
 
-        self._overleaf_view = QWebEngineView()
-        self._overleaf_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        right_split.addWidget(self._overleaf_view)
-        right_split.setSizes([300, 500])
-
-        splitter.addWidget(right_split)
+        splitter.addWidget(scroll)
         splitter.setSizes([400, 560])
 
         return splitter
@@ -221,7 +219,7 @@ class ApplierPage(QWidget):
         self._research_btn.setText("Researching…")
         self._research_status.setStyleSheet("color: #555; font-size: 12px;")
         self._research_status.setText(
-            f"Fetching pages from {url} (respecting robots.txt)…"
+            f"Launching headless browser and fetching pages from {url}…"
         )
 
         worker = _ResearchWorker(name, url)
@@ -473,7 +471,7 @@ class ApplierPage(QWidget):
         escaped = html.escape(tex, quote=True)
         page = (
             "<!doctype html><html><body>"
-            "<form id='f' action='https://www.overleaf.com/docs' method='post' target='_self'>"
+            "<form id='f' action='https://www.overleaf.com/docs' method='post'>"
             f"<input type='hidden' name='snip' value=\"{escaped}\">"
             "<input type='hidden' name='snip_name' value='resume.tex'>"
             "<input type='hidden' name='engine' value='pdflatex'>"
@@ -481,7 +479,10 @@ class ApplierPage(QWidget):
             "<script>document.getElementById('f').submit();</script>"
             "</body></html>"
         )
-        self._overleaf_view.setHtml(page, QUrl("https://www.overleaf.com/"))
+        fd, path = tempfile.mkstemp(suffix=".html", prefix="overleaf_")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(page)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     def _clear_results(self):
         while self._results_layout.count():
