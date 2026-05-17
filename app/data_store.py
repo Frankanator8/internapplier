@@ -13,6 +13,7 @@ _EMPTY: dict = {
     "skills": [],
     "hobbies": [],
     "applications": [],
+    "research_cache": {},
 }
 
 

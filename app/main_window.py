@@ -114,7 +114,10 @@ class MainWindow(QMainWindow):
         self._tabs.addTab(profile_widget, "💼  Profile")
 
         # ── Tab 1: Applier ────────────────────────────────────────
-        self._applier_page = ApplierPage(get_profile=self._get_profile_data)
+        self._applier_page = ApplierPage(
+            get_profile=self._get_profile_data,
+            save_fn=self._save,
+        )
         self._tabs.addTab(self._applier_page, "✦  Applier")
 
         # ── Tab 2: Tracker ────────────────────────────────────────
@@ -159,7 +162,18 @@ class MainWindow(QMainWindow):
         self._hobbies_page.load(data.get("hobbies", []))
         for entry in data.get("applications", []):
             self._tracker_page.add_entry(entry)
-        self._applier_page.load_research_data(data.get("research", {}))
+        research_cache = data.get("research_cache") or {}
+        if not research_cache:
+            # Migrate from old single-entry format
+            old = data.get("research") or {}
+            if old.get("company_name") and old.get("result"):
+                research_cache = {
+                    old["company_name"]: {
+                        "url": old.get("url", ""),
+                        "result": old["result"],
+                    }
+                }
+        self._applier_page.load_research_data(research_cache)
 
     def _show_import_instructions(self) -> bool:
         """Show a how-to dialog. Returns True if user wants to proceed to file picker."""
@@ -300,7 +314,7 @@ class MainWindow(QMainWindow):
             "skills": self._skills_page.get_data(),
             "hobbies": self._hobbies_page.get_data(),
             "applications": self._tracker_page.get_data(),
-            "research": self._applier_page.get_research_data(),
+            "research_cache": self._applier_page.get_research_data(),
         }
         data_store.save(data)
         self.status_bar.showMessage("✓  Saved successfully.", 3000)

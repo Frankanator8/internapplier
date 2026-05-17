@@ -13,10 +13,32 @@ logger = logging.getLogger(__name__)
 _APP_DIR = pathlib.Path.home() / "Library" / "Application Support" / "InternApplier"
 _MODELS_FILE = _APP_DIR / "models.txt"
 _PROMPTS_DIR = pathlib.Path(__file__).parent.parent / "prompts"
+_APP_PROMPTS_DIR = _APP_DIR / "prompts"
+
+
+def _seed_prompts() -> None:
+    _APP_PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
+    for src in _PROMPTS_DIR.glob("*.txt"):
+        dst = _APP_PROMPTS_DIR / src.name
+        if not dst.exists():
+            dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
 
 
 def _load_prompt(name: str) -> str:
+    return (_APP_PROMPTS_DIR / name).read_text(encoding="utf-8").strip()
+
+
+def load_prompt(name: str) -> str:
+    return _load_prompt(name)
+
+
+def default_prompt(name: str) -> str:
     return (_PROMPTS_DIR / name).read_text(encoding="utf-8").strip()
+
+
+def save_prompt(name: str, content: str) -> None:
+    _APP_PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
+    (_APP_PROMPTS_DIR / name).write_text(content, encoding="utf-8")
 
 DEFAULT_FAST_MODEL = "google/gemini-2.0-flash-exp:free"
 DEFAULT_POWERFUL_MODEL = "openai/gpt-4o-mini"
@@ -32,6 +54,7 @@ def _load_model_config() -> dict[str, str]:
     defaults = {"fast": DEFAULT_FAST_MODEL, "powerful": DEFAULT_POWERFUL_MODEL}
 
     _APP_DIR.mkdir(parents=True, exist_ok=True)
+    _seed_prompts()
     if not _MODELS_FILE.exists():
         with open(_MODELS_FILE, "w", encoding="utf-8") as f:
             f.write(f"fast={DEFAULT_FAST_MODEL}\n")
@@ -420,10 +443,10 @@ class OpenRouterProvider(AIProvider):
             f"Scraped content from the company's own website:\n{scraped_text}\n\n"
             "From the scraped content above, extract a shallow research brief. "
             "Return a JSON object with exactly these keys:\n"
-            '  "core_values": array of 3-6 short strings capturing the company\'s '
+            '  "core_values": array of 3-6 capturing the company\'s '
             "stated values, mission, or culture pillars.\n"
             '  "recent_projects": array of 3-6 short strings describing recent '
-            "products, launches, initiatives, or news mentioned on the site.\n"
+            "products, launches, initiatives, or news mentioned on the site. Give a small description of each.\n"
             '  "summary": a 2-3 sentence plain-text summary of what the company does '
             "and its current focus.\n"
             "If a field cannot be inferred from the content, return an empty array "

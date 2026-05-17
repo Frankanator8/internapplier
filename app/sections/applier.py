@@ -9,8 +9,9 @@ from typing import Callable
 from PyQt6.QtCore import QObject, QThread, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QGuiApplication
 from PyQt6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QLineEdit, QScrollArea,
-    QSizePolicy, QSplitter, QTabWidget, QTextEdit, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+    QScrollArea, QSizePolicy, QSplitter, QStackedWidget, QTextEdit, QVBoxLayout,
+    QWidget,
 )
 
 from .base import _label, _primary_btn, _secondary_btn
@@ -21,6 +22,7 @@ logger = logging.getLogger(__name__)
 class _TailorWorker(QObject):
     finished = pyqtSignal(list)
     error = pyqtSignal(str)
+    progress = pyqtSignal(str)
 
     def __init__(self, profile: dict, jd: str):
         super().__init__()
@@ -31,6 +33,12 @@ class _TailorWorker(QObject):
         from app.ai_provider import get_provider
         logger.info("_TailorWorker.run — jd=%r", self._jd[:80])
         try:
+            bullet_count = sum(
+                len(entry.get("bullets", []))
+                for section in ("experience", "projects", "education")
+                for entry in self._profile.get(section, [])
+            )
+            self.progress.emit(f"Sending {bullet_count} bullets to AI…")
             result = get_provider().tailor_resume(self._profile, self._jd)
             logger.info("_TailorWorker.run — success, %d items", len(result))
             self.finished.emit(result)
@@ -42,6 +50,7 @@ class _TailorWorker(QObject):
 class _ResearchWorker(QObject):
     finished = pyqtSignal(dict)
     error = pyqtSignal(str)
+    progress = pyqtSignal(str)
 
     def __init__(self, company_name: str, url: str):
         super().__init__()
@@ -53,8 +62,10 @@ class _ResearchWorker(QObject):
         from app.web_scraper import SiteBlockedError, fetch_company_pages
         logger.info("_ResearchWorker.run — company=%r url=%r", self._company_name, self._url)
         try:
+            self.progress.emit(f"Fetching pages from {self._url}…")
             text = fetch_company_pages(self._url)
             logger.debug("_ResearchWorker.run — scraped %d chars", len(text))
+            self.progress.emit(f"Scraped {len(text):,} chars — asking AI to analyze…")
             result = get_provider(tier="fast").research_company(self._company_name, text)
             logger.info("_ResearchWorker.run — success")
             self.finished.emit(result)
@@ -72,6 +83,7 @@ class _ResearchWorker(QObject):
 class _GenerateResumeWorker(QObject):
     finished = pyqtSignal(str)
     error = pyqtSignal(str)
+    progress = pyqtSignal(str)
 
     def __init__(self, profile: dict, jd: str):
         super().__init__()
@@ -82,6 +94,7 @@ class _GenerateResumeWorker(QObject):
         from app.ai_provider import get_provider
         logger.info("_GenerateResumeWorker.run — jd=%r", self._jd[:80])
         try:
+            self.progress.emit("Generating LaTeX resume — this may take ~30s…")
             tex = get_provider().generate_resume(self._profile, self._jd)
             logger.info("_GenerateResumeWorker.run — success, LaTeX length=%d", len(tex))
             self.finished.emit(tex)
@@ -91,25 +104,53 @@ class _GenerateResumeWorker(QObject):
 
 
 class ApplierPage(QWidget):
-    def __init__(self, get_profile: Callable[[], dict], parent=None):
+    def __init__(
+        self,
+        get_profile: Callable[[], dict],
+        save_fn: Callable[[], None] | None = None,
+        parent=None,
+    ):
         super().__init__(parent)
         self._get_profile = get_profile
+        self._save_fn = save_fn
         self._threads: list[QThread] = []
         self._workers: list[QObject] = []
         self._research_last_result: dict = {}
+        self._research_cache: dict[str, dict] = {}
 
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(28, 24, 28, 16)
-        outer.setSpacing(14)
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        outer.addWidget(_label("Applier", "section-title"))
+        self._applier_sidebar = QListWidget()
+        self._applier_sidebar.setObjectName("sidebar")
+        self._applier_sidebar.setFixedWidth(200)
 
-        tabs = QTabWidget()
-        tabs.addTab(self._build_tailor_tab(), "✦  Tailor Resume")
-        tabs.addTab(self._build_research_tab(), "🔍  Research Company")
-        outer.addWidget(tabs, 1)
+        for label in ("✦  Tailor Resume", "🔍  Research Company"):
+            item = QListWidgetItem(label)
+            item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            self._applier_sidebar.addItem(item)
 
-    def _build_tailor_tab(self) -> QWidget:
+        self._applier_stack = QStackedWidget()
+        self._applier_stack.addWidget(self._build_tailor_page())
+        self._applier_stack.addWidget(self._build_research_page())
+
+        self._applier_sidebar.currentRowChanged.connect(self._applier_stack.setCurrentIndex)
+        self._applier_sidebar.setCurrentRow(0)
+
+        outer.addWidget(self._applier_sidebar)
+        outer.addWidget(self._applier_stack, 1)
+
+    def _wrap_page(self, title: str, content: QWidget) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(28, 24, 28, 16)
+        layout.setSpacing(14)
+        layout.addWidget(_label(title, "section-title"))
+        layout.addWidget(content, 1)
+        return page
+
+    def _build_tailor_page(self) -> QWidget:
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setChildrenCollapsible(False)
 
@@ -135,6 +176,11 @@ class ApplierPage(QWidget):
         self._pdf_btn.clicked.connect(self._generate_pdf)
         left_layout.addWidget(self._pdf_btn)
 
+        self._tailor_status = QLabel("")
+        self._tailor_status.setWordWrap(True)
+        self._tailor_status.setStyleSheet("color: #555; font-size: 12px;")
+        left_layout.addWidget(self._tailor_status)
+
         splitter.addWidget(left)
 
         # ── Right panel ──────────────────────────────────────────
@@ -154,13 +200,38 @@ class ApplierPage(QWidget):
         splitter.addWidget(scroll)
         splitter.setSizes([400, 560])
 
-        return splitter
+        return self._wrap_page("Tailor Resume", splitter)
 
-    def _build_research_tab(self) -> QWidget:
-        wrap = QWidget()
-        layout = QVBoxLayout(wrap)
-        layout.setContentsMargins(0, 8, 0, 0)
-        layout.setSpacing(10)
+    def _build_research_page(self) -> QWidget:
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
+
+        # ── Left: saved companies list ────────────────────────────
+        left = QWidget()
+        left.setMinimumWidth(160)
+        left.setMaximumWidth(240)
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 8, 8, 0)
+        left_layout.setSpacing(6)
+
+        left_layout.addWidget(_label("Saved Companies"))
+
+        self._company_list = QListWidget()
+        self._company_list.setObjectName("company-cache-list")
+        self._company_list.itemClicked.connect(self._load_cached_company)
+        left_layout.addWidget(self._company_list, 1)
+
+        self._delete_company_btn = _secondary_btn("Delete", 100)
+        self._delete_company_btn.clicked.connect(self._delete_cached_company)
+        left_layout.addWidget(self._delete_company_btn)
+
+        splitter.addWidget(left)
+
+        # ── Right: research form + results ────────────────────────
+        right = QWidget()
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(0, 8, 0, 0)
+        right_layout.setSpacing(10)
 
         form_row = QHBoxLayout()
         form_row.setSpacing(8)
@@ -181,16 +252,16 @@ class ApplierPage(QWidget):
         url_col.addWidget(self._research_url_input)
         form_row.addLayout(url_col, 2)
 
-        layout.addLayout(form_row)
+        right_layout.addLayout(form_row)
 
         self._research_btn = _primary_btn("🔍  Research Company")
         self._research_btn.clicked.connect(self._research)
-        layout.addWidget(self._research_btn)
+        right_layout.addWidget(self._research_btn)
 
         self._research_status = QLabel("")
         self._research_status.setWordWrap(True)
         self._research_status.setStyleSheet("color: #555; font-size: 12px;")
-        layout.addWidget(self._research_status)
+        right_layout.addWidget(self._research_status)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -202,9 +273,12 @@ class ApplierPage(QWidget):
         self._research_results_layout.setSpacing(10)
         self._research_results_layout.setContentsMargins(4, 0, 4, 16)
         scroll.setWidget(self._research_results_content)
-        layout.addWidget(scroll, 1)
+        right_layout.addWidget(scroll, 1)
 
-        return wrap
+        splitter.addWidget(right)
+        splitter.setSizes([200, 600])
+
+        return self._wrap_page("Research Company", splitter)
 
     def _research(self):
         name = self._research_name_input.text().strip()
@@ -218,9 +292,7 @@ class ApplierPage(QWidget):
         self._research_btn.setEnabled(False)
         self._research_btn.setText("Researching…")
         self._research_status.setStyleSheet("color: #555; font-size: 12px;")
-        self._research_status.setText(
-            f"Launching headless browser and fetching pages from {url}…"
-        )
+        self._research_status.setText("Starting…")
 
         worker = _ResearchWorker(name, url)
         thread = QThread(self)
@@ -231,7 +303,11 @@ class ApplierPage(QWidget):
             self._research_btn.setText("🔍  Research Company")
             self._research_status.setText("")
             self._research_last_result = result
+            self._research_cache[name] = {"url": url, "result": result}
+            self._refresh_company_list(select=name)
             self._populate_research_results(result)
+            if self._save_fn:
+                self._save_fn()
             thread.quit()
 
         def on_error(msg: str):
@@ -241,8 +317,13 @@ class ApplierPage(QWidget):
             self._research_status.setText(f"Error: {msg}")
             thread.quit()
 
+        def on_research_progress(msg: str):
+            self._research_status.setStyleSheet("color: #555; font-size: 12px;")
+            self._research_status.setText(msg)
+
         worker.finished.connect(on_finished)
         worker.error.connect(on_error)
+        worker.progress.connect(on_research_progress)
         thread.started.connect(worker.run)
         thread.finished.connect(thread.deleteLater)
         self._threads.append(thread)
@@ -311,22 +392,51 @@ class ApplierPage(QWidget):
                 w.deleteLater()
 
     def get_research_data(self) -> dict:
-        return {
-            "company_name": self._research_name_input.text().strip(),
-            "url": self._research_url_input.text().strip(),
-            "result": self._research_last_result or {},
-        }
+        """Return the full cache dict: {company_name: {url, result}}."""
+        return self._research_cache
 
-    def load_research_data(self, data: dict):
-        if not data:
+    def load_research_data(self, cache: dict):
+        """Load a full cache dict and populate the company list."""
+        if not cache:
             return
-        self._research_name_input.setText(data.get("company_name", ""))
-        self._research_url_input.setText(data.get("url", ""))
-        result = data.get("result") or {}
+        self._research_cache = cache
+        self._refresh_company_list()
+
+    def _refresh_company_list(self, select: str | None = None):
+        self._company_list.clear()
+        for name in sorted(self._research_cache.keys(), key=str.lower):
+            self._company_list.addItem(name)
+        if select:
+            items = self._company_list.findItems(select, Qt.MatchFlag.MatchExactly)
+            if items:
+                self._company_list.setCurrentItem(items[0])
+
+    def _load_cached_company(self, item: QListWidgetItem):
+        name = item.text()
+        entry = self._research_cache.get(name)
+        if not entry:
+            return
+        self._research_name_input.setText(name)
+        self._research_url_input.setText(entry.get("url", ""))
+        result = entry.get("result") or {}
         self._research_last_result = result
         self._clear_research_results()
         if result:
             self._populate_research_results(result)
+
+    def _delete_cached_company(self):
+        item = self._company_list.currentItem()
+        if not item:
+            return
+        name = item.text()
+        self._research_cache.pop(name, None)
+        self._refresh_company_list()
+        self._clear_research_results()
+        self._research_name_input.clear()
+        self._research_url_input.clear()
+        self._research_last_result = {}
+        if self._save_fn:
+            self._save_fn()
 
     def _tailor(self):
         jd = self._jd_input.toPlainText().strip()
@@ -336,6 +446,8 @@ class ApplierPage(QWidget):
         profile = self._get_profile()
         self._tailor_btn.setEnabled(False)
         self._tailor_btn.setText("Tailoring…")
+        self._tailor_status.setStyleSheet("color: #555; font-size: 12px;")
+        self._tailor_status.setText("")
         self._clear_results()
 
         worker = _TailorWorker(profile, jd)
@@ -345,12 +457,15 @@ class ApplierPage(QWidget):
         def on_finished(items: list):
             self._tailor_btn.setEnabled(True)
             self._tailor_btn.setText("✦  Tailor My Resume")
+            self._tailor_status.setText("")
             self._populate_results(items)
             thread.quit()
 
         def on_error(msg: str):
             self._tailor_btn.setEnabled(True)
             self._tailor_btn.setText("✦  Tailor My Resume")
+            self._tailor_status.setStyleSheet("color: #cc3300; font-size: 12px;")
+            self._tailor_status.setText(f"Error: {msg}")
             err_label = QLabel(f"Error: {msg}")
             err_label.setWordWrap(True)
             err_label.setStyleSheet("color: #cc3300; font-size: 13px;")
@@ -359,6 +474,7 @@ class ApplierPage(QWidget):
 
         worker.finished.connect(on_finished)
         worker.error.connect(on_error)
+        worker.progress.connect(lambda msg: self._tailor_status.setText(msg))
         thread.started.connect(worker.run)
         thread.finished.connect(thread.deleteLater)
         self._threads.append(thread)
@@ -438,6 +554,8 @@ class ApplierPage(QWidget):
         profile = self._get_profile()
         self._pdf_btn.setEnabled(False)
         self._pdf_btn.setText("Opening Overleaf…")
+        self._tailor_status.setStyleSheet("color: #555; font-size: 12px;")
+        self._tailor_status.setText("")
 
         worker = _GenerateResumeWorker(profile, jd)
         thread = QThread(self)
@@ -446,12 +564,15 @@ class ApplierPage(QWidget):
         def on_finished(tex: str):
             self._pdf_btn.setEnabled(True)
             self._pdf_btn.setText("Open in Overleaf")
+            self._tailor_status.setText("")
             thread.quit()
             self._open_in_overleaf(tex)
 
         def on_error(msg: str):
             self._pdf_btn.setEnabled(True)
             self._pdf_btn.setText("Open in Overleaf")
+            self._tailor_status.setStyleSheet("color: #cc3300; font-size: 12px;")
+            self._tailor_status.setText(f"Error: {msg}")
             err_label = QLabel(f"Error: {msg}")
             err_label.setWordWrap(True)
             err_label.setStyleSheet("color: #cc3300; font-size: 13px;")
@@ -460,6 +581,7 @@ class ApplierPage(QWidget):
 
         worker.finished.connect(on_finished)
         worker.error.connect(on_error)
+        worker.progress.connect(lambda msg: self._tailor_status.setText(msg))
         thread.started.connect(worker.run)
         thread.finished.connect(thread.deleteLater)
         self._threads.append(thread)
