@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import html
 import logging
-import os
-import tempfile
 from typing import Callable
 
-from PyQt6.QtCore import QObject, QThread, Qt, QUrl, pyqtSignal
-from PyQt6.QtGui import QDesktopServices, QGuiApplication
+from PyQt6.QtCore import QObject, QThread, Qt, pyqtSignal
+from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QScrollArea, QSizePolicy, QSplitter, QStackedWidget, QTextEdit, QVBoxLayout,
@@ -47,7 +44,7 @@ class _TailorWorker(QObject):
                         bullets.append(bullet)
 
             self.progress.emit(f"Sending {len(bullets)} bullets to AI…")
-            tailored = get_provider(tier="fast").tailor_resume(bullets, self._jd)
+            tailored = get_provider().tailor_resume(bullets, self._jd)
             result = [
                 {"section": sec, "entry": entry, "original": orig, "tailored": new}
                 for (sec, entry, orig), new in zip(metadata, tailored)
@@ -78,7 +75,7 @@ class _ResearchWorker(QObject):
             text = fetch_company_pages(self._url)
             logger.debug("_ResearchWorker.run — scraped %d chars", len(text))
             self.progress.emit(f"Scraped {len(text):,} chars — asking AI to analyze…")
-            result = get_provider(tier="fast").research_company(self._company_name, text)
+            result = get_provider().research_company(self._company_name, text)
             logger.info("_ResearchWorker.run — success")
             self.finished.emit(result)
         except SiteBlockedError:
@@ -138,13 +135,14 @@ class ApplierPage(QWidget):
         self._applier_sidebar.setObjectName("sidebar")
         self._applier_sidebar.setFixedWidth(200)
 
-        for label in ("✦  Tailor Resume", "🔍  Research Company"):
+        for label in ("✦  Tailor Resume", "📄  Generate Resume", "🔍  Research Company"):
             item = QListWidgetItem(label)
             item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             self._applier_sidebar.addItem(item)
 
         self._applier_stack = QStackedWidget()
         self._applier_stack.addWidget(self._build_tailor_page())
+        self._applier_stack.addWidget(self._build_generate_resume_page())
         self._applier_stack.addWidget(self._build_research_page())
 
         self._applier_sidebar.currentRowChanged.connect(self._applier_stack.setCurrentIndex)
@@ -184,10 +182,6 @@ class ApplierPage(QWidget):
         self._tailor_btn.clicked.connect(self._tailor)
         left_layout.addWidget(self._tailor_btn)
 
-        self._pdf_btn = _secondary_btn("Open in Overleaf", 200)
-        self._pdf_btn.clicked.connect(self._generate_pdf)
-        left_layout.addWidget(self._pdf_btn)
-
         self._tailor_status = QLabel("")
         self._tailor_status.setWordWrap(True)
         self._tailor_status.setStyleSheet("color: #555; font-size: 12px;")
@@ -213,6 +207,9 @@ class ApplierPage(QWidget):
         splitter.setSizes([400, 560])
 
         return self._wrap_page("Tailor Resume", splitter)
+
+    def _build_generate_resume_page(self) -> QWidget:
+        return self._wrap_page("Generate Resume", QWidget())
 
     def _build_research_page(self) -> QWidget:
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -557,66 +554,6 @@ class ApplierPage(QWidget):
                 row_layout.addLayout(copy_row)
 
                 self._results_layout.addWidget(row_frame)
-
-    def _generate_pdf(self):
-        jd = self._jd_input.toPlainText().strip()
-        if not jd:
-            return
-
-        profile = self._get_profile()
-        self._pdf_btn.setEnabled(False)
-        self._pdf_btn.setText("Opening Overleaf…")
-        self._tailor_status.setStyleSheet("color: #555; font-size: 12px;")
-        self._tailor_status.setText("")
-
-        worker = _GenerateResumeWorker(profile, jd)
-        thread = QThread(self)
-        worker.moveToThread(thread)
-
-        def on_finished(tex: str):
-            self._pdf_btn.setEnabled(True)
-            self._pdf_btn.setText("Open in Overleaf")
-            self._tailor_status.setText("")
-            thread.quit()
-            self._open_in_overleaf(tex)
-
-        def on_error(msg: str):
-            self._pdf_btn.setEnabled(True)
-            self._pdf_btn.setText("Open in Overleaf")
-            self._tailor_status.setStyleSheet("color: #cc3300; font-size: 12px;")
-            self._tailor_status.setText(f"Error: {msg}")
-            err_label = QLabel(f"Error: {msg}")
-            err_label.setWordWrap(True)
-            err_label.setStyleSheet("color: #cc3300; font-size: 13px;")
-            self._results_layout.addWidget(err_label)
-            thread.quit()
-
-        worker.finished.connect(on_finished)
-        worker.error.connect(on_error)
-        worker.progress.connect(lambda msg: self._tailor_status.setText(msg))
-        thread.started.connect(worker.run)
-        thread.finished.connect(thread.deleteLater)
-        self._threads.append(thread)
-        self._workers.append(worker)
-        thread.finished.connect(lambda: self._workers.remove(worker) if worker in self._workers else None)
-        thread.start()
-
-    def _open_in_overleaf(self, tex: str):
-        escaped = html.escape(tex, quote=True)
-        page = (
-            "<!doctype html><html><body>"
-            "<form id='f' action='https://www.overleaf.com/docs' method='post'>"
-            f"<input type='hidden' name='snip' value=\"{escaped}\">"
-            "<input type='hidden' name='snip_name' value='resume.tex'>"
-            "<input type='hidden' name='engine' value='pdflatex'>"
-            "</form>"
-            "<script>document.getElementById('f').submit();</script>"
-            "</body></html>"
-        )
-        fd, path = tempfile.mkstemp(suffix=".html", prefix="overleaf_")
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(page)
-        QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     def _clear_results(self):
         while self._results_layout.count():

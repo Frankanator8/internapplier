@@ -74,7 +74,7 @@ class _AnalyzeWorker(QObject):
         logger.info("_AnalyzeWorker.run — bullet=%r", self._bullet[:80])
         try:
             buf: list[str] = []
-            for delta in get_provider(tier="fast").analyze_bullet_stream(self._bullet, self._context):
+            for delta in get_provider().analyze_bullet_stream(self._bullet, self._context):
                 buf.append(delta)
                 self.chunk.emit(delta)
             result = "".join(buf)

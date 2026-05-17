@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 _APP_DIR = pathlib.Path.home() / "Library" / "Application Support" / "InternApplier"
 _MODELS_FILE = _APP_DIR / "models.txt"
+_SETTINGS_FILE = _APP_DIR / "settings.json"
 _PROMPTS_DIR = pathlib.Path(__file__).parent.parent / "prompts"
 _APP_PROMPTS_DIR = _APP_DIR / "prompts"
 
@@ -41,7 +42,6 @@ def save_prompt(name: str, content: str) -> None:
     (_APP_PROMPTS_DIR / name).write_text(content, encoding="utf-8")
 
 DEFAULT_FAST_MODEL = "google/gemini-2.0-flash-exp:free"
-DEFAULT_POWERFUL_MODEL = "openai/gpt-4o-mini"
 
 _model_config_cache: dict[str, str] | None = None
 
@@ -51,14 +51,13 @@ def _load_model_config() -> dict[str, str]:
     if _model_config_cache is not None:
         return _model_config_cache
 
-    defaults = {"fast": DEFAULT_FAST_MODEL, "powerful": DEFAULT_POWERFUL_MODEL}
+    defaults = {"fast": DEFAULT_FAST_MODEL}
 
     _APP_DIR.mkdir(parents=True, exist_ok=True)
     _seed_prompts()
     if not _MODELS_FILE.exists():
         with open(_MODELS_FILE, "w", encoding="utf-8") as f:
             f.write(f"fast={DEFAULT_FAST_MODEL}\n")
-            f.write(f"powerful={DEFAULT_POWERFUL_MODEL}\n")
         _model_config_cache = defaults
         return _model_config_cache
 
@@ -112,17 +111,16 @@ class OpenRouterProvider(AIProvider):
         self,
         api_key: str | None = None,
         model: str | None = None,
-        tier: str = "powerful",
     ):
         self.api_key = api_key or os.environ.get("OPENROUTER_API_KEY", "")
         if model:
             self.model = model
         else:
             config = _load_model_config()
-            self.model = config.get(tier, config["powerful"])
+            self.model = config["fast"]
 
         key_hint = f"...{self.api_key[-6:]}" if len(self.api_key) >= 6 else ("(set)" if self.api_key else "(MISSING)")
-        logger.debug("OpenRouterProvider init — tier=%s model=%s api_key=%s", tier, self.model, key_hint)
+        logger.debug("OpenRouterProvider init — model=%s api_key=%s", self.model, key_hint)
 
     def analyze_bullet(self, bullet: str, context: dict) -> str:
         logger.info("analyze_bullet — bullet=%r context=%s", bullet[:120], context)
@@ -343,20 +341,42 @@ class OpenRouterProvider(AIProvider):
             "skills": profile.get("skills", []),
         }, indent=2)
 
-        user_message = (
-            f"Job Description:\n{job_description}\n\n"
-            f"Candidate Profile (JSON):\n{profile_json}\n\n"
-            "Write a complete, compilable LaTeX resume tailored to this job. "
-            "Naturally weave the most relevant keywords and skills from the job "
-            "description into the bullet points and the skills section so the "
-            "resume reads as a strong match. Cover all populated sections "
-            "(Experience, Projects, Education, Skills). Use article class with "
-            "only these packages: geometry, hyperref, enumitem, titlesec. "
-            "Keep margins tight (~0.75in), single column, clean and readable. "
-            "Escape LaTeX special characters in user-provided text. "
-            "Return ONLY raw LaTeX source starting with \\documentclass — "
-            "no markdown fences, no commentary, no explanation."
-        )
+        template = get_resume_template().strip()
+        if template:
+            user_message = (
+                f"Job Description:\n{job_description}\n\n"
+                f"Candidate Profile (JSON):\n{profile_json}\n\n"
+                "Write a complete, compilable LaTeX resume tailored to this job. "
+                "Naturally weave the most relevant keywords and skills from the job "
+                "description into the bullet points and the skills section so the "
+                "resume reads as a strong match. Cover all populated sections "
+                "(Experience, Projects, Education, Skills). "
+                "Escape LaTeX special characters in user-provided text. "
+                "Return ONLY raw LaTeX source starting with \\documentclass — "
+                "no markdown fences, no commentary, no explanation.\n\n"
+                "Use the following LaTeX template as the structural base for the "
+                "resume. Preserve its documentclass, packages, geometry, command "
+                "definitions, and overall layout; only adapt the content sections "
+                "to fit the candidate profile and job description.\n\n"
+                "<template>\n"
+                f"{template}\n"
+                "</template>"
+            )
+        else:
+            user_message = (
+                f"Job Description:\n{job_description}\n\n"
+                f"Candidate Profile (JSON):\n{profile_json}\n\n"
+                "Write a complete, compilable LaTeX resume tailored to this job. "
+                "Naturally weave the most relevant keywords and skills from the job "
+                "description into the bullet points and the skills section so the "
+                "resume reads as a strong match. Cover all populated sections "
+                "(Experience, Projects, Education, Skills). Use article class with "
+                "only these packages: geometry, hyperref, enumitem, titlesec. "
+                "Keep margins tight (~0.75in), single column, clean and readable. "
+                "Escape LaTeX special characters in user-provided text. "
+                "Return ONLY raw LaTeX source starting with \\documentclass — "
+                "no markdown fences, no commentary, no explanation."
+            )
 
         logger.debug("generate_resume — POST %s model=%s timeout=90", self.BASE_URL, self.model)
         t0 = time.perf_counter()
@@ -502,19 +522,46 @@ def _format_context(context: dict) -> str:
     return ""
 
 
-def save_model_config(fast: str, powerful: str) -> None:
+_settings_cache: dict | None = None
+
+
+def _load_settings() -> dict:
+    global _settings_cache
+    if _settings_cache is not None:
+        return _settings_cache
+    if not _SETTINGS_FILE.exists():
+        _settings_cache = {}
+        return _settings_cache
+    try:
+        with open(_SETTINGS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        _settings_cache = data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        _settings_cache = {}
+    return _settings_cache
+
+
+def get_resume_template() -> str:
+    return str(_load_settings().get("resume_template", ""))
+
+
+def save_resume_template(text: str) -> None:
+    global _settings_cache
+    _APP_DIR.mkdir(parents=True, exist_ok=True)
+    current = dict(_load_settings())
+    current["resume_template"] = text
+    with open(_SETTINGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(current, f, indent=2)
+    _settings_cache = current
+
+
+def save_model_config(fast: str) -> None:
     global _model_config_cache
     _APP_DIR.mkdir(parents=True, exist_ok=True)
     with open(_MODELS_FILE, "w", encoding="utf-8") as f:
         f.write(f"fast={fast.strip()}\n")
-        f.write(f"powerful={powerful.strip()}\n")
-    _model_config_cache = {"fast": fast.strip(), "powerful": powerful.strip()}
+    _model_config_cache = {"fast": fast.strip()}
 
 
-def get_provider(tier: str = "powerful") -> AIProvider:
-    """Factory — change this function to swap the AI provider.
-
-    tier: "fast" for cheap/free model (single-bullet rewrites);
-          "powerful" for higher-quality model (resume tailoring/generation/research).
-    """
-    return OpenRouterProvider(tier=tier)
+def get_provider() -> AIProvider:
+    return OpenRouterProvider()

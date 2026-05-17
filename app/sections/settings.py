@@ -59,19 +59,11 @@ class SettingsPage(QWidget):
         self._fast_edit.setText(config.get("fast", ai_provider.DEFAULT_FAST_MODEL))
         self._fast_edit.setPlaceholderText(ai_provider.DEFAULT_FAST_MODEL)
 
-        self._powerful_edit = QLineEdit()
-        self._powerful_edit.setText(config.get("powerful", ai_provider.DEFAULT_POWERFUL_MODEL))
-        self._powerful_edit.setPlaceholderText(ai_provider.DEFAULT_POWERFUL_MODEL)
-
         self._resize_edit(self._fast_edit, self._fast_edit.text())
-        self._resize_edit(self._powerful_edit, self._powerful_edit.text())
         self._fast_edit.textChanged.connect(lambda t: self._resize_edit(self._fast_edit, t))
-        self._powerful_edit.textChanged.connect(lambda t: self._resize_edit(self._powerful_edit, t))
 
-        fast_label = _label("Fast model")
-        powerful_label = _label("Powerful model")
+        fast_label = _label("Model")
         form.addRow(fast_label, self._fast_edit)
-        form.addRow(powerful_label, self._powerful_edit)
         card_layout.addLayout(form)
 
         btn_row = QHBoxLayout()
@@ -86,6 +78,54 @@ class SettingsPage(QWidget):
         card_layout.addLayout(btn_row)
 
         outer.addWidget(card)
+
+        # ── Resume card ──────────────────────────────────────────────────
+        mono = QFont("Menlo")
+        mono.setStyleHint(QFont.StyleHint.Monospace)
+        mono.setPointSize(11)
+
+        resume_card = QFrame()
+        resume_card.setObjectName("card")
+        resume_card.setMaximumWidth(800)
+        rc_layout = QVBoxLayout(resume_card)
+        rc_layout.setContentsMargins(28, 24, 28, 28)
+        rc_layout.setSpacing(16)
+
+        resume_title = QLabel("Resume")
+        resume_title.setStyleSheet("font-size: 16px; font-weight: bold; color: #0a66c2;")
+        rc_layout.addWidget(resume_title)
+
+        resume_hint = QLabel(
+            "Default resume template (LaTeX). Used as the structural base when "
+            "generating tailored resumes. Leave empty to fall back to the built-in style."
+        )
+        resume_hint.setWordWrap(True)
+        resume_hint.setStyleSheet("font-size: 12px; color: #666;")
+        rc_layout.addWidget(resume_hint)
+
+        self._resume_template_edit = QPlainTextEdit()
+        self._resume_template_edit.setFont(mono)
+        self._resume_template_edit.setMinimumHeight(280)
+        self._resume_template_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self._resume_template_edit.setPlaceholderText(
+            "Paste a LaTeX resume template here (e.g. Jake's Resume Template)…"
+        )
+        self._resume_template_edit.setPlainText(ai_provider.get_resume_template())
+        rc_layout.addWidget(self._resume_template_edit)
+
+        rt_btn_row = QHBoxLayout()
+        rt_btn_row.setSpacing(12)
+        rt_save_btn = _primary_btn("Save", width=100)
+        rt_save_btn.clicked.connect(self._save_resume_template)
+        self._resume_template_status = QLabel("")
+        self._resume_template_status.setStyleSheet("font-size: 12px; color: #057642;")
+        rt_btn_row.addWidget(rt_save_btn)
+        rt_btn_row.addWidget(self._resume_template_status)
+        rt_btn_row.addStretch()
+        rc_layout.addLayout(rt_btn_row)
+
+        outer.addSpacing(24)
+        outer.addWidget(resume_card)
 
         # ── System Prompts card ──────────────────────────────────────────
         prompts_card = QFrame()
@@ -180,6 +220,14 @@ class SettingsPage(QWidget):
         if self._status_bar:
             self._status_bar.showMessage(f"✓  Prompt '{filename}' saved.", 3000)
 
+    def _save_resume_template(self) -> None:
+        ai_provider.save_resume_template(self._resume_template_edit.toPlainText())
+        self._resume_template_status.setStyleSheet("font-size: 12px; color: #057642;")
+        self._resume_template_status.setText("✓  Saved")
+        QTimer.singleShot(3000, lambda: self._resume_template_status.setText(""))
+        if self._status_bar:
+            self._status_bar.showMessage("✓  Resume template saved.", 3000)
+
     def _resize_edit(self, edit: QLineEdit, text: str) -> None:
         fm = edit.fontMetrics()
         text_px = fm.horizontalAdvance(text or edit.placeholderText())
@@ -187,13 +235,12 @@ class SettingsPage(QWidget):
 
     def _save(self):
         fast = self._fast_edit.text().strip()
-        powerful = self._powerful_edit.text().strip()
-        if not fast or not powerful:
+        if not fast:
             self._inline_status.setStyleSheet("font-size: 12px; color: #b00;")
-            self._inline_status.setText("Both fields are required.")
+            self._inline_status.setText("Model is required.")
             return
 
-        ai_provider.save_model_config(fast, powerful)
+        ai_provider.save_model_config(fast)
 
         self._inline_status.setStyleSheet("font-size: 12px; color: #057642;")
         self._inline_status.setText("✓  Saved")
