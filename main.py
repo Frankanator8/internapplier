@@ -36,6 +36,10 @@ from app.style import GLOBAL_STYLESHEET
 
 
 def main():
+    for i in range(10):
+        print("STARTING AGAIN")
+    for i in range(10):
+        print()
     app = QApplication(sys.argv)
     app.setApplicationName("InternApplier")
     app.setStyleSheet(GLOBAL_STYLESHEET)

@@ -89,8 +89,8 @@ class AIProvider(ABC):
         ...
 
     @abstractmethod
-    def tailor_resume(self, profile: dict, job_description: str) -> list[dict]:
-        """Returns list of {section, entry, original, tailored} dicts."""
+    def tailor_bullets(self, bullets: list[str], job_description: str) -> list[str]:
+        """Returns a list of tailored bullets, same length/order as input."""
         ...
 
     @abstractmethod
@@ -255,16 +255,84 @@ class OpenRouterProvider(AIProvider):
             logger.exception("analyze_bullet_stream — request failed")
             raise
 
-    def tailor_resume(self, bullets: list[str], job_description: str) -> list[str]:
-        logger.info("tailor_resume — jd=%r bullets=%d", job_description[:120], len(bullets))
-        if not bullets:
-            return []
+    def _stream_chat_completion(
+        self,
+        messages: list[dict],
+        *,
+        log_label: str,
+        timeout: tuple[float, float] = (10.0, 30.0),
+    ) -> Iterator[str]:
+        """SSE-stream chat completions, yielding incremental content chunks.
+
+        Mirrors the parsing in `analyze_bullet_stream`. Raises on transport
+        failure or non-2xx; a stalled stream trips the per-read timeout.
+        """
         if not self.api_key:
-            logger.error("tailor_resume — API key missing")
+            logger.error("%s — API key missing", log_label)
             raise ValueError(
                 "No API key found. Set the OPENROUTER_API_KEY environment variable."
             )
+        logger.debug("%s — POST %s model=%s stream=True timeout=%s",
+                     log_label, self.BASE_URL, self.model, timeout)
+        t0 = time.perf_counter()
+        chunk_count = 0
+        try:
+            with requests.post(
+                self.BASE_URL,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                    "Accept": "text/event-stream",
+                },
+                json={
+                    "model": self.model,
+                    "stream": True,
+                    "messages": messages,
+                },
+                stream=True,
+                timeout=timeout,
+            ) as response:
+                response.raise_for_status()
+                response.encoding = "utf-8"
+                for line in response.iter_lines(decode_unicode=True):
+                    if not line:
+                        continue
+                    if line.startswith(": "):
+                        continue
+                    if not line.startswith("data: "):
+                        continue
+                    payload = line[6:].strip()
+                    if payload == "[DONE]":
+                        break
+                    try:
+                        data = json.loads(payload)
+                    except json.JSONDecodeError:
+                        logger.debug("%s — skipping non-JSON line: %r",
+                                     log_label, payload[:120])
+                        continue
+                    choices = data.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta") or {}
+                    content = delta.get("content")
+                    if content:
+                        chunk_count += 1
+                        yield content
+            elapsed = time.perf_counter() - t0
+            logger.info("%s — stream done in %.2fs, %d chunks",
+                        log_label, elapsed, chunk_count)
+        except Exception:
+            logger.exception("%s — stream failed", log_label)
+            raise
 
+    def tailor_bullets_stream(
+        self, bullets: list[str], job_description: str, feedback: str | None = None
+    ) -> Iterator[str]:
+        logger.info("tailor_bullets_stream — jd=%r bullets=%d feedback=%s",
+                    job_description[:120], len(bullets),
+                    f"{len(feedback)} chars" if feedback else "none")
+        if not bullets:
+            return
         numbered = "\n".join(f"{i + 1}. {b}" for i, b in enumerate(bullets))
         user_message = (
             f"Job Description:\n{job_description}\n\n"
@@ -273,37 +341,27 @@ class OpenRouterProvider(AIProvider):
             f"this job. Return ONLY a JSON array of {len(bullets)} strings, in the same "
             "order as the input. No markdown, no numbering, no explanation."
         )
-
-        logger.debug("tailor_resume — POST %s model=%s timeout=60", self.BASE_URL, self.model)
-        t0 = time.perf_counter()
-        try:
-            response = requests.post(
-                self.BASE_URL,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": self.model,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": _load_prompt("tailor_resume.txt"),
-                        },
-                        {"role": "user", "content": user_message},
-                    ],
-                },
-                timeout=60,
+        if feedback:
+            user_message += (
+                "\n\nA prior draft of the resume was graded and received the following "
+                "feedback. Use it to write stronger bullets in this pass while still "
+                "respecting the factual-integrity and structure-preservation constraints.\n"
+                f"<feedback>\n{feedback}\n</feedback>"
             )
-            elapsed = time.perf_counter() - t0
-            logger.info("tailor_resume — HTTP %s in %.2fs", response.status_code, elapsed)
-            logger.debug("tailor_resume — raw response: %s", response.text[:300])
-            response.raise_for_status()
-        except Exception:
-            logger.exception("tailor_resume — request failed")
-            raise
+        yield from self._stream_chat_completion(
+            messages=[
+                {"role": "system", "content": _load_prompt("tailor_resume.txt")},
+                {"role": "user", "content": user_message},
+            ],
+            log_label="tailor_bullets",
+        )
 
-        raw = response.json()["choices"][0]["message"]["content"].strip()
+    def tailor_bullets(
+        self, bullets: list[str], job_description: str, feedback: str | None = None
+    ) -> list[str]:
+        if not bullets:
+            return []
+        raw = "".join(self.tailor_bullets_stream(bullets, job_description, feedback)).strip()
 
         if raw.startswith("```"):
             raw = raw.split("```")[1]
@@ -314,31 +372,26 @@ class OpenRouterProvider(AIProvider):
         try:
             items = json.loads(raw)
         except json.JSONDecodeError:
-            logger.error("tailor_resume — JSON parse failed, raw=%r", raw[:500])
+            logger.error("tailor_bullets — JSON parse failed, raw=%r", raw[:500])
             raise ValueError("AI returned unexpected format — please try again.")
 
         if not isinstance(items, list) or not all(isinstance(s, str) for s in items):
-            logger.error("tailor_resume — expected list[str], got %r", type(items).__name__)
+            logger.error("tailor_bullets — expected list[str], got %r", type(items).__name__)
             raise ValueError("AI returned unexpected format — please try again.")
 
         if len(items) != len(bullets):
             logger.error(
-                "tailor_resume — length mismatch: sent %d, got %d", len(bullets), len(items)
+                "tailor_bullets — length mismatch: sent %d, got %d", len(bullets), len(items)
             )
             raise ValueError("AI returned unexpected format — please try again.")
 
-        logger.info("tailor_resume — success, %d bullets returned", len(items))
+        logger.info("tailor_bullets — success, %d bullets returned", len(items))
         return items
 
 
-    def grade_resume(self, latex: str, job_description: str) -> dict:
-        logger.info("grade_resume — jd=%r latex_chars=%d", job_description[:120], len(latex))
-        if not self.api_key:
-            logger.error("grade_resume — API key missing")
-            raise ValueError(
-                "No API key found. Set the OPENROUTER_API_KEY environment variable."
-            )
-
+    def grade_resume_stream(self, latex: str, job_description: str) -> Iterator[str]:
+        logger.info("grade_resume_stream — jd=%r latex_chars=%d",
+                    job_description[:120], len(latex))
         user_message = (
             f"Job Description:\n{job_description}\n\n"
             f"Resume LaTeX:\n{latex}\n\n"
@@ -348,32 +401,16 @@ class OpenRouterProvider(AIProvider):
             '"feedback" (string with specific, actionable improvements: '
             "what to add, remove, or rephrase). No markdown, no commentary."
         )
+        yield from self._stream_chat_completion(
+            messages=[
+                {"role": "system", "content": _load_prompt("grade_resume.txt")},
+                {"role": "user", "content": user_message},
+            ],
+            log_label="grade_resume",
+        )
 
-        t0 = time.perf_counter()
-        try:
-            response = requests.post(
-                self.BASE_URL,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": self.model,
-                    "messages": [
-                        {"role": "system", "content": _load_prompt("grade_resume.txt")},
-                        {"role": "user", "content": user_message},
-                    ],
-                },
-                timeout=60,
-            )
-            elapsed = time.perf_counter() - t0
-            logger.info("grade_resume — HTTP %s in %.2fs", response.status_code, elapsed)
-            response.raise_for_status()
-        except Exception:
-            logger.exception("grade_resume — request failed")
-            raise
-
-        raw = response.json()["choices"][0]["message"]["content"].strip()
+    def grade_resume(self, latex: str, job_description: str) -> dict:
+        raw = "".join(self.grade_resume_stream(latex, job_description)).strip()
         if raw.startswith("```"):
             raw = raw.split("```")[1]
             if raw.startswith("json"):
@@ -401,20 +438,9 @@ class OpenRouterProvider(AIProvider):
         return {"score": score, "feedback": feedback}
 
 
-    def generate_resume(
-        self, profile: dict, job_description: str, feedback: str | None = None
-    ) -> str:
-        logger.info(
-            "generate_resume — jd=%r feedback=%s",
-            job_description[:120],
-            f"{len(feedback)} chars" if feedback else "none",
-        )
-        if not self.api_key:
-            logger.error("generate_resume — API key missing")
-            raise ValueError(
-                "No API key found. Set the OPENROUTER_API_KEY environment variable."
-            )
-
+    def _build_generate_resume_messages(
+        self, profile: dict, job_description: str, feedback: str | None
+    ) -> list[dict]:
         import json as _json
 
         profile_json = _json.dumps({
@@ -429,18 +455,20 @@ class OpenRouterProvider(AIProvider):
             user_message = (
                 f"Job Description:\n{job_description}\n\n"
                 f"Candidate Profile (JSON):\n{profile_json}\n\n"
-                "Write a complete, compilable LaTeX resume tailored to this job. "
-                "Naturally weave the most relevant keywords and skills from the job "
-                "description into the bullet points and the skills section so the "
-                "resume reads as a strong match. Cover all populated sections "
-                "(Experience, Projects, Education, Skills). "
+                "Write a complete, compilable LaTeX resume from this profile. "
+                "The bullets in the profile JSON are already tailored to this job by "
+                "an upstream step — reproduce them VERBATIM. Do not rewrite, shorten, "
+                "merge, split, or rephrase bullet text. Your job is LaTeX layout, "
+                "section ordering, and the skills section (where you may weave in "
+                "JD keywords). Cover all populated sections (Experience, Projects, "
+                "Education, Skills). "
                 "Escape LaTeX special characters in user-provided text. "
                 "Return ONLY raw LaTeX source starting with \\documentclass — "
                 "no markdown fences, no commentary, no explanation.\n\n"
                 "Use the following LaTeX template as the structural base for the "
                 "resume. Preserve its documentclass, packages, geometry, command "
                 "definitions, and overall layout; only adapt the content sections "
-                "to fit the candidate profile and job description.\n\n"
+                "to fit the candidate profile.\n\n"
                 "<template>\n"
                 f"{template}\n"
                 "</template>"
@@ -449,11 +477,13 @@ class OpenRouterProvider(AIProvider):
             user_message = (
                 f"Job Description:\n{job_description}\n\n"
                 f"Candidate Profile (JSON):\n{profile_json}\n\n"
-                "Write a complete, compilable LaTeX resume tailored to this job. "
-                "Naturally weave the most relevant keywords and skills from the job "
-                "description into the bullet points and the skills section so the "
-                "resume reads as a strong match. Cover all populated sections "
-                "(Experience, Projects, Education, Skills). Use article class with "
+                "Write a complete, compilable LaTeX resume from this profile. "
+                "The bullets in the profile JSON are already tailored to this job by "
+                "an upstream step — reproduce them VERBATIM. Do not rewrite, shorten, "
+                "merge, split, or rephrase bullet text. Your job is LaTeX layout, "
+                "section ordering, and the skills section (where you may weave in "
+                "JD keywords). Cover all populated sections (Experience, Projects, "
+                "Education, Skills). Use article class with "
                 "only these packages: geometry, hyperref, enumitem, titlesec. "
                 "Keep margins tight (~0.75in), single column, clean and readable. "
                 "Escape LaTeX special characters in user-provided text. "
@@ -463,41 +493,36 @@ class OpenRouterProvider(AIProvider):
 
         if feedback:
             user_message += (
-                "\n\nA prior draft of this resume did not meet quality or page-length "
-                "requirements. Apply the following feedback in this new draft:\n"
+                "\n\nA prior draft did not compile or did not fit the page cap. "
+                "Apply the following feedback for LaTeX structure, layout, and "
+                "page-fit only. Do NOT modify bullet text — bullet wording is owned "
+                "by an upstream step and must be reproduced verbatim.\n"
                 f"<feedback>\n{feedback}\n</feedback>"
             )
 
-        logger.debug("generate_resume — POST %s model=%s timeout=90", self.BASE_URL, self.model)
-        t0 = time.perf_counter()
-        try:
-            response = requests.post(
-                self.BASE_URL,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": self.model,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": _load_prompt("generate_resume.txt"),
-                        },
-                        {"role": "user", "content": user_message},
-                    ],
-                },
-                timeout=90,
-            )
-            elapsed = time.perf_counter() - t0
-            logger.info("generate_resume — HTTP %s in %.2fs", response.status_code, elapsed)
-            logger.debug("generate_resume — raw response: %s", response.text[:300])
-            response.raise_for_status()
-        except Exception:
-            logger.exception("generate_resume — request failed")
-            raise
+        return [
+            {"role": "system", "content": _load_prompt("generate_resume.txt")},
+            {"role": "user", "content": user_message},
+        ]
 
-        raw = response.json()["choices"][0]["message"]["content"].strip()
+    def generate_resume_stream(
+        self, profile: dict, job_description: str, feedback: str | None = None
+    ) -> Iterator[str]:
+        logger.info(
+            "generate_resume_stream — jd=%r feedback=%s",
+            job_description[:120],
+            f"{len(feedback)} chars" if feedback else "none",
+        )
+        messages = self._build_generate_resume_messages(profile, job_description, feedback)
+        yield from self._stream_chat_completion(
+            messages=messages,
+            log_label="generate_resume",
+        )
+
+    def generate_resume(
+        self, profile: dict, job_description: str, feedback: str | None = None
+    ) -> str:
+        raw = "".join(self.generate_resume_stream(profile, job_description, feedback)).strip()
 
         if raw.startswith("```"):
             raw = raw.split("```", 2)[1]

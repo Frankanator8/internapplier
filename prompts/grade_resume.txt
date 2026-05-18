@@ -15,6 +15,6 @@ Evaluate along these axes:
 4. Skills section — accurate, JD-aligned, not a keyword dump.
 5. Structure and readability — clear hierarchy, consistent formatting.
 
-Return ONLY a JSON object: {"score": <number 0-10, decimals allowed>, "feedback": "<specific, actionable improvements the resume-writer can apply: which bullets to rewrite and how, what to add or cut, what JD keywords are missing>"}.
+Return ONLY a JSON object: {"score": <number 0-10, decimals allowed>, "feedback": "<specific, actionable improvements. Focus on bullet-level guidance — which bullets to rewrite and how, what to add or cut, what JD keywords are missing, what to quantify — since this feedback is consumed by an upstream bullet-tailoring step that will rewrite the bullets before the next draft. Reference bullets by their content so the tailorer can match them.>"}.
 
 Do not include markdown fences or commentary outside the JSON.

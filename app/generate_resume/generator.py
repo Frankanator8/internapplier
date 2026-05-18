@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 import logging
 import pathlib
 import re
 import shutil
-from typing import Any
+from typing import Any, Callable
 
 from app.ai_provider import (
     AIProvider,
@@ -36,10 +37,15 @@ class ResumeGenerator:
         self.job_description = job_description or ""
         self.company_research = company_research or {}
         self.provider: OpenRouterProvider = provider or get_provider()  # type: ignore[assignment]
+        self._courses_cache: list[str] | None = None
+        self._scored_cache: dict[str, list[dict]] | None = None
+        self._filtered_cache: dict[str, Any] | None = None
 
     # ---------- public API ----------
 
     def select_courses(self, top_n: int = 10) -> list[str]:
+        if self._courses_cache is not None:
+            return self._courses_cache
         all_courses: list[str] = []
         seen: set[str] = set()
         for edu in self.profile.get("education", []) or []:
@@ -50,18 +56,22 @@ class ResumeGenerator:
                     seen.add(key)
                     all_courses.append(c)
         logger.info("select_courses — %d unique courses, top_n=%d", len(all_courses), top_n)
-        return select_courses_ai(
+        result = select_courses_ai(
             self.provider, all_courses, self.job_description, self.company_research, top_n
         )
+        self._courses_cache = result
+        return result
 
     def score_entries(self) -> dict[str, list[dict]]:
+        if self._scored_cache is not None:
+            return self._scored_cache
         experience = self.profile.get("experience", []) or []
         relevant_exp = [e for e in experience if (e.get("category") or "relevant") == "relevant"]
         leadership = [e for e in experience if (e.get("category") or "relevant") == "other"]
         projects = self.profile.get("projects", []) or []
         awards = self.profile.get("awards", []) or []
 
-        return {
+        result = {
             "relevant_experience": self._score_section(
                 relevant_exp, _exp_label, _exp_date, include_relevancy=True
             ),
@@ -75,8 +85,12 @@ class ResumeGenerator:
                 leadership, _exp_label, _exp_date, include_relevancy=False
             ),
         }
+        self._scored_cache = result
+        return result
 
     def build_filtered_profile(self) -> dict[str, Any]:
+        if self._filtered_cache is not None:
+            return self._filtered_cache
         scored = self.score_entries()
         courses = self.select_courses(10)
 
@@ -95,7 +109,7 @@ class ResumeGenerator:
             edu_copy["courses"] = [c for c in courses if c.strip().lower() in existing]
             new_education.append(edu_copy)
 
-        return {
+        result = {
             "experience": new_experience,
             "projects": ranked_projects,
             "education": new_education,
@@ -103,11 +117,15 @@ class ResumeGenerator:
             "skills": self.profile.get("skills", []) or [],
             "hobbies": self.profile.get("hobbies", []) or [],
         }
+        self._filtered_cache = result
+        return result
 
     def generate_latex(
         self,
         output_pdf: pathlib.Path | str | None = None,
         company: str | None = None,
+        progress_cb: Callable[[str], None] | None = None,
+        stream_cb: Callable[[str, str], None] | None = None,
     ) -> dict:
         """Generate, compile, and grade the resume.
 
@@ -115,20 +133,31 @@ class ResumeGenerator:
                  "grade": {"score": float, "feedback": str} | None}.
         If `output_pdf` is provided, the PDF is written there. Otherwise it goes to
         `<resume_output_dir>/<slug(company)>_resume.pdf` (or `resume.pdf` if no company).
+
+        `progress_cb(msg)` receives attempt-boundary status strings.
+        `stream_cb(stage, chunk)` receives streamed LLM token chunks where
+        `stage` is one of "tailor", "generate", "grade".
         """
-        filtered = self.build_filtered_profile()
-        filtered = self._tailor_profile_bullets(filtered)
+        filtered_base = self.build_filtered_profile()
+        filtered = self._tailor_profile_bullets(filtered_base, stream_cb=stream_cb)
 
         page_cap = get_resume_page_cap()
-        feedback: str | None = None
+        writer_feedback: str | None = None
+        bullet_feedback: str | None = None
         attempts: list[dict] = []
 
         for attempt in range(1, MAX_GENERATION_ATTEMPTS + 1):
             logger.info("generate_latex — attempt %d/%d", attempt, MAX_GENERATION_ATTEMPTS)
-            try:
-                latex = self.provider.generate_resume(
-                    filtered, self.job_description, feedback=feedback
+            if bullet_feedback is not None:
+                if progress_cb:
+                    progress_cb(f"Attempt {attempt}: re-tailoring bullets…")
+                filtered = self._tailor_profile_bullets(
+                    filtered_base, stream_cb=stream_cb, feedback=bullet_feedback
                 )
+            if progress_cb:
+                progress_cb(f"Attempt {attempt}/{MAX_GENERATION_ATTEMPTS}: generating LaTeX…")
+            try:
+                latex = self._generate_resume_text(filtered, writer_feedback, stream_cb)
             except Exception:
                 logger.exception("generate_latex — provider.generate_resume failed on attempt %d", attempt)
                 raise
@@ -136,6 +165,8 @@ class ResumeGenerator:
             pages: int | None = None
             compile_error: str | None = None
             pdf_path: pathlib.Path | None = None
+            if progress_cb:
+                progress_cb(f"Attempt {attempt}: compiling LaTeX…")
             try:
                 pdf_path = compile_latex(latex)
                 pages = pdf_page_count(pdf_path)
@@ -145,11 +176,17 @@ class ResumeGenerator:
 
             grade: dict | None = None
             if compile_error is None:
+                if progress_cb:
+                    progress_cb(f"Attempt {attempt}: grading…")
                 try:
-                    grade = self.provider.grade_resume(latex, self.job_description)
+                    grade = self._grade_resume_text(latex, stream_cb)
                 except Exception:
                     logger.exception("generate_latex — grade_resume failed on attempt %d", attempt)
                     raise
+                if progress_cb and grade is not None:
+                    progress_cb(
+                        f"Attempt {attempt}: graded {grade['score']:.2f}/10"
+                    )
 
             page_ok = pages is not None and pages <= page_cap
             score_ok = grade is not None and grade["score"] >= SCORE_THRESHOLD
@@ -174,23 +211,22 @@ class ResumeGenerator:
                 final_pdf = _persist_pdf(pdf_path, output_pdf, company)
                 return {"latex": latex, "pdf": final_pdf, "pages": pages, "grade": grade}
 
-            parts: list[str] = []
+            writer_parts: list[str] = []
             if compile_error:
-                parts.append(
+                writer_parts.append(
                     "PREVIOUS DRAFT FAILED TO COMPILE. Fix the LaTeX syntax. "
                     f"Compiler output:\n{compile_error}"
                 )
             if pages is not None and not page_ok:
-                parts.append(
+                writer_parts.append(
                     f"PREVIOUS DRAFT WAS {pages} PAGES; it MUST fit on {page_cap}. "
-                    "Cut the weakest bullets, shorten phrasing, tighten margins/spacing if needed."
+                    "Tighten margins/spacing, trim the weakest entries, or drop optional "
+                    "sections. Do NOT rewrite bullet text."
                 )
-            if grade is not None and not score_ok:
-                parts.append(
-                    f"Grader scored {grade['score']:.2f}/10 (need ≥ {SCORE_THRESHOLD}). "
-                    f"Address this feedback:\n{grade['feedback']}"
-                )
-            feedback = "\n\n".join(parts) if parts else None
+            writer_feedback = "\n\n".join(writer_parts) if writer_parts else None
+            bullet_feedback = (
+                grade["feedback"] if (grade is not None and not score_ok) else None
+            )
 
         best = self._pick_best_attempt(attempts, page_cap)
         logger.warning(
@@ -207,25 +243,143 @@ class ResumeGenerator:
             "grade": best.get("grade"),
         }
 
-    def _tailor_profile_bullets(self, profile: dict[str, Any]) -> dict[str, Any]:
+    def _tailor_profile_bullets(
+        self,
+        profile: dict[str, Any],
+        stream_cb: Callable[[str, str], None] | None = None,
+        feedback: str | None = None,
+    ) -> dict[str, Any]:
         out = dict(profile)
-        for section in ("experience", "projects", "awards"):
+        sections = ("experience", "projects", "awards")
+
+        all_bullets: list[str] = []
+        slices: list[tuple[str, int, int, int]] = []
+        for section in sections:
             entries = out.get(section) or []
-            new_entries = []
-            for entry in entries:
+            for idx, entry in enumerate(entries):
                 bullets = list(entry.get("bullets", []) or [])
-                if bullets:
-                    try:
-                        tailored = self.provider.tailor_resume(bullets, self.job_description)
-                        entry = {**entry, "bullets": tailored}
-                    except Exception:
-                        logger.exception(
-                            "_tailor_profile_bullets — tailor_resume failed for section=%s; keeping originals",
-                            section,
-                        )
-                new_entries.append(entry)
-            out[section] = new_entries
+                if not bullets:
+                    continue
+                start = len(all_bullets)
+                all_bullets.extend(bullets)
+                slices.append((section, idx, start, start + len(bullets)))
+
+        if not all_bullets:
+            return out
+
+        try:
+            tailored = self._tailor_bullets_text(all_bullets, stream_cb, feedback)
+        except Exception:
+            logger.exception(
+                "_tailor_profile_bullets — tailor_bullets failed; keeping originals"
+            )
+            return out
+
+        if len(tailored) != len(all_bullets):
+            logger.error(
+                "_tailor_profile_bullets — length mismatch: sent %d, got %d; keeping originals",
+                len(all_bullets),
+                len(tailored),
+            )
+            return out
+
+        section_entries: dict[str, list[dict]] = {
+            section: list(out.get(section) or []) for section in sections
+        }
+        for section, idx, start, end in slices:
+            entry = section_entries[section][idx]
+            section_entries[section][idx] = {**entry, "bullets": tailored[start:end]}
+        for section in sections:
+            out[section] = section_entries[section]
         return out
+
+    def _tailor_bullets_text(
+        self,
+        bullets: list[str],
+        stream_cb: Callable[[str, str], None] | None,
+        feedback: str | None = None,
+    ) -> list[str]:
+        if stream_cb is None:
+            return self.provider.tailor_bullets(bullets, self.job_description, feedback)
+
+        raw_parts: list[str] = []
+        for chunk in self.provider.tailor_bullets_stream(bullets, self.job_description, feedback):
+            raw_parts.append(chunk)
+            stream_cb("tailor", chunk)
+        raw = "".join(raw_parts).strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+            raw = raw.strip()
+        try:
+            items = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.error("_tailor_bullets_text — JSON parse failed, raw=%r", raw[:500])
+            raise ValueError("AI returned unexpected format — please try again.")
+        if not isinstance(items, list) or not all(isinstance(s, str) for s in items):
+            raise ValueError("AI returned unexpected format — please try again.")
+        if len(items) != len(bullets):
+            raise ValueError("AI returned unexpected format — please try again.")
+        return items
+
+    def _generate_resume_text(
+        self,
+        filtered: dict,
+        feedback: str | None,
+        stream_cb: Callable[[str, str], None] | None,
+    ) -> str:
+        if stream_cb is None:
+            return self.provider.generate_resume(
+                filtered, self.job_description, feedback=feedback
+            )
+        raw_parts: list[str] = []
+        for chunk in self.provider.generate_resume_stream(
+            filtered, self.job_description, feedback=feedback
+        ):
+            raw_parts.append(chunk)
+            stream_cb("generate", chunk)
+        raw = "".join(raw_parts).strip()
+        if raw.startswith("```"):
+            raw = raw.split("```", 2)[1]
+            if raw.startswith("latex"):
+                raw = raw[5:]
+            elif raw.startswith("tex"):
+                raw = raw[3:]
+            raw = raw.strip()
+            if raw.endswith("```"):
+                raw = raw[:-3].strip()
+        return raw
+
+    def _grade_resume_text(
+        self,
+        latex: str,
+        stream_cb: Callable[[str, str], None] | None,
+    ) -> dict:
+        if stream_cb is None:
+            return self.provider.grade_resume(latex, self.job_description)
+        raw_parts: list[str] = []
+        for chunk in self.provider.grade_resume_stream(latex, self.job_description):
+            raw_parts.append(chunk)
+            stream_cb("grade", chunk)
+        raw = "".join(raw_parts).strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+            raw = raw.strip()
+        try:
+            obj = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.error("_grade_resume_text — JSON parse failed, raw=%r", raw[:500])
+            raise ValueError("AI returned unexpected format — please try again.")
+        if not isinstance(obj, dict) or "score" not in obj or "feedback" not in obj:
+            raise ValueError("AI returned unexpected format — please try again.")
+        try:
+            score = float(obj["score"])
+        except (TypeError, ValueError):
+            raise ValueError("AI returned unexpected format — please try again.")
+        return {"score": score, "feedback": str(obj["feedback"])}
 
     @staticmethod
     def _pick_best_attempt(attempts: list[dict], page_cap: int) -> dict:

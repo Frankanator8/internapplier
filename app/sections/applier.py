@@ -3,57 +3,19 @@ from __future__ import annotations
 import logging
 from typing import Callable
 
-from PyQt6.QtCore import QObject, QThread, Qt, pyqtSignal
-from PyQt6.QtGui import QGuiApplication
+from PyQt6.QtCore import QObject, QThread, Qt, QUrl, pyqtSignal
+from PyQt6.QtGui import QDesktopServices, QFont, QGuiApplication, QTextCursor
 from PyQt6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-    QScrollArea, QSizePolicy, QSplitter, QStackedWidget, QTextEdit, QVBoxLayout,
-    QWidget,
+    QMessageBox, QPlainTextEdit, QScrollArea, QSizePolicy, QSplitter,
+    QStackedWidget, QTextEdit, QVBoxLayout, QWidget,
 )
+from PyQt6.QtWebEngineWidgets import QWebEngineView
+from PyQt6.QtWebEngineCore import QWebEngineSettings
 
 from .base import _label, _primary_btn, _secondary_btn
 
 logger = logging.getLogger(__name__)
-
-
-class _TailorWorker(QObject):
-    finished = pyqtSignal(list)
-    error = pyqtSignal(str)
-    progress = pyqtSignal(str)
-
-    def __init__(self, profile: dict, jd: str):
-        super().__init__()
-        self._profile = profile
-        self._jd = jd
-
-    def run(self):
-        from app.ai_provider import get_provider
-        logger.info("_TailorWorker.run — jd=%r", self._jd[:80])
-        try:
-            metadata: list[tuple[str, str, str]] = []
-            bullets: list[str] = []
-            for section_key, entry_name_key in (
-                ("experience", "company"),
-                ("projects", "name"),
-                ("education", "school"),
-            ):
-                for entry in self._profile.get(section_key, []):
-                    entry_name = entry.get(entry_name_key, "")
-                    for bullet in entry.get("bullets", []):
-                        metadata.append((section_key, entry_name, bullet))
-                        bullets.append(bullet)
-
-            self.progress.emit(f"Sending {len(bullets)} bullets to AI…")
-            tailored = get_provider().tailor_resume(bullets, self._jd)
-            result = [
-                {"section": sec, "entry": entry, "original": orig, "tailored": new}
-                for (sec, entry, orig), new in zip(metadata, tailored)
-            ]
-            logger.info("_TailorWorker.run — success, %d items", len(result))
-            self.finished.emit(result)
-        except Exception as exc:
-            logger.exception("_TailorWorker.run — failed")
-            self.error.emit(str(exc))
 
 
 class _ResearchWorker(QObject):
@@ -111,6 +73,7 @@ class _GenerateResumeWorker(QObject):
     finished = pyqtSignal(dict)
     error = pyqtSignal(str)
     progress = pyqtSignal(str)
+    stream = pyqtSignal(str, str)  # (stage, chunk)
 
     def __init__(self, profile: dict, jd: str, company_name: str, url: str, research_cache: dict):
         super().__init__()
@@ -151,15 +114,32 @@ class _GenerateResumeWorker(QObject):
             self.progress.emit("Scoring entries…")
             scored = gen.score_entries()
 
+            self.progress.emit("Building filtered profile…")
+            filtered = gen.build_filtered_profile()
+
+            self.progress.emit("Tailoring bullets and generating LaTeX (this can take a minute)…")
+            latex_result = gen.generate_latex(
+                company=self._company or None,
+                progress_cb=self.progress.emit,
+                stream_cb=self.stream.emit,
+            )
+
+            pdf_path = latex_result.get("pdf")
             logger.info(
-                "_GenerateResumeWorker.run — success, courses=%d sections=%s",
+                "_GenerateResumeWorker.run — success, courses=%d sections=%s pages=%s",
                 len(courses), {k: len(v) for k, v in scored.items()},
+                latex_result.get("pages"),
             )
             self.finished.emit({
                 "research": research,
                 "courses": courses,
                 "scored": scored,
                 "new_research": new_research,
+                "filtered": filtered,
+                "latex": latex_result.get("latex", ""),
+                "pdf": str(pdf_path) if pdf_path else "",
+                "pages": latex_result.get("pages"),
+                "grade": latex_result.get("grade"),
             })
         except Exception as exc:
             logger.exception("_GenerateResumeWorker.run — failed")
@@ -189,17 +169,18 @@ class ApplierPage(QWidget):
         self._applier_sidebar.setObjectName("sidebar")
         self._applier_sidebar.setFixedWidth(200)
 
-        for label in ("✦  Tailor Resume", "📄  Generate Resume", "🔍  Research Company"):
+        for label in ("📄  Generate Resume", "🔍  Research Company", "📚  Library"):
             item = QListWidgetItem(label)
             item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             self._applier_sidebar.addItem(item)
 
         self._applier_stack = QStackedWidget()
-        self._applier_stack.addWidget(self._build_tailor_page())
         self._applier_stack.addWidget(self._build_generate_resume_page())
         self._applier_stack.addWidget(self._build_research_page())
+        self._applier_stack.addWidget(self._build_library_page())
 
         self._applier_sidebar.currentRowChanged.connect(self._applier_stack.setCurrentIndex)
+        self._applier_sidebar.currentRowChanged.connect(self._on_applier_section_changed)
         self._applier_sidebar.setCurrentRow(0)
 
         outer.addWidget(self._applier_sidebar)
@@ -213,54 +194,6 @@ class ApplierPage(QWidget):
         layout.addWidget(_label(title, "section-title"))
         layout.addWidget(content, 1)
         return page
-
-    def _build_tailor_page(self) -> QWidget:
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setChildrenCollapsible(False)
-
-        # ── Left panel ───────────────────────────────────────────
-        left = QWidget()
-        left.setMinimumWidth(280)
-        left_layout = QVBoxLayout(left)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(8)
-
-        left_layout.addWidget(_label("Job Description"))
-
-        self._jd_input = QTextEdit()
-        self._jd_input.setObjectName("jd-input")
-        self._jd_input.setPlaceholderText("Paste the job description here…")
-        left_layout.addWidget(self._jd_input, 1)
-
-        self._tailor_btn = _primary_btn("✦  Tailor My Resume")
-        self._tailor_btn.clicked.connect(self._tailor)
-        left_layout.addWidget(self._tailor_btn)
-
-        self._tailor_status = QLabel("")
-        self._tailor_status.setWordWrap(True)
-        self._tailor_status.setStyleSheet("color: #555; font-size: 12px;")
-        left_layout.addWidget(self._tailor_status)
-
-        splitter.addWidget(left)
-
-        # ── Right panel ──────────────────────────────────────────
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-
-        self._results_content = QWidget()
-        self._results_content.setStyleSheet("background: transparent;")
-        self._results_layout = QVBoxLayout(self._results_content)
-        self._results_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self._results_layout.setSpacing(10)
-        self._results_layout.setContentsMargins(12, 0, 4, 16)
-        scroll.setWidget(self._results_content)
-
-        splitter.addWidget(scroll)
-        splitter.setSizes([400, 560])
-
-        return self._wrap_page("Tailor Resume", splitter)
 
     def _build_generate_resume_page(self) -> QWidget:
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -310,7 +243,27 @@ class ApplierPage(QWidget):
 
         splitter.addWidget(left)
 
-        # ── Right: results ───────────────────────────────────────
+        # ── Right: live stream view + results ────────────────────
+        right = QWidget()
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(0)
+
+        self._gen_stream_view = QPlainTextEdit()
+        self._gen_stream_view.setReadOnly(True)
+        self._gen_stream_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        mono = QFont("Menlo")
+        mono.setStyleHint(QFont.StyleHint.Monospace)
+        mono.setPointSize(11)
+        self._gen_stream_view.setFont(mono)
+        self._gen_stream_view.setStyleSheet(
+            "QPlainTextEdit { background: #1d1d1d; color: #e6e6e6;"
+            " border: 1px solid #333; padding: 8px; }"
+        )
+        self._gen_stream_view.setVisible(False)
+        self._gen_stream_last_stage: str | None = None
+        right_layout.addWidget(self._gen_stream_view, 1)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -323,11 +276,24 @@ class ApplierPage(QWidget):
         self._gen_results_layout.setSpacing(10)
         self._gen_results_layout.setContentsMargins(12, 0, 4, 16)
         scroll.setWidget(self._gen_results_content)
+        self._gen_results_scroll = scroll
+        right_layout.addWidget(scroll, 1)
 
-        splitter.addWidget(scroll)
+        splitter.addWidget(right)
         splitter.setSizes([400, 560])
 
         return self._wrap_page("Generate Resume", splitter)
+
+    def _on_gen_stream(self, stage: str, chunk: str) -> None:
+        if stage != self._gen_stream_last_stage:
+            sep = f"\n\n── {stage} ──\n" if self._gen_stream_last_stage is not None else f"── {stage} ──\n"
+            self._gen_stream_view.moveCursor(QTextCursor.MoveOperation.End)
+            self._gen_stream_view.insertPlainText(sep)
+            self._gen_stream_last_stage = stage
+        self._gen_stream_view.moveCursor(QTextCursor.MoveOperation.End)
+        self._gen_stream_view.insertPlainText(chunk)
+        sb = self._gen_stream_view.verticalScrollBar()
+        sb.setValue(sb.maximum())
 
     def _build_research_page(self) -> QWidget:
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -556,121 +522,6 @@ class ApplierPage(QWidget):
         if self._save_fn:
             self._save_fn()
 
-    def _tailor(self):
-        jd = self._jd_input.toPlainText().strip()
-        if not jd:
-            return
-
-        profile = self._get_profile()
-        self._tailor_btn.setEnabled(False)
-        self._tailor_btn.setText("Tailoring…")
-        self._tailor_status.setStyleSheet("color: #555; font-size: 12px;")
-        self._tailor_status.setText("")
-        self._clear_results()
-
-        worker = _TailorWorker(profile, jd)
-        thread = QThread(self)
-        worker.moveToThread(thread)
-
-        def on_finished(items: list):
-            self._tailor_btn.setEnabled(True)
-            self._tailor_btn.setText("✦  Tailor My Resume")
-            self._tailor_status.setText("")
-            self._populate_results(items)
-            thread.quit()
-
-        def on_error(msg: str):
-            self._tailor_btn.setEnabled(True)
-            self._tailor_btn.setText("✦  Tailor My Resume")
-            self._tailor_status.setStyleSheet("color: #cc3300; font-size: 12px;")
-            self._tailor_status.setText(f"Error: {msg}")
-            err_label = QLabel(f"Error: {msg}")
-            err_label.setWordWrap(True)
-            err_label.setStyleSheet("color: #cc3300; font-size: 13px;")
-            self._results_layout.addWidget(err_label)
-            thread.quit()
-
-        worker.finished.connect(on_finished)
-        worker.error.connect(on_error)
-        worker.progress.connect(lambda msg: self._tailor_status.setText(msg))
-        thread.started.connect(worker.run)
-        thread.finished.connect(thread.deleteLater)
-        self._threads.append(thread)
-        self._workers.append(worker)
-        thread.finished.connect(lambda: self._workers.remove(worker) if worker in self._workers else None)
-        thread.start()
-
-    def _populate_results(self, items: list[dict]):
-        if not items:
-            empty = QLabel("No bullets found in your profile to tailor.")
-            empty.setStyleSheet("color: #777; font-size: 13px;")
-            self._results_layout.addWidget(empty)
-            return
-
-        grouped: dict[str, list[dict]] = {
-            "experience": [], "projects": [], "education": []
-        }
-        for item in items:
-            sec = item.get("section", "")
-            if sec in grouped:
-                grouped[sec].append(item)
-
-        section_names = {
-            "experience": "Experience",
-            "projects": "Projects",
-            "education": "Education",
-        }
-
-        for key in ("experience", "projects", "education"):
-            section_items = grouped[key]
-            if not section_items:
-                continue
-
-            header = QLabel(section_names[key].upper())
-            header.setObjectName("applier-section-header")
-            self._results_layout.addWidget(header)
-
-            for item in section_items:
-                row_frame = QFrame()
-                row_frame.setObjectName("result-bullet-row")
-                row_layout = QVBoxLayout(row_frame)
-                row_layout.setContentsMargins(12, 10, 12, 10)
-                row_layout.setSpacing(6)
-
-                if item.get("entry"):
-                    entry_lbl = QLabel(item["entry"])
-                    entry_lbl.setStyleSheet("font-size: 11px; color: #888;")
-                    row_layout.addWidget(entry_lbl)
-
-                orig_lbl = QLabel(item.get("original", ""))
-                orig_lbl.setWordWrap(True)
-                orig_lbl.setStyleSheet("color: #888; font-style: italic; font-size: 12px;")
-                row_layout.addWidget(orig_lbl)
-
-                tailored_lbl = QLabel(item.get("tailored", ""))
-                tailored_lbl.setWordWrap(True)
-                tailored_lbl.setStyleSheet("color: #1d1d1d; font-size: 13px;")
-                row_layout.addWidget(tailored_lbl)
-
-                copy_row = QHBoxLayout()
-                copy_row.addStretch()
-                copy_btn = _secondary_btn("Copy", 70)
-                tailored_text = item.get("tailored", "")
-                copy_btn.clicked.connect(
-                    lambda checked, t=tailored_text: QGuiApplication.clipboard().setText(t)
-                )
-                copy_row.addWidget(copy_btn)
-                row_layout.addLayout(copy_row)
-
-                self._results_layout.addWidget(row_frame)
-
-    def _clear_results(self):
-        while self._results_layout.count():
-            item = self._results_layout.takeAt(0)
-            w = item.widget()
-            if w is not None:
-                w.deleteLater()
-
     def _generate_resume(self):
         jd = self._gen_jd_input.toPlainText().strip()
         if not jd:
@@ -683,6 +534,10 @@ class ApplierPage(QWidget):
         profile = self._get_profile()
 
         self._clear_generate_results()
+        self._gen_stream_view.clear()
+        self._gen_stream_last_stage = None
+        self._gen_stream_view.setVisible(True)
+        self._gen_results_scroll.setVisible(False)
         self._gen_btn.setEnabled(False)
         self._gen_btn.setText("Generating…")
         self._gen_status.setStyleSheet("color: #555; font-size: 12px;")
@@ -696,12 +551,15 @@ class ApplierPage(QWidget):
             self._gen_btn.setEnabled(True)
             self._gen_btn.setText("📄  Generate Resume")
             self._gen_status.setText("")
+            self._gen_stream_view.setVisible(False)
+            self._gen_results_scroll.setVisible(True)
             self._populate_generate_results(payload)
             if payload.get("new_research") and name:
                 self._research_cache[name] = {"url": url, "result": payload["research"]}
                 self._refresh_company_list()
                 if self._save_fn:
                     self._save_fn()
+            self._refresh_library()
             thread.quit()
 
         def on_error(msg: str):
@@ -718,6 +576,7 @@ class ApplierPage(QWidget):
         worker.finished.connect(on_finished)
         worker.error.connect(on_error)
         worker.progress.connect(on_progress)
+        worker.stream.connect(self._on_gen_stream)
         thread.started.connect(worker.run)
         thread.finished.connect(thread.deleteLater)
         self._threads.append(thread)
@@ -755,6 +614,53 @@ class ApplierPage(QWidget):
             for r in rows:
                 layout.addWidget(self._ranking_card(r, include_relevancy))
 
+        filtered = payload.get("filtered") or {}
+        if filtered:
+            layout.addWidget(self._research_section_header("FILTERED PROFILE"))
+            edu_courses = sum(len(e.get("courses", []) or []) for e in filtered.get("education", []) or [])
+            layout.addWidget(self._research_text_row(
+                f"experience: {len(filtered.get('experience', []) or [])}   "
+                f"projects: {len(filtered.get('projects', []) or [])}   "
+                f"awards: {len(filtered.get('awards', []) or [])}   "
+                f"education: {len(filtered.get('education', []) or [])}   "
+                f"(courses: {edu_courses})"
+            ))
+
+        pages = payload.get("pages")
+        grade = payload.get("grade") or {}
+        latex = payload.get("latex") or ""
+        pdf = payload.get("pdf") or ""
+        if latex or pages is not None or grade or pdf:
+            layout.addWidget(self._research_section_header("GENERATED RESUME"))
+            if pages is None:
+                layout.addWidget(self._research_text_row("Pages: (failed to compile)"))
+            else:
+                layout.addWidget(self._research_text_row(f"Pages: {pages}"))
+            if grade:
+                layout.addWidget(self._research_text_row(f"Grade: {grade.get('score', 0):.2f}/10"))
+                feedback = grade.get("feedback") or ""
+                if feedback:
+                    layout.addWidget(self._research_text_row(feedback))
+
+            btn_row_frame = QFrame()
+            btn_row = QHBoxLayout(btn_row_frame)
+            btn_row.setContentsMargins(0, 4, 0, 0)
+            btn_row.setSpacing(8)
+            if pdf:
+                open_btn = _primary_btn("Open PDF")
+                open_btn.clicked.connect(
+                    lambda checked, p=pdf: QDesktopServices.openUrl(QUrl.fromLocalFile(p))
+                )
+                btn_row.addWidget(open_btn)
+            if latex:
+                copy_btn = _secondary_btn("Copy LaTeX", 120)
+                copy_btn.clicked.connect(
+                    lambda checked, t=latex: QGuiApplication.clipboard().setText(t)
+                )
+                btn_row.addWidget(copy_btn)
+            btn_row.addStretch()
+            layout.addWidget(btn_row_frame)
+
     def _ranking_card(self, row: dict, include_relevancy: bool) -> QFrame:
         frame = QFrame()
         frame.setObjectName("result-bullet-row")
@@ -790,3 +696,182 @@ class ApplierPage(QWidget):
             w = item.widget()
             if w is not None:
                 w.deleteLater()
+
+    # ── Library ─────────────────────────────────────────────────
+    def _build_library_page(self) -> QWidget:
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
+
+        left = QWidget()
+        left.setMinimumWidth(180)
+        left.setMaximumWidth(260)
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 8, 8, 0)
+        left_layout.setSpacing(6)
+
+        left_layout.addWidget(_label("Saved Resumes"))
+
+        self._library_list = QListWidget()
+        self._library_list.setObjectName("library-list")
+        self._library_list.itemSelectionChanged.connect(self._on_library_select)
+        left_layout.addWidget(self._library_list, 1)
+
+        self._library_refresh_btn = _secondary_btn("🔄  Refresh", 0)
+        self._library_refresh_btn.clicked.connect(self._refresh_library)
+        left_layout.addWidget(self._library_refresh_btn)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(6)
+        self._library_reveal_btn = _secondary_btn("Reveal", 90)
+        self._library_reveal_btn.clicked.connect(self._reveal_library_item)
+        btn_row.addWidget(self._library_reveal_btn)
+        self._library_delete_btn = _secondary_btn("Delete", 90)
+        self._library_delete_btn.clicked.connect(self._delete_library_item)
+        btn_row.addWidget(self._library_delete_btn)
+        left_layout.addLayout(btn_row)
+
+        splitter.addWidget(left)
+
+        right = QWidget()
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(0, 8, 0, 0)
+        right_layout.setSpacing(8)
+
+        header_row = QHBoxLayout()
+        header_row.setSpacing(8)
+        self._library_header = QLabel("")
+        self._library_header.setStyleSheet("color: #1d1d1d; font-size: 14px; font-weight: 600;")
+        header_row.addWidget(self._library_header, 1)
+        self._library_open_btn = _secondary_btn("Open Externally", 140)
+        self._library_open_btn.clicked.connect(self._open_library_item_external)
+        self._library_open_btn.setVisible(False)
+        header_row.addWidget(self._library_open_btn, 0, Qt.AlignmentFlag.AlignRight)
+        right_layout.addLayout(header_row)
+
+        self._library_preview_stack = QStackedWidget()
+        self._library_empty_label = QLabel(
+            "No resume selected.\nGenerated PDFs will appear here."
+        )
+        self._library_empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._library_empty_label.setStyleSheet("color: #888; font-size: 13px;")
+        self._library_preview_stack.addWidget(self._library_empty_label)
+
+        self._library_pdf_view = QWebEngineView()
+        settings = self._library_pdf_view.settings()
+        settings.setAttribute(QWebEngineSettings.WebAttribute.PluginsEnabled, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.PdfViewerEnabled, True)
+        self._library_preview_stack.addWidget(self._library_pdf_view)
+        right_layout.addWidget(self._library_preview_stack, 1)
+
+        splitter.addWidget(right)
+        splitter.setSizes([220, 700])
+
+        return self._wrap_page("Library", splitter)
+
+    def _on_applier_section_changed(self, idx: int):
+        if idx == 2:
+            self._refresh_library()
+
+    def _refresh_library(self):
+        if not hasattr(self, "_library_list"):
+            return
+        from app.ai_provider import get_resume_output_dir
+
+        prev_path = self._current_library_path()
+        out_dir = get_resume_output_dir()
+        pdfs: list = []
+        if out_dir.exists():
+            try:
+                pdfs = sorted(
+                    out_dir.glob("*.pdf"),
+                    key=lambda p: p.stat().st_mtime,
+                    reverse=True,
+                )
+            except OSError:
+                pdfs = []
+
+        self._library_list.blockSignals(True)
+        self._library_list.clear()
+        for p in pdfs:
+            stem = p.stem
+            if stem.endswith("_resume"):
+                stem = stem[: -len("_resume")]
+            label = stem.replace("_", " ").replace("-", " ").strip().title() or p.name
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, str(p))
+            self._library_list.addItem(item)
+        self._library_list.blockSignals(False)
+
+        if not pdfs:
+            self._library_header.setText("")
+            self._library_open_btn.setVisible(False)
+            self._library_empty_label.setText(
+                "No resumes yet — generate one from the Generate Resume tab."
+            )
+            self._library_preview_stack.setCurrentWidget(self._library_empty_label)
+            return
+
+        target_row = 0
+        if prev_path:
+            for i in range(self._library_list.count()):
+                if self._library_list.item(i).data(Qt.ItemDataRole.UserRole) == prev_path:
+                    target_row = i
+                    break
+        self._library_list.setCurrentRow(target_row)
+
+    def _current_library_path(self) -> str | None:
+        if not hasattr(self, "_library_list"):
+            return None
+        item = self._library_list.currentItem()
+        if item is None:
+            return None
+        return item.data(Qt.ItemDataRole.UserRole)
+
+    def _on_library_select(self):
+        path = self._current_library_path()
+        if not path:
+            self._library_header.setText("")
+            self._library_open_btn.setVisible(False)
+            self._library_preview_stack.setCurrentWidget(self._library_empty_label)
+            return
+        item = self._library_list.currentItem()
+        self._library_header.setText(item.text() if item else "")
+        self._library_open_btn.setVisible(True)
+        self._library_pdf_view.setUrl(QUrl.fromLocalFile(path))
+        self._library_preview_stack.setCurrentWidget(self._library_pdf_view)
+
+    def _open_library_item_external(self):
+        path = self._current_library_path()
+        if path:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+    def _reveal_library_item(self):
+        path = self._current_library_path()
+        if not path:
+            from app.ai_provider import get_resume_output_dir
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(get_resume_output_dir())))
+            return
+        import pathlib
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(pathlib.Path(path).parent)))
+
+    def _delete_library_item(self):
+        path = self._current_library_path()
+        if not path:
+            return
+        import pathlib
+        p = pathlib.Path(path)
+        confirm = QMessageBox.question(
+            self,
+            "Delete resume",
+            f"Delete {p.name}? This removes the file from disk.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        self._library_pdf_view.setUrl(QUrl("about:blank"))
+        try:
+            p.unlink()
+        except OSError as e:
+            QMessageBox.warning(self, "Delete failed", str(e))
+        self._refresh_library()

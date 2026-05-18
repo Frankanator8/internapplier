@@ -187,7 +187,7 @@ class SettingsPage(QWidget):
 
         for label_text, filename in [
             ("Analyze Bullet", "analyze_bullet.txt"),
-            ("Tailor Resume", "tailor_resume.txt"),
+            ("Tailor Bullets", "tailor_resume.txt"),
             ("Generate Resume", "generate_resume.txt"),
             ("Grade Resume", "grade_resume.txt"),
             ("Research Company", "research_company.txt"),

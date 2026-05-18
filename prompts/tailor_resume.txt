@@ -11,3 +11,4 @@ Analyze a provided Job Description (JD) and a candidate's existing resume bullet
    - **Prune:** Delete clauses, metrics, or technologies that are entirely irrelevant to the target role.
    - **Expand:** Compensate for deleted text by expanding on the remaining details that directly map to the JD's core requirements.
 4. **Keyword Optimization:** Prioritize and explicitly inject key technical terms, frameworks, or methodologies highlighted in the JD (e.g., specific backend technologies, methodologies) wherever they accurately describe the candidate's existing work.
+5. **Iterative Feedback:** If a `<feedback>` block from a prior grading pass is provided, apply that guidance in this rewrite — but still strictly respect constraints 1–4 (preserve structure, no invented facts).
