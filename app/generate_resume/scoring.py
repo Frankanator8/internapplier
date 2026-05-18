@@ -45,11 +45,14 @@ def _format_research(research: dict) -> str:
     return "\n".join(out) if out else "(no company research available)"
 
 
-def _format_numbered_entries(entries: list[tuple[str, list[str]]]) -> str:
+def _format_numbered_entries(entries: list[tuple[str, str, list[str]]]) -> str:
     blocks = []
-    for i, (name, bullets) in enumerate(entries, start=1):
+    for i, (name, when, bullets) in enumerate(entries, start=1):
+        header = f"{i}. {name}"
+        if when:
+            header += f"  ({when})"
         bullet_block = "\n".join(f"  - {b}" for b in bullets) if bullets else "  (no bullets)"
-        blocks.append(f"{i}. {name}\n{bullet_block}")
+        blocks.append(f"{header}\n{bullet_block}")
     return "\n\n".join(blocks)
 
 
@@ -82,7 +85,7 @@ def _post(provider: OpenRouterProvider, system_prompt: str, user_message: str, t
 
 def score_entries_ai(
     provider: OpenRouterProvider,
-    entries: list[tuple[str, list[str]]],
+    entries: list[tuple[str, str, list[str]]],
     job_description: str,
     company_research: dict,
     *,

@@ -83,6 +83,8 @@ def parse_zip(zip_path: str) -> dict:
         result["projects"].append({
             "name": _get(row, "Title", "Name", "Project Name"),
             "url": _get(row, "Url", "URL"),
+            "start": _get(row, "Started On", "Start Date"),
+            "end": _get(row, "Finished On", "End Date"),
             "bullets": _bullets_from_description(_get(row, "Description")),
         })
 

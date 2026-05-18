@@ -164,11 +164,14 @@ def main() -> int:
 
     if args.latex:
         print("\n=== generate_latex() ===")
-        latex = gen.generate_latex()
+        result = gen.generate_latex(output_pdf=pathlib.Path("out.pdf"))
+        latex = result["latex"]
         out = pathlib.Path("out.tex")
         out.write_text(latex, encoding="utf-8")
         ok = latex.lstrip().startswith("\\documentclass")
         print(f"  wrote {out} ({len(latex)} chars). starts with \\documentclass: {ok}")
+        print(f"  pdf: {result['pdf']} pages={result['pages']} "
+              f"score={result['grade']['score'] if result['grade'] else None}")
 
     return 0
 

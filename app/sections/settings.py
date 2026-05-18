@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QFrame, QLineEdit, QLabel, QStatusBar, QTabWidget, QPlainTextEdit,
-    QScrollArea,
+    QScrollArea, QSpinBox, QFileDialog,
 )
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QFont
@@ -103,6 +103,36 @@ class SettingsPage(QWidget):
         resume_hint.setStyleSheet("font-size: 12px; color: #666;")
         rc_layout.addWidget(resume_hint)
 
+        page_cap_row = QHBoxLayout()
+        page_cap_row.setSpacing(12)
+        page_cap_row.addWidget(_label("Page cap"))
+        self._page_cap_spin = QSpinBox()
+        self._page_cap_spin.setMinimum(1)
+        self._page_cap_spin.setMaximum(99)
+        self._page_cap_spin.setValue(ai_provider.get_resume_page_cap())
+        self._page_cap_spin.setFixedWidth(80)
+        page_cap_row.addWidget(self._page_cap_spin)
+        page_cap_row.addStretch()
+        rc_layout.addLayout(page_cap_row)
+
+        output_dir_row = QHBoxLayout()
+        output_dir_row.setSpacing(12)
+        output_dir_row.addWidget(_label("Output folder"))
+        self._output_dir_edit = QLineEdit()
+        self._output_dir_edit.setText(str(ai_provider.get_resume_output_dir()))
+        output_dir_row.addWidget(self._output_dir_edit, stretch=1)
+        browse_btn = _secondary_btn("Browse…", width=100)
+        browse_btn.clicked.connect(self._browse_output_dir)
+        output_dir_row.addWidget(browse_btn)
+        rc_layout.addLayout(output_dir_row)
+
+        output_dir_hint = QLabel(
+            "Default: ~/Documents/Resumes/. Folder is created automatically."
+        )
+        output_dir_hint.setWordWrap(True)
+        output_dir_hint.setStyleSheet("font-size: 12px; color: #666;")
+        rc_layout.addWidget(output_dir_hint)
+
         self._resume_template_edit = QPlainTextEdit()
         self._resume_template_edit.setFont(mono)
         self._resume_template_edit.setMinimumHeight(280)
@@ -159,6 +189,7 @@ class SettingsPage(QWidget):
             ("Analyze Bullet", "analyze_bullet.txt"),
             ("Tailor Resume", "tailor_resume.txt"),
             ("Generate Resume", "generate_resume.txt"),
+            ("Grade Resume", "grade_resume.txt"),
             ("Research Company", "research_company.txt"),
         ]:
             tab = QWidget()
@@ -220,8 +251,16 @@ class SettingsPage(QWidget):
         if self._status_bar:
             self._status_bar.showMessage(f"✓  Prompt '{filename}' saved.", 3000)
 
+    def _browse_output_dir(self) -> None:
+        current = self._output_dir_edit.text().strip() or str(ai_provider.get_resume_output_dir())
+        chosen = QFileDialog.getExistingDirectory(self, "Select resume output folder", current)
+        if chosen:
+            self._output_dir_edit.setText(chosen)
+
     def _save_resume_template(self) -> None:
         ai_provider.save_resume_template(self._resume_template_edit.toPlainText())
+        ai_provider.save_resume_page_cap(self._page_cap_spin.value())
+        ai_provider.save_resume_output_dir(self._output_dir_edit.text())
         self._resume_template_status.setStyleSheet("font-size: 12px; color: #057642;")
         self._resume_template_status.setText("✓  Saved")
         QTimer.singleShot(3000, lambda: self._resume_template_status.setText(""))

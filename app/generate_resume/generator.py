@@ -1,12 +1,25 @@
 from __future__ import annotations
 
 import logging
+import pathlib
+import re
+import shutil
 from typing import Any
 
-from app.ai_provider import AIProvider, OpenRouterProvider, get_provider
+from app.ai_provider import (
+    AIProvider,
+    OpenRouterProvider,
+    get_provider,
+    get_resume_output_dir,
+    get_resume_page_cap,
+)
 
+from .compile import LatexCompileError, compile_latex, pdf_page_count
 from .date_utils import parse_date, recency_score
 from .scoring import combine_score, score_entries_ai, select_courses_ai
+
+MAX_GENERATION_ATTEMPTS = 4
+SCORE_THRESHOLD = 9.5
 
 logger = logging.getLogger(__name__)
 
@@ -91,9 +104,138 @@ class ResumeGenerator:
             "hobbies": self.profile.get("hobbies", []) or [],
         }
 
-    def generate_latex(self) -> str:
+    def generate_latex(
+        self,
+        output_pdf: pathlib.Path | str | None = None,
+        company: str | None = None,
+    ) -> dict:
+        """Generate, compile, and grade the resume.
+
+        Returns {"latex": str, "pdf": Path | None, "pages": int | None,
+                 "grade": {"score": float, "feedback": str} | None}.
+        If `output_pdf` is provided, the PDF is written there. Otherwise it goes to
+        `<resume_output_dir>/<slug(company)>_resume.pdf` (or `resume.pdf` if no company).
+        """
         filtered = self.build_filtered_profile()
-        return self.provider.generate_resume(filtered, self.job_description)
+        filtered = self._tailor_profile_bullets(filtered)
+
+        page_cap = get_resume_page_cap()
+        feedback: str | None = None
+        attempts: list[dict] = []
+
+        for attempt in range(1, MAX_GENERATION_ATTEMPTS + 1):
+            logger.info("generate_latex — attempt %d/%d", attempt, MAX_GENERATION_ATTEMPTS)
+            try:
+                latex = self.provider.generate_resume(
+                    filtered, self.job_description, feedback=feedback
+                )
+            except Exception:
+                logger.exception("generate_latex — provider.generate_resume failed on attempt %d", attempt)
+                raise
+
+            pages: int | None = None
+            compile_error: str | None = None
+            pdf_path: pathlib.Path | None = None
+            try:
+                pdf_path = compile_latex(latex)
+                pages = pdf_page_count(pdf_path)
+            except LatexCompileError as e:
+                compile_error = f"{e}\n{e.log_excerpt}".strip()
+                logger.warning("generate_latex — attempt %d compile failed: %s", attempt, e)
+
+            grade: dict | None = None
+            if compile_error is None:
+                try:
+                    grade = self.provider.grade_resume(latex, self.job_description)
+                except Exception:
+                    logger.exception("generate_latex — grade_resume failed on attempt %d", attempt)
+                    raise
+
+            page_ok = pages is not None and pages <= page_cap
+            score_ok = grade is not None and grade["score"] >= SCORE_THRESHOLD
+
+            attempts.append({
+                "latex": latex,
+                "pdf": pdf_path,
+                "pages": pages,
+                "grade": grade,
+                "compile_error": compile_error,
+            })
+            logger.info(
+                "generate_latex — attempt %d: pages=%s score=%s compiled=%s",
+                attempt,
+                pages,
+                grade["score"] if grade else None,
+                compile_error is None,
+            )
+
+            if page_ok and score_ok:
+                logger.info("generate_latex — passed on attempt %d", attempt)
+                final_pdf = _persist_pdf(pdf_path, output_pdf, company)
+                return {"latex": latex, "pdf": final_pdf, "pages": pages, "grade": grade}
+
+            parts: list[str] = []
+            if compile_error:
+                parts.append(
+                    "PREVIOUS DRAFT FAILED TO COMPILE. Fix the LaTeX syntax. "
+                    f"Compiler output:\n{compile_error}"
+                )
+            if pages is not None and not page_ok:
+                parts.append(
+                    f"PREVIOUS DRAFT WAS {pages} PAGES; it MUST fit on {page_cap}. "
+                    "Cut the weakest bullets, shorten phrasing, tighten margins/spacing if needed."
+                )
+            if grade is not None and not score_ok:
+                parts.append(
+                    f"Grader scored {grade['score']:.2f}/10 (need ≥ {SCORE_THRESHOLD}). "
+                    f"Address this feedback:\n{grade['feedback']}"
+                )
+            feedback = "\n\n".join(parts) if parts else None
+
+        best = self._pick_best_attempt(attempts, page_cap)
+        logger.warning(
+            "generate_latex — exhausted %d attempts; returning best (pages=%s, score=%s)",
+            MAX_GENERATION_ATTEMPTS,
+            best.get("pages"),
+            best["grade"]["score"] if best.get("grade") else None,
+        )
+        final_pdf = _persist_pdf(best.get("pdf"), output_pdf, company)
+        return {
+            "latex": best["latex"],
+            "pdf": final_pdf,
+            "pages": best.get("pages"),
+            "grade": best.get("grade"),
+        }
+
+    def _tailor_profile_bullets(self, profile: dict[str, Any]) -> dict[str, Any]:
+        out = dict(profile)
+        for section in ("experience", "projects", "awards"):
+            entries = out.get(section) or []
+            new_entries = []
+            for entry in entries:
+                bullets = list(entry.get("bullets", []) or [])
+                if bullets:
+                    try:
+                        tailored = self.provider.tailor_resume(bullets, self.job_description)
+                        entry = {**entry, "bullets": tailored}
+                    except Exception:
+                        logger.exception(
+                            "_tailor_profile_bullets — tailor_resume failed for section=%s; keeping originals",
+                            section,
+                        )
+                new_entries.append(entry)
+            out[section] = new_entries
+        return out
+
+    @staticmethod
+    def _pick_best_attempt(attempts: list[dict], page_cap: int) -> dict:
+        def key(a: dict) -> tuple:
+            compiled = a.get("compile_error") is None
+            page_ok = a.get("pages") is not None and a["pages"] <= page_cap
+            score = a["grade"]["score"] if a.get("grade") else -1.0
+            return (compiled, page_ok, score)
+
+        return max(attempts, key=key)
 
     # ---------- internals ----------
 
@@ -107,10 +249,13 @@ class ResumeGenerator:
     ) -> list[dict]:
         if not entries:
             return []
-        pairs = [(label_fn(e), list(e.get("bullets", []) or [])) for e in entries]
+        triples = [
+            (label_fn(e), _date_display(e), list(e.get("bullets", []) or []))
+            for e in entries
+        ]
         ai_scores = score_entries_ai(
             self.provider,
-            pairs,
+            triples,
             self.job_description,
             self.company_research,
             include_relevancy=include_relevancy,
@@ -133,7 +278,39 @@ class ResumeGenerator:
         return results
 
 
+def _slugify(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", s.lower()).strip("_")
+
+
+def _persist_pdf(
+    src: pathlib.Path | None,
+    dest: pathlib.Path | str | None,
+    company: str | None = None,
+) -> pathlib.Path | None:
+    if src is None or not src.exists():
+        return None
+    if dest:
+        target = pathlib.Path(dest)
+    else:
+        slug = _slugify(company) if company else ""
+        name = f"{slug}_resume.pdf" if slug else "resume.pdf"
+        target = get_resume_output_dir() / name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(src, target)
+    logger.info("generate_latex — PDF written to %s", target)
+    return target
+
+
 # ---------- label / date helpers ----------
+
+def _date_display(entry: dict) -> str:
+    start = (entry.get("start") or "").strip()
+    end = (entry.get("end") or "").strip()
+    single = (entry.get("date") or "").strip()
+    if start and end:
+        return f"{start} – {end}"
+    return end or start or single or ""
+
 
 def _exp_label(e: dict) -> str:
     role = (e.get("role") or "").strip()

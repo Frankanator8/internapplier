@@ -94,8 +94,15 @@ class AIProvider(ABC):
         ...
 
     @abstractmethod
-    def generate_resume(self, profile: dict, job_description: str) -> str:
+    def generate_resume(
+        self, profile: dict, job_description: str, feedback: str | None = None
+    ) -> str:
         """Returns a complete, compilable LaTeX resume tailored to the JD."""
+        ...
+
+    @abstractmethod
+    def grade_resume(self, latex: str, job_description: str) -> dict:
+        """Returns {"score": float (0-10), "feedback": str (actionable)}."""
         ...
 
     @abstractmethod
@@ -324,8 +331,84 @@ class OpenRouterProvider(AIProvider):
         return items
 
 
-    def generate_resume(self, profile: dict, job_description: str) -> str:
-        logger.info("generate_resume — jd=%r", job_description[:120])
+    def grade_resume(self, latex: str, job_description: str) -> dict:
+        logger.info("grade_resume — jd=%r latex_chars=%d", job_description[:120], len(latex))
+        if not self.api_key:
+            logger.error("grade_resume — API key missing")
+            raise ValueError(
+                "No API key found. Set the OPENROUTER_API_KEY environment variable."
+            )
+
+        user_message = (
+            f"Job Description:\n{job_description}\n\n"
+            f"Resume LaTeX:\n{latex}\n\n"
+            "Grade this resume 0-10 on overall quality and fit to the job. "
+            "Return ONLY a JSON object with two keys: "
+            '"score" (number 0-10, may use decimals) and '
+            '"feedback" (string with specific, actionable improvements: '
+            "what to add, remove, or rephrase). No markdown, no commentary."
+        )
+
+        t0 = time.perf_counter()
+        try:
+            response = requests.post(
+                self.BASE_URL,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": self.model,
+                    "messages": [
+                        {"role": "system", "content": _load_prompt("grade_resume.txt")},
+                        {"role": "user", "content": user_message},
+                    ],
+                },
+                timeout=60,
+            )
+            elapsed = time.perf_counter() - t0
+            logger.info("grade_resume — HTTP %s in %.2fs", response.status_code, elapsed)
+            response.raise_for_status()
+        except Exception:
+            logger.exception("grade_resume — request failed")
+            raise
+
+        raw = response.json()["choices"][0]["message"]["content"].strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+            raw = raw.strip()
+
+        try:
+            obj = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.error("grade_resume — JSON parse failed, raw=%r", raw[:500])
+            raise ValueError("AI returned unexpected format — please try again.")
+
+        if not isinstance(obj, dict) or "score" not in obj or "feedback" not in obj:
+            logger.error("grade_resume — missing keys, got %r", obj)
+            raise ValueError("AI returned unexpected format — please try again.")
+
+        try:
+            score = float(obj["score"])
+        except (TypeError, ValueError):
+            logger.error("grade_resume — score not numeric: %r", obj.get("score"))
+            raise ValueError("AI returned unexpected format — please try again.")
+
+        feedback = str(obj["feedback"])
+        logger.info("grade_resume — score=%.2f feedback_chars=%d", score, len(feedback))
+        return {"score": score, "feedback": feedback}
+
+
+    def generate_resume(
+        self, profile: dict, job_description: str, feedback: str | None = None
+    ) -> str:
+        logger.info(
+            "generate_resume — jd=%r feedback=%s",
+            job_description[:120],
+            f"{len(feedback)} chars" if feedback else "none",
+        )
         if not self.api_key:
             logger.error("generate_resume — API key missing")
             raise ValueError(
@@ -376,6 +459,13 @@ class OpenRouterProvider(AIProvider):
                 "Escape LaTeX special characters in user-provided text. "
                 "Return ONLY raw LaTeX source starting with \\documentclass — "
                 "no markdown fences, no commentary, no explanation."
+            )
+
+        if feedback:
+            user_message += (
+                "\n\nA prior draft of this resume did not meet quality or page-length "
+                "requirements. Apply the following feedback in this new draft:\n"
+                f"<feedback>\n{feedback}\n</feedback>"
             )
 
         logger.debug("generate_resume — POST %s model=%s timeout=90", self.BASE_URL, self.model)
@@ -550,6 +640,48 @@ def save_resume_template(text: str) -> None:
     _APP_DIR.mkdir(parents=True, exist_ok=True)
     current = dict(_load_settings())
     current["resume_template"] = text
+    with open(_SETTINGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(current, f, indent=2)
+    _settings_cache = current
+
+
+DEFAULT_RESUME_PAGE_CAP = 1
+
+
+def get_resume_page_cap() -> int:
+    val = _load_settings().get("resume_page_cap", DEFAULT_RESUME_PAGE_CAP)
+    try:
+        n = int(val)
+    except (TypeError, ValueError):
+        return DEFAULT_RESUME_PAGE_CAP
+    return n if n >= 1 else DEFAULT_RESUME_PAGE_CAP
+
+
+def save_resume_page_cap(pages: int) -> None:
+    global _settings_cache
+    _APP_DIR.mkdir(parents=True, exist_ok=True)
+    current = dict(_load_settings())
+    current["resume_page_cap"] = int(pages)
+    with open(_SETTINGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(current, f, indent=2)
+    _settings_cache = current
+
+
+DEFAULT_RESUME_OUTPUT_DIR = pathlib.Path.home() / "Documents" / "Resumes"
+
+
+def get_resume_output_dir() -> pathlib.Path:
+    val = _load_settings().get("resume_output_dir")
+    if not val:
+        return DEFAULT_RESUME_OUTPUT_DIR
+    return pathlib.Path(str(val)).expanduser()
+
+
+def save_resume_output_dir(path: str) -> None:
+    global _settings_cache
+    _APP_DIR.mkdir(parents=True, exist_ok=True)
+    current = dict(_load_settings())
+    current["resume_output_dir"] = str(path).strip()
     with open(_SETTINGS_FILE, "w", encoding="utf-8") as f:
         json.dump(current, f, indent=2)
     _settings_cache = current

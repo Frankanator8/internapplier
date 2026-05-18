@@ -89,24 +89,78 @@ class _ResearchWorker(QObject):
             self.error.emit(str(exc))
 
 
+def _research_from_cache(cache: dict, company: str) -> dict | None:
+    if not company or not cache:
+        return None
+    entry = cache.get(company)
+    if entry is None:
+        for k, v in cache.items():
+            if k.lower() == company.lower():
+                entry = v
+                break
+    if entry is None:
+        return None
+    if isinstance(entry, dict) and "result" in entry and isinstance(entry["result"], dict):
+        return entry["result"]
+    if isinstance(entry, dict) and {"summary", "core_values", "recent_projects"} & entry.keys():
+        return entry
+    return None
+
+
 class _GenerateResumeWorker(QObject):
-    finished = pyqtSignal(str)
+    finished = pyqtSignal(dict)
     error = pyqtSignal(str)
     progress = pyqtSignal(str)
 
-    def __init__(self, profile: dict, jd: str):
+    def __init__(self, profile: dict, jd: str, company_name: str, url: str, research_cache: dict):
         super().__init__()
         self._profile = profile
         self._jd = jd
+        self._company = company_name
+        self._url = url
+        self._cache = research_cache or {}
 
     def run(self):
         from app.ai_provider import get_provider
-        logger.info("_GenerateResumeWorker.run — jd=%r", self._jd[:80])
+        from app.generate_resume import ResumeGenerator
+        logger.info("_GenerateResumeWorker.run — company=%r jd=%r", self._company, self._jd[:80])
         try:
-            self.progress.emit("Generating LaTeX resume — this may take ~30s…")
-            tex = get_provider().generate_resume(self._profile, self._jd)
-            logger.info("_GenerateResumeWorker.run — success, LaTeX length=%d", len(tex))
-            self.finished.emit(tex)
+            new_research = False
+            research = _research_from_cache(self._cache, self._company)
+            if research is not None:
+                self.progress.emit(f"Using cached research for {self._company!r}…")
+            elif self._company and self._url:
+                from app.web_scraper import fetch_company_pages
+                self.progress.emit(f"Scraping {self._url}…")
+                text = fetch_company_pages(self._url)
+                self.progress.emit(f"Scraped {len(text):,} chars — analyzing…")
+                research = get_provider().research_company(self._company, text)
+                new_research = True
+            else:
+                research = {
+                    "summary": f"{self._company or 'the target company'} is the target company.",
+                    "core_values": [],
+                    "recent_projects": [],
+                }
+
+            gen = ResumeGenerator(self._profile, self._jd, research)
+
+            self.progress.emit("Selecting courses…")
+            courses = gen.select_courses(10)
+
+            self.progress.emit("Scoring entries…")
+            scored = gen.score_entries()
+
+            logger.info(
+                "_GenerateResumeWorker.run — success, courses=%d sections=%s",
+                len(courses), {k: len(v) for k, v in scored.items()},
+            )
+            self.finished.emit({
+                "research": research,
+                "courses": courses,
+                "scored": scored,
+                "new_research": new_research,
+            })
         except Exception as exc:
             logger.exception("_GenerateResumeWorker.run — failed")
             self.error.emit(str(exc))
@@ -209,10 +263,15 @@ class ApplierPage(QWidget):
         return self._wrap_page("Tailor Resume", splitter)
 
     def _build_generate_resume_page(self) -> QWidget:
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 8, 0, 0)
-        layout.setSpacing(10)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
+
+        # ── Left: inputs ─────────────────────────────────────────
+        left = QWidget()
+        left.setMinimumWidth(320)
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 8, 0, 0)
+        left_layout.setSpacing(10)
 
         form_row = QHBoxLayout()
         form_row.setSpacing(8)
@@ -233,17 +292,42 @@ class ApplierPage(QWidget):
         url_col.addWidget(self._gen_url_input)
         form_row.addLayout(url_col, 2)
 
-        layout.addLayout(form_row)
+        left_layout.addLayout(form_row)
 
-        layout.addWidget(_label("Job Description"))
+        left_layout.addWidget(_label("Job Description"))
         self._gen_jd_input = QTextEdit()
         self._gen_jd_input.setPlaceholderText("Paste the job description here…")
-        layout.addWidget(self._gen_jd_input, 1)
+        left_layout.addWidget(self._gen_jd_input, 1)
 
-        self._gen_btn = _primary_btn("📄  Generate Resume & Open in Overleaf")
-        layout.addWidget(self._gen_btn)
+        self._gen_btn = _primary_btn("📄  Generate Resume")
+        self._gen_btn.clicked.connect(self._generate_resume)
+        left_layout.addWidget(self._gen_btn)
 
-        return self._wrap_page("Generate Resume", container)
+        self._gen_status = QLabel("")
+        self._gen_status.setWordWrap(True)
+        self._gen_status.setStyleSheet("color: #555; font-size: 12px;")
+        left_layout.addWidget(self._gen_status)
+
+        splitter.addWidget(left)
+
+        # ── Right: results ───────────────────────────────────────
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        self._gen_results_content = QWidget()
+        self._gen_results_content.setStyleSheet("background: transparent;")
+        self._gen_results_layout = QVBoxLayout(self._gen_results_content)
+        self._gen_results_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self._gen_results_layout.setSpacing(10)
+        self._gen_results_layout.setContentsMargins(12, 0, 4, 16)
+        scroll.setWidget(self._gen_results_content)
+
+        splitter.addWidget(scroll)
+        splitter.setSizes([400, 560])
+
+        return self._wrap_page("Generate Resume", splitter)
 
     def _build_research_page(self) -> QWidget:
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -375,6 +459,9 @@ class ApplierPage(QWidget):
         thread.start()
 
     def _populate_research_results(self, result: dict):
+        self._render_research_block(self._research_results_layout, result)
+
+    def _render_research_block(self, layout: QVBoxLayout, result: dict):
         summary = (result.get("summary") or "").strip()
         values = result.get("core_values") or []
         projects = result.get("recent_projects") or []
@@ -382,34 +469,22 @@ class ApplierPage(QWidget):
         if not summary and not values and not projects:
             empty = QLabel("No information could be extracted from the site.")
             empty.setStyleSheet("color: #777; font-size: 13px;")
-            self._research_results_layout.addWidget(empty)
+            layout.addWidget(empty)
             return
 
         if summary:
-            self._research_results_layout.addWidget(
-                self._research_section_header("SUMMARY")
-            )
-            self._research_results_layout.addWidget(
-                self._research_text_row(summary)
-            )
+            layout.addWidget(self._research_section_header("SUMMARY"))
+            layout.addWidget(self._research_text_row(summary))
 
         if values:
-            self._research_results_layout.addWidget(
-                self._research_section_header("CORE VALUES")
-            )
+            layout.addWidget(self._research_section_header("CORE VALUES"))
             for v in values:
-                self._research_results_layout.addWidget(
-                    self._research_text_row(f"• {v}")
-                )
+                layout.addWidget(self._research_text_row(f"• {v}"))
 
         if projects:
-            self._research_results_layout.addWidget(
-                self._research_section_header("RECENT PROJECTS / NEWS")
-            )
+            layout.addWidget(self._research_section_header("RECENT PROJECTS / NEWS"))
             for p in projects:
-                self._research_results_layout.addWidget(
-                    self._research_text_row(f"• {p}")
-                )
+                layout.addWidget(self._research_text_row(f"• {p}"))
 
     def _research_section_header(self, text: str) -> QLabel:
         header = QLabel(text)
@@ -592,6 +667,126 @@ class ApplierPage(QWidget):
     def _clear_results(self):
         while self._results_layout.count():
             item = self._results_layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+
+    def _generate_resume(self):
+        jd = self._gen_jd_input.toPlainText().strip()
+        if not jd:
+            self._gen_status.setStyleSheet("color: #cc3300; font-size: 12px;")
+            self._gen_status.setText("Paste a job description first.")
+            return
+
+        name = self._gen_name_input.text().strip()
+        url = self._gen_url_input.text().strip()
+        profile = self._get_profile()
+
+        self._clear_generate_results()
+        self._gen_btn.setEnabled(False)
+        self._gen_btn.setText("Generating…")
+        self._gen_status.setStyleSheet("color: #555; font-size: 12px;")
+        self._gen_status.setText("Starting…")
+
+        worker = _GenerateResumeWorker(profile, jd, name, url, self._research_cache)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+
+        def on_finished(payload: dict):
+            self._gen_btn.setEnabled(True)
+            self._gen_btn.setText("📄  Generate Resume")
+            self._gen_status.setText("")
+            self._populate_generate_results(payload)
+            if payload.get("new_research") and name:
+                self._research_cache[name] = {"url": url, "result": payload["research"]}
+                self._refresh_company_list()
+                if self._save_fn:
+                    self._save_fn()
+            thread.quit()
+
+        def on_error(msg: str):
+            self._gen_btn.setEnabled(True)
+            self._gen_btn.setText("📄  Generate Resume")
+            self._gen_status.setStyleSheet("color: #cc3300; font-size: 12px;")
+            self._gen_status.setText(f"Error: {msg}")
+            thread.quit()
+
+        def on_progress(msg: str):
+            self._gen_status.setStyleSheet("color: #555; font-size: 12px;")
+            self._gen_status.setText(msg)
+
+        worker.finished.connect(on_finished)
+        worker.error.connect(on_error)
+        worker.progress.connect(on_progress)
+        thread.started.connect(worker.run)
+        thread.finished.connect(thread.deleteLater)
+        self._threads.append(thread)
+        self._workers.append(worker)
+        thread.finished.connect(lambda: self._workers.remove(worker) if worker in self._workers else None)
+        thread.start()
+
+    def _populate_generate_results(self, payload: dict):
+        layout = self._gen_results_layout
+
+        research = payload.get("research") or {}
+        layout.addWidget(self._research_section_header("COMPANY RESEARCH"))
+        self._render_research_block(layout, research)
+
+        courses = payload.get("courses") or []
+        layout.addWidget(self._research_section_header("SELECTED COURSES"))
+        if courses:
+            for c in courses:
+                layout.addWidget(self._research_text_row(f"• {c}"))
+        else:
+            layout.addWidget(self._research_text_row("(none)"))
+
+        scored = payload.get("scored") or {}
+        section_titles = [
+            ("relevant_experience", "RELEVANT EXPERIENCE", True),
+            ("projects", "PROJECTS", True),
+            ("awards", "AWARDS", True),
+            ("leadership", "LEADERSHIP", False),
+        ]
+        for key, title, include_relevancy in section_titles:
+            rows = scored.get(key, [])
+            if not rows:
+                continue
+            layout.addWidget(self._research_section_header(title))
+            for r in rows:
+                layout.addWidget(self._ranking_card(r, include_relevancy))
+
+    def _ranking_card(self, row: dict, include_relevancy: bool) -> QFrame:
+        frame = QFrame()
+        frame.setObjectName("result-bullet-row")
+        outer = QVBoxLayout(frame)
+        outer.setContentsMargins(12, 10, 12, 10)
+        outer.setSpacing(4)
+
+        header = QHBoxLayout()
+        title = QLabel(row.get("label", ""))
+        title.setWordWrap(True)
+        title.setStyleSheet("color: #1d1d1d; font-size: 13px; font-weight: 600;")
+        header.addWidget(title, 1)
+
+        score = QLabel(f"{row.get('final_score', 0.0):.3f}")
+        score.setStyleSheet("color: #1d1d1d; font-size: 16px; font-weight: 700;")
+        header.addWidget(score, 0, Qt.AlignmentFlag.AlignRight)
+        outer.addLayout(header)
+
+        ai = row.get("ai") or {}
+        parts = [f"impact={ai.get('impact', 0):.1f}", f"prestige={ai.get('prestige', 0):.1f}"]
+        if include_relevancy:
+            parts.append(f"relevancy={ai.get('relevancy', 0):.1f}")
+        parts.append(f"recency={row.get('recency', 0.0):.2f}")
+        sub = QLabel("  ".join(parts))
+        sub.setStyleSheet("color: #888; font-size: 12px;")
+        outer.addWidget(sub)
+
+        return frame
+
+    def _clear_generate_results(self):
+        while self._gen_results_layout.count():
+            item = self._gen_results_layout.takeAt(0)
             w = item.widget()
             if w is not None:
                 w.deleteLater()
