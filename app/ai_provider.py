@@ -3,7 +3,6 @@ import logging
 import os
 import pathlib
 import time
-from abc import ABC, abstractmethod
 from typing import Iterator
 
 import requests
@@ -25,12 +24,15 @@ def _seed_prompts() -> None:
             dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
 
 
-def _load_prompt(name: str) -> str:
-    return (_APP_PROMPTS_DIR / name).read_text(encoding="utf-8").strip()
+def resync_all_prompts() -> None:
+    _APP_PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
+    for src in _PROMPTS_DIR.glob("*.txt"):
+        dst = _APP_PROMPTS_DIR / src.name
+        dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
 
 
 def load_prompt(name: str) -> str:
-    return _load_prompt(name)
+    return (_APP_PROMPTS_DIR / name).read_text(encoding="utf-8").strip()
 
 
 def default_prompt(name: str) -> str:
@@ -77,41 +79,7 @@ def _load_model_config() -> dict[str, str]:
     return _model_config_cache
 
 
-class AIProvider(ABC):
-    @abstractmethod
-    def analyze_bullet(self, bullet: str, context: dict) -> str:
-        """Returns plain-text feedback + rewrite suggestions for a resume bullet."""
-        ...
-
-    @abstractmethod
-    def analyze_bullet_stream(self, bullet: str, context: dict) -> Iterator[str]:
-        """Yields incremental text chunks for a resume bullet analysis."""
-        ...
-
-    @abstractmethod
-    def tailor_bullets(self, bullets: list[str], job_description: str) -> list[str]:
-        """Returns a list of tailored bullets, same length/order as input."""
-        ...
-
-    @abstractmethod
-    def generate_resume(
-        self, profile: dict, job_description: str, feedback: str | None = None
-    ) -> str:
-        """Returns a complete, compilable LaTeX resume tailored to the JD."""
-        ...
-
-    @abstractmethod
-    def grade_resume(self, latex: str, job_description: str) -> dict:
-        """Returns {"score": float (0-10), "feedback": str (actionable)}."""
-        ...
-
-    @abstractmethod
-    def research_company(self, company_name: str, scraped_text: str) -> dict:
-        """Returns {"core_values": [str], "recent_projects": [str], "summary": str}."""
-        ...
-
-
-class OpenRouterProvider(AIProvider):
+class OpenRouterProvider:
     BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 
     def __init__(
@@ -128,57 +96,6 @@ class OpenRouterProvider(AIProvider):
 
         key_hint = f"...{self.api_key[-6:]}" if len(self.api_key) >= 6 else ("(set)" if self.api_key else "(MISSING)")
         logger.debug("OpenRouterProvider init — model=%s api_key=%s", self.model, key_hint)
-
-    def analyze_bullet(self, bullet: str, context: dict) -> str:
-        logger.info("analyze_bullet — bullet=%r context=%s", bullet[:120], context)
-        if not self.api_key:
-            logger.error("analyze_bullet — API key missing")
-            raise ValueError(
-                "No API key found. Set the OPENROUTER_API_KEY environment variable."
-            )
-
-        context_line = _format_context(context)
-        user_message = (
-            f"{context_line}\n\n"
-            f'Resume bullet: "{bullet}"\n\n'
-            "Please provide:\n"
-            "1. CRITIQUE: A 1-2 sentence assessment of this bullet's weaknesses "
-            "(e.g., missing metrics, weak action verb, unclear impact).\n"
-            "2. REWRITE A: An improved version of this bullet.\n"
-            "3. REWRITE B: A second, alternative improved version."
-        )
-
-        logger.debug("analyze_bullet — POST %s model=%s timeout=30", self.BASE_URL, self.model)
-        t0 = time.perf_counter()
-        try:
-            response = requests.post(
-                self.BASE_URL,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": self.model,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": _load_prompt("analyze_bullet.txt"),
-                        },
-                        {"role": "user", "content": user_message},
-                    ],
-                },
-                timeout=30,
-            )
-            elapsed = time.perf_counter() - t0
-            logger.info("analyze_bullet — HTTP %s in %.2fs", response.status_code, elapsed)
-            logger.debug("analyze_bullet — raw response: %s", response.text[:300])
-            response.raise_for_status()
-            result = response.json()["choices"][0]["message"]["content"]
-            logger.info("analyze_bullet — success, response length=%d chars", len(result))
-            return result
-        except Exception:
-            logger.exception("analyze_bullet — request failed")
-            raise
 
     def analyze_bullet_stream(self, bullet: str, context: dict) -> Iterator[str]:
         logger.info("analyze_bullet_stream — bullet=%r context=%s", bullet[:120], context)
@@ -216,7 +133,7 @@ class OpenRouterProvider(AIProvider):
                     "messages": [
                         {
                             "role": "system",
-                            "content": _load_prompt("analyze_bullet.txt"),
+                            "content": load_prompt("analyze_bullet.txt"),
                         },
                         {"role": "user", "content": user_message},
                     ],
@@ -350,44 +267,27 @@ class OpenRouterProvider(AIProvider):
             )
         yield from self._stream_chat_completion(
             messages=[
-                {"role": "system", "content": _load_prompt("tailor_resume.txt")},
+                {"role": "system", "content": load_prompt("tailor_resume.txt")},
                 {"role": "user", "content": user_message},
             ],
             log_label="tailor_bullets",
         )
 
-    def tailor_bullets(
-        self, bullets: list[str], job_description: str, feedback: str | None = None
-    ) -> list[str]:
-        if not bullets:
-            return []
-        raw = "".join(self.tailor_bullets_stream(bullets, job_description, feedback)).strip()
-
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-            raw = raw.strip()
-
-        try:
-            items = json.loads(raw)
-        except json.JSONDecodeError:
-            logger.error("tailor_bullets — JSON parse failed, raw=%r", raw[:500])
-            raise ValueError("AI returned unexpected format — please try again.")
-
-        if not isinstance(items, list) or not all(isinstance(s, str) for s in items):
-            logger.error("tailor_bullets — expected list[str], got %r", type(items).__name__)
-            raise ValueError("AI returned unexpected format — please try again.")
-
-        if len(items) != len(bullets):
-            logger.error(
-                "tailor_bullets — length mismatch: sent %d, got %d", len(bullets), len(items)
-            )
-            raise ValueError("AI returned unexpected format — please try again.")
-
-        logger.info("tailor_bullets — success, %d bullets returned", len(items))
-        return items
-
+    def fix_latex_stream(self, latex: str, compile_error: str) -> Iterator[str]:
+        logger.info("fix_latex_stream — latex_chars=%d error_chars=%d",
+                    len(latex), len(compile_error))
+        user_message = (
+            f"pdflatex error log:\n{compile_error}\n\n"
+            f"Broken LaTeX source:\n{latex}\n\n"
+            "Return the corrected, complete LaTeX document."
+        )
+        yield from self._stream_chat_completion(
+            messages=[
+                {"role": "system", "content": load_prompt("fix_latex.txt")},
+                {"role": "user", "content": user_message},
+            ],
+            log_label="fix_latex",
+        )
 
     def grade_resume_stream(self, latex: str, job_description: str) -> Iterator[str]:
         logger.info("grade_resume_stream — jd=%r latex_chars=%d",
@@ -395,148 +295,68 @@ class OpenRouterProvider(AIProvider):
         user_message = (
             f"Job Description:\n{job_description}\n\n"
             f"Resume LaTeX:\n{latex}\n\n"
-            "Grade this resume 0-10 on overall quality and fit to the job. "
-            "Return ONLY a JSON object with two keys: "
-            '"score" (number 0-10, may use decimals) and '
-            '"feedback" (string with specific, actionable improvements: '
-            "what to add, remove, or rephrase). No markdown, no commentary."
+            "Grade this resume against the job description following the system "
+            "instructions exactly."
         )
         yield from self._stream_chat_completion(
             messages=[
-                {"role": "system", "content": _load_prompt("grade_resume.txt")},
+                {"role": "system", "content": load_prompt("grade_resume.txt")},
                 {"role": "user", "content": user_message},
             ],
             log_label="grade_resume",
         )
 
-    def grade_resume(self, latex: str, job_description: str) -> dict:
-        raw = "".join(self.grade_resume_stream(latex, job_description)).strip()
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-            raw = raw.strip()
-
-        try:
-            obj = json.loads(raw)
-        except json.JSONDecodeError:
-            logger.error("grade_resume — JSON parse failed, raw=%r", raw[:500])
-            raise ValueError("AI returned unexpected format — please try again.")
-
-        if not isinstance(obj, dict) or "score" not in obj or "feedback" not in obj:
-            logger.error("grade_resume — missing keys, got %r", obj)
-            raise ValueError("AI returned unexpected format — please try again.")
-
-        try:
-            score = float(obj["score"])
-        except (TypeError, ValueError):
-            logger.error("grade_resume — score not numeric: %r", obj.get("score"))
-            raise ValueError("AI returned unexpected format — please try again.")
-
-        feedback = str(obj["feedback"])
-        logger.info("grade_resume — score=%.2f feedback_chars=%d", score, len(feedback))
-        return {"score": score, "feedback": feedback}
-
-
     def _build_generate_resume_messages(
-        self, profile: dict, job_description: str, feedback: str | None
+        self,
+        profile: dict,
+        job_description: str,
+        feedback: str | None,
+        previous_latex: str | None = None,
     ) -> list[dict]:
-        import json as _json
-
-        profile_json = _json.dumps({
+        profile_json = json.dumps({
             "experience": profile.get("experience", []),
             "projects": profile.get("projects", []),
             "education": profile.get("education", []),
             "skills": profile.get("skills", []),
         }, indent=2)
 
+        sections: list[str] = [
+            f"<job_description>\n{job_description}\n</job_description>",
+            f"<profile>\n{profile_json}\n</profile>",
+        ]
         template = get_resume_template().strip()
         if template:
-            user_message = (
-                f"Job Description:\n{job_description}\n\n"
-                f"Candidate Profile (JSON):\n{profile_json}\n\n"
-                "Write a complete, compilable LaTeX resume from this profile. "
-                "The bullets in the profile JSON are already tailored to this job by "
-                "an upstream step — reproduce them VERBATIM. Do not rewrite, shorten, "
-                "merge, split, or rephrase bullet text. Your job is LaTeX layout, "
-                "section ordering, and the skills section (where you may weave in "
-                "JD keywords). Cover all populated sections (Experience, Projects, "
-                "Education, Skills). "
-                "Escape LaTeX special characters in user-provided text. "
-                "Return ONLY raw LaTeX source starting with \\documentclass — "
-                "no markdown fences, no commentary, no explanation.\n\n"
-                "Use the following LaTeX template as the structural base for the "
-                "resume. Preserve its documentclass, packages, geometry, command "
-                "definitions, and overall layout; only adapt the content sections "
-                "to fit the candidate profile.\n\n"
-                "<template>\n"
-                f"{template}\n"
-                "</template>"
-            )
-        else:
-            user_message = (
-                f"Job Description:\n{job_description}\n\n"
-                f"Candidate Profile (JSON):\n{profile_json}\n\n"
-                "Write a complete, compilable LaTeX resume from this profile. "
-                "The bullets in the profile JSON are already tailored to this job by "
-                "an upstream step — reproduce them VERBATIM. Do not rewrite, shorten, "
-                "merge, split, or rephrase bullet text. Your job is LaTeX layout, "
-                "section ordering, and the skills section (where you may weave in "
-                "JD keywords). Cover all populated sections (Experience, Projects, "
-                "Education, Skills). Use article class with "
-                "only these packages: geometry, hyperref, enumitem, titlesec. "
-                "Keep margins tight (~0.75in), single column, clean and readable. "
-                "Escape LaTeX special characters in user-provided text. "
-                "Return ONLY raw LaTeX source starting with \\documentclass — "
-                "no markdown fences, no commentary, no explanation."
-            )
-
+            sections.append(f"<template>\n{template}\n</template>")
+        if previous_latex:
+            sections.append(f"<previous_draft>\n{previous_latex}\n</previous_draft>")
         if feedback:
-            user_message += (
-                "\n\nA prior draft did not compile or did not fit the page cap. "
-                "Apply the following feedback for LaTeX structure, layout, and "
-                "page-fit only. Do NOT modify bullet text — bullet wording is owned "
-                "by an upstream step and must be reproduced verbatim.\n"
-                f"<feedback>\n{feedback}\n</feedback>"
-            )
+            sections.append(f"<feedback>\n{feedback}\n</feedback>")
 
         return [
-            {"role": "system", "content": _load_prompt("generate_resume.txt")},
-            {"role": "user", "content": user_message},
+            {"role": "system", "content": load_prompt("generate_resume.txt")},
+            {"role": "user", "content": "\n\n".join(sections)},
         ]
 
     def generate_resume_stream(
-        self, profile: dict, job_description: str, feedback: str | None = None
+        self,
+        profile: dict,
+        job_description: str,
+        feedback: str | None = None,
+        previous_latex: str | None = None,
     ) -> Iterator[str]:
         logger.info(
-            "generate_resume_stream — jd=%r feedback=%s",
+            "generate_resume_stream — jd=%r feedback=%s previous_latex=%s",
             job_description[:120],
             f"{len(feedback)} chars" if feedback else "none",
+            f"{len(previous_latex)} chars" if previous_latex else "none",
         )
-        messages = self._build_generate_resume_messages(profile, job_description, feedback)
+        messages = self._build_generate_resume_messages(
+            profile, job_description, feedback, previous_latex
+        )
         yield from self._stream_chat_completion(
             messages=messages,
             log_label="generate_resume",
         )
-
-    def generate_resume(
-        self, profile: dict, job_description: str, feedback: str | None = None
-    ) -> str:
-        raw = "".join(self.generate_resume_stream(profile, job_description, feedback)).strip()
-
-        if raw.startswith("```"):
-            raw = raw.split("```", 2)[1]
-            if raw.startswith("latex"):
-                raw = raw[5:]
-            elif raw.startswith("tex"):
-                raw = raw[3:]
-            raw = raw.strip()
-            if raw.endswith("```"):
-                raw = raw[:-3].strip()
-
-        logger.info("generate_resume — success, LaTeX length=%d chars", len(raw))
-        return raw
-
 
     def research_company(self, company_name: str, scraped_text: str) -> dict:
         logger.info("research_company — company=%r scraped_chars=%d", company_name, len(scraped_text))
@@ -545,8 +365,6 @@ class OpenRouterProvider(AIProvider):
             raise ValueError(
                 "No API key found. Set the OPENROUTER_API_KEY environment variable."
             )
-
-        import json as _json
 
         user_message = (
             f"Company: {company_name}\n\n"
@@ -577,7 +395,7 @@ class OpenRouterProvider(AIProvider):
                     "messages": [
                         {
                             "role": "system",
-                            "content": _load_prompt("research_company.txt"),
+                            "content": load_prompt("research_company.txt"),
                         },
                         {"role": "user", "content": user_message},
                     ],
@@ -601,8 +419,8 @@ class OpenRouterProvider(AIProvider):
             raw = raw.strip()
 
         try:
-            data = _json.loads(raw)
-        except _json.JSONDecodeError:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
             logger.error("research_company — JSON parse failed, raw=%r", raw[:500])
             raise ValueError("AI returned unexpected format — please try again.")
 
@@ -712,6 +530,67 @@ def save_resume_output_dir(path: str) -> None:
     _settings_cache = current
 
 
+DEFAULT_MAX_GENERATION_ATTEMPTS = 2
+
+
+def get_max_generation_attempts() -> int:
+    val = _load_settings().get("max_generation_attempts", DEFAULT_MAX_GENERATION_ATTEMPTS)
+    try:
+        n = int(val)
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_GENERATION_ATTEMPTS
+    return n if n >= 1 else DEFAULT_MAX_GENERATION_ATTEMPTS
+
+
+def save_max_generation_attempts(n: int) -> None:
+    global _settings_cache
+    _APP_DIR.mkdir(parents=True, exist_ok=True)
+    current = dict(_load_settings())
+    current["max_generation_attempts"] = int(n)
+    with open(_SETTINGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(current, f, indent=2)
+    _settings_cache = current
+
+
+DEFAULT_MAX_LATEX_FIX_ATTEMPTS = 2
+
+
+def get_max_latex_fix_attempts() -> int:
+    val = _load_settings().get("max_latex_fix_attempts", DEFAULT_MAX_LATEX_FIX_ATTEMPTS)
+    try:
+        n = int(val)
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_LATEX_FIX_ATTEMPTS
+    return n if n >= 0 else DEFAULT_MAX_LATEX_FIX_ATTEMPTS
+
+
+def save_max_latex_fix_attempts(n: int) -> None:
+    global _settings_cache
+    _APP_DIR.mkdir(parents=True, exist_ok=True)
+    current = dict(_load_settings())
+    current["max_latex_fix_attempts"] = int(n)
+    with open(_SETTINGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(current, f, indent=2)
+    _settings_cache = current
+
+
+DEFAULT_AUTO_RESYNC_PROMPTS = False
+
+
+def get_auto_resync_prompts() -> bool:
+    return bool(_load_settings().get("auto_resync_prompts", DEFAULT_AUTO_RESYNC_PROMPTS))
+
+
+def save_auto_resync_prompts(enabled: bool) -> None:
+    global _settings_cache
+    _APP_DIR.mkdir(parents=True, exist_ok=True)
+    current = dict(_load_settings())
+    current["auto_resync_prompts"] = bool(enabled)
+    with open(_SETTINGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(current, f, indent=2)
+    _settings_cache = current
+
+
 def save_model_config(fast: str) -> None:
     global _model_config_cache
     _APP_DIR.mkdir(parents=True, exist_ok=True)
@@ -720,5 +599,5 @@ def save_model_config(fast: str) -> None:
     _model_config_cache = {"fast": fast.strip()}
 
 
-def get_provider() -> AIProvider:
+def get_provider() -> OpenRouterProvider:
     return OpenRouterProvider()

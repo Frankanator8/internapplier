@@ -112,10 +112,10 @@ class _GenerateResumeWorker(QObject):
             courses = gen.select_courses(10)
 
             self.progress.emit("Scoring entries…")
-            scored = gen.score_entries()
+            scored = gen.score_entries(stream_cb=self.stream.emit)
 
             self.progress.emit("Building filtered profile…")
-            filtered = gen.build_filtered_profile()
+            filtered = gen.build_filtered_profile(stream_cb=self.stream.emit)
 
             self.progress.emit("Tailoring bullets and generating LaTeX (this can take a minute)…")
             latex_result = gen.generate_latex(
@@ -140,6 +140,8 @@ class _GenerateResumeWorker(QObject):
                 "pdf": str(pdf_path) if pdf_path else "",
                 "pages": latex_result.get("pages"),
                 "grade": latex_result.get("grade"),
+                "attempts": latex_result.get("attempts") or [],
+                "chosen_attempt": latex_result.get("chosen_attempt"),
             })
         except Exception as exc:
             logger.exception("_GenerateResumeWorker.run — failed")
@@ -286,7 +288,10 @@ class ApplierPage(QWidget):
 
     def _on_gen_stream(self, stage: str, chunk: str) -> None:
         if stage != self._gen_stream_last_stage:
-            sep = f"\n\n── {stage} ──\n" if self._gen_stream_last_stage is not None else f"── {stage} ──\n"
+            if self._gen_stream_last_stage is not None:
+                sep = f"\n\n\n══════ {stage} ══════\n\n"
+            else:
+                sep = f"══════ {stage} ══════\n\n"
             self._gen_stream_view.moveCursor(QTextCursor.MoveOperation.End)
             self._gen_stream_view.insertPlainText(sep)
             self._gen_stream_last_stage = stage
@@ -638,9 +643,12 @@ class ApplierPage(QWidget):
                 layout.addWidget(self._research_text_row(f"Pages: {pages}"))
             if grade:
                 layout.addWidget(self._research_text_row(f"Grade: {grade.get('score', 0):.2f}/10"))
-                feedback = grade.get("feedback") or ""
-                if feedback:
-                    layout.addWidget(self._research_text_row(feedback))
+                bullet_fb = grade.get("bullet_feedback") or ""
+                writer_fb = grade.get("writer_feedback") or ""
+                if bullet_fb:
+                    layout.addWidget(self._research_text_row("Bullets: " + bullet_fb))
+                if writer_fb:
+                    layout.addWidget(self._research_text_row("Resume choice: " + writer_fb))
 
             btn_row_frame = QFrame()
             btn_row = QHBoxLayout(btn_row_frame)
@@ -660,6 +668,39 @@ class ApplierPage(QWidget):
                 btn_row.addWidget(copy_btn)
             btn_row.addStretch()
             layout.addWidget(btn_row_frame)
+
+            attempts = payload.get("attempts") or []
+            chosen = payload.get("chosen_attempt")
+            if len(attempts) > 1:
+                layout.addWidget(self._research_section_header("ALL ATTEMPTS"))
+                att_row_frame = QFrame()
+                att_row = QHBoxLayout(att_row_frame)
+                att_row.setContentsMargins(0, 0, 0, 0)
+                att_row.setSpacing(8)
+                for a in attempts:
+                    n = a.get("attempt")
+                    a_pdf = a.get("pdf") or ""
+                    a_grade = a.get("grade") or {}
+                    a_pages = a.get("pages")
+                    score_part = (
+                        f"{a_grade.get('score', 0):.2f}/10"
+                        if a_grade else "ungraded"
+                    )
+                    pages_part = (
+                        f"{a_pages}pg" if a_pages is not None else "compile✗"
+                    )
+                    mark = " ★" if n == chosen else ""
+                    label = f"Attempt {n} ({score_part}, {pages_part}){mark}"
+                    btn = _secondary_btn(label, 0)
+                    btn.setEnabled(bool(a_pdf))
+                    if a_pdf:
+                        btn.clicked.connect(
+                            lambda checked, p=a_pdf:
+                            QDesktopServices.openUrl(QUrl.fromLocalFile(p))
+                        )
+                    att_row.addWidget(btn)
+                att_row.addStretch()
+                layout.addWidget(att_row_frame)
 
     def _ranking_card(self, row: dict, include_relevancy: bool) -> QFrame:
         frame = QFrame()

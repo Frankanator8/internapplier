@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QFrame, QLineEdit, QLabel, QStatusBar, QTabWidget, QPlainTextEdit,
-    QScrollArea, QSpinBox, QFileDialog,
+    QScrollArea, QSpinBox, QFileDialog, QCheckBox,
 )
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QFont
@@ -115,6 +115,18 @@ class SettingsPage(QWidget):
         page_cap_row.addStretch()
         rc_layout.addLayout(page_cap_row)
 
+        max_iters_row = QHBoxLayout()
+        max_iters_row.setSpacing(12)
+        max_iters_row.addWidget(_label("Max iterations"))
+        self._max_iters_spin = QSpinBox()
+        self._max_iters_spin.setMinimum(1)
+        self._max_iters_spin.setMaximum(99)
+        self._max_iters_spin.setValue(ai_provider.get_max_generation_attempts())
+        self._max_iters_spin.setFixedWidth(80)
+        max_iters_row.addWidget(self._max_iters_spin)
+        max_iters_row.addStretch()
+        rc_layout.addLayout(max_iters_row)
+
         output_dir_row = QHBoxLayout()
         output_dir_row.setSpacing(12)
         output_dir_row.addWidget(_label("Output folder"))
@@ -177,6 +189,11 @@ class SettingsPage(QWidget):
         prompts_hint.setStyleSheet("font-size: 12px; color: #666;")
         pc_layout.addWidget(prompts_hint)
 
+        self._auto_resync_checkbox = QCheckBox("Auto resync all prompts to default on app load")
+        self._auto_resync_checkbox.setChecked(ai_provider.get_auto_resync_prompts())
+        self._auto_resync_checkbox.stateChanged.connect(self._toggle_auto_resync)
+        pc_layout.addWidget(self._auto_resync_checkbox)
+
         tabs = QTabWidget()
         mono = QFont("Menlo")
         mono.setStyleHint(QFont.StyleHint.Monospace)
@@ -233,6 +250,13 @@ class SettingsPage(QWidget):
         outer.addWidget(prompts_card)
         outer.addStretch()
 
+    def _toggle_auto_resync(self, state: int) -> None:
+        enabled = bool(state)
+        ai_provider.save_auto_resync_prompts(enabled)
+        if self._status_bar:
+            msg = "✓  Auto resync on load enabled." if enabled else "✓  Auto resync on load disabled."
+            self._status_bar.showMessage(msg, 3000)
+
     def _sync_prompt(self, filename: str, editor: QPlainTextEdit, status_lbl: QLabel) -> None:
         default = ai_provider.default_prompt(filename)
         editor.setPlainText(default)
@@ -260,6 +284,7 @@ class SettingsPage(QWidget):
     def _save_resume_template(self) -> None:
         ai_provider.save_resume_template(self._resume_template_edit.toPlainText())
         ai_provider.save_resume_page_cap(self._page_cap_spin.value())
+        ai_provider.save_max_generation_attempts(self._max_iters_spin.value())
         ai_provider.save_resume_output_dir(self._output_dir_edit.text())
         self._resume_template_status.setStyleSheet("font-size: 12px; color: #057642;")
         self._resume_template_status.setText("✓  Saved")

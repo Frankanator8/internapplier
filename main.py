@@ -31,6 +31,7 @@ def _setup_logging() -> None:
 _setup_logging()
 
 from PyQt6.QtWidgets import QApplication
+from app import ai_provider
 from app.main_window import MainWindow
 from app.style import GLOBAL_STYLESHEET
 
@@ -40,6 +41,9 @@ def main():
         print("STARTING AGAIN")
     for i in range(10):
         print()
+    ai_provider._seed_prompts()
+    if ai_provider.get_auto_resync_prompts():
+        ai_provider.resync_all_prompts()
     app = QApplication(sys.argv)
     app.setApplicationName("InternApplier")
     app.setStyleSheet(GLOBAL_STYLESHEET)
