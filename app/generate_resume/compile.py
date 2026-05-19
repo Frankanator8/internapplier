@@ -1,10 +1,29 @@
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+
+_DOCUMENTCLASS_RE = re.compile(r"\\documentclass\s*(?:\[[^\]]*\])?\s*\{")
+_END_DOCUMENT_RE = re.compile(r"\\end\s*\{document\}")
+
+
+def extract_document(text: str) -> str | None:
+    """Return the substring from a real ``\\documentclass{...}`` through
+    ``\\end{document}``. Returns None if no real ``\\documentclass{...}``
+    declaration is present — bare mentions of ``\\documentclass`` inside
+    prose (e.g. backtick-quoted commentary) are ignored because they lack
+    the following ``{`` argument."""
+    start = _DOCUMENTCLASS_RE.search(text)
+    if not start:
+        return None
+    end = _END_DOCUMENT_RE.search(text, start.end())
+    if not end:
+        return text[start.start():]
+    return text[start.start():end.end()]
 
 logger = logging.getLogger(__name__)
 
@@ -67,11 +86,75 @@ def compile_latex(latex: str, workdir: Path | None = None) -> Path:
     return pdf_path
 
 
-def pdf_page_count(pdf: Path) -> int:
+def pdf_page_fill(pdf: Path) -> float:
+    """Measure how many pages of content the PDF holds, line-wise.
+
+    Returns ``full_pages + (lines_on_last_page / max_lines_per_page)``.
+    A single-page resume that's three-quarters full returns ``0.75``;
+    one filling 1 page + 75% of a second returns ``1.75``.
+    """
+    from statistics import median
+
     from pypdf import PdfReader
 
     reader = PdfReader(str(pdf))
-    return len(reader.pages)
+    n_pages = len(reader.pages)
+    if n_pages == 0:
+        return 0.0
+
+    try:
+        per_page_ys: list[list[float]] = []
+        for page in reader.pages:
+            ys: list[float] = []
+
+            def visitor(text, cm, tm, font_dict, font_size, _ys=ys):
+                if text and text.strip():
+                    _ys.append(round(float(tm[5]) * 2) / 2)
+
+            page.extract_text(visitor_text=visitor)
+            per_page_ys.append(sorted(set(ys)))
+
+        line_counts = [len(ys) for ys in per_page_ys]
+        if not any(line_counts):
+            return float(n_pages)
+
+        last_lines = line_counts[-1]
+        if n_pages >= 2:
+            max_lines = max(line_counts[:-1]) or last_lines
+        else:
+            ys = per_page_ys[0]
+            if len(ys) < 2:
+                return float(n_pages)
+            diffs = [b - a for a, b in zip(ys, ys[1:]) if b - a > 0.1]
+            spacing = median(diffs) if diffs else (ys[-1] - ys[0]) / max(len(ys) - 1, 1)
+            page_height = float(reader.pages[0].mediabox.height)
+            text_top_margin = page_height - ys[-1]
+            text_bottom_margin = ys[0]
+            usable = page_height - text_top_margin - text_bottom_margin + spacing
+            max_lines = max(int(round(usable / spacing)), last_lines)
+
+        if max_lines <= 0:
+            return float(n_pages)
+
+        fractional = last_lines / max_lines
+        fractional = max(0.0, min(fractional, 1.0))
+        return (n_pages - 1) + fractional
+    except Exception:
+        logger.exception("pdf_page_fill — extraction failed; falling back to raw page count")
+        return float(n_pages)
+
+
+def test_latex_compiles(latex: str) -> tuple[bool, str]:
+    """Return (True, "") if `latex` (a complete document) compiles, else
+    (False, log_excerpt). Uses a throwaway temp dir."""
+    try:
+        compile_latex(latex)
+    except LatexCompileError as e:
+        excerpt = getattr(e, "log_excerpt", "") or str(e)
+        logger.warning("test_latex_compiles — failed: %s", str(e))
+        return False, excerpt
+    logger.info("test_latex_compiles — ok (%d chars)", len(latex))
+    return True, ""
 
 
 def _extract_error_excerpt(log_text: str, max_chars: int = 1500) -> str:

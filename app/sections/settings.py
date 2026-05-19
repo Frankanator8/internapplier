@@ -42,7 +42,10 @@ class SettingsPage(QWidget):
 
         hint = QLabel(
             'Enter any model ID available on <a href="https://openrouter.ai/models">'
-            'openrouter.ai/models</a>.'
+            'openrouter.ai/models</a>. '
+            '<b>The powerful model must support tool/function calling</b> — '
+            "it's used for resume generation, grading, and LaTeX repair, all "
+            "of which invoke host-side tools (test_compile, page_length)."
         )
         hint.setOpenExternalLinks(True)
         hint.setWordWrap(True)
@@ -62,8 +65,16 @@ class SettingsPage(QWidget):
         self._resize_edit(self._fast_edit, self._fast_edit.text())
         self._fast_edit.textChanged.connect(lambda t: self._resize_edit(self._fast_edit, t))
 
-        fast_label = _label("Model")
-        form.addRow(fast_label, self._fast_edit)
+        form.addRow(_label("Fast model"), self._fast_edit)
+
+        self._powerful_edit = QLineEdit()
+        self._powerful_edit.setText(config.get("powerful", ai_provider.DEFAULT_POWERFUL_MODEL))
+        self._powerful_edit.setPlaceholderText(ai_provider.DEFAULT_POWERFUL_MODEL)
+
+        self._resize_edit(self._powerful_edit, self._powerful_edit.text())
+        self._powerful_edit.textChanged.connect(lambda t: self._resize_edit(self._powerful_edit, t))
+
+        form.addRow(_label("Powerful model"), self._powerful_edit)
         card_layout.addLayout(form)
 
         btn_row = QHBoxLayout()
@@ -204,7 +215,6 @@ class SettingsPage(QWidget):
 
         for label_text, filename in [
             ("Analyze Bullet", "analyze_bullet.txt"),
-            ("Tailor Bullets", "tailor_resume.txt"),
             ("Generate Resume", "generate_resume.txt"),
             ("Grade Resume", "grade_resume.txt"),
             ("Research Company", "research_company.txt"),
@@ -299,12 +309,13 @@ class SettingsPage(QWidget):
 
     def _save(self):
         fast = self._fast_edit.text().strip()
-        if not fast:
+        powerful = self._powerful_edit.text().strip()
+        if not fast or not powerful:
             self._inline_status.setStyleSheet("font-size: 12px; color: #b00;")
-            self._inline_status.setText("Model is required.")
+            self._inline_status.setText("Both models are required.")
             return
 
-        ai_provider.save_model_config(fast)
+        ai_provider.save_model_config(fast, powerful)
 
         self._inline_status.setStyleSheet("font-size: 12px; color: #057642;")
         self._inline_status.setText("✓  Saved")

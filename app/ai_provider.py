@@ -1,3 +1,4 @@
+import datetime
 import json
 import logging
 import os
@@ -8,6 +9,11 @@ from typing import Iterator
 import requests
 
 logger = logging.getLogger(__name__)
+
+# Out-of-band marker prefix for streamed tool-event lines. Downstream
+# collectors (e.g. ResumeGenerator._collect_stream) detect this prefix to
+# route tool events to the UI without polluting the model's text output.
+TOOL_EVENT_PREFIX = "\x1e"
 
 _APP_DIR = pathlib.Path.home() / "Library" / "Application Support" / "InternApplier"
 _MODELS_FILE = _APP_DIR / "models.txt"
@@ -44,6 +50,7 @@ def save_prompt(name: str, content: str) -> None:
     (_APP_PROMPTS_DIR / name).write_text(content, encoding="utf-8")
 
 DEFAULT_FAST_MODEL = "google/gemini-2.0-flash-exp:free"
+DEFAULT_POWERFUL_MODEL = "openai/gpt-4o-mini"
 
 _model_config_cache: dict[str, str] | None = None
 
@@ -53,13 +60,14 @@ def _load_model_config() -> dict[str, str]:
     if _model_config_cache is not None:
         return _model_config_cache
 
-    defaults = {"fast": DEFAULT_FAST_MODEL}
+    defaults = {"fast": DEFAULT_FAST_MODEL, "powerful": DEFAULT_POWERFUL_MODEL}
 
     _APP_DIR.mkdir(parents=True, exist_ok=True)
     _seed_prompts()
     if not _MODELS_FILE.exists():
         with open(_MODELS_FILE, "w", encoding="utf-8") as f:
             f.write(f"fast={DEFAULT_FAST_MODEL}\n")
+            f.write(f"powerful={DEFAULT_POWERFUL_MODEL}\n")
         _model_config_cache = defaults
         return _model_config_cache
 
@@ -86,16 +94,17 @@ class OpenRouterProvider:
         self,
         api_key: str | None = None,
         model: str | None = None,
+        tier: str = "fast",
     ):
         self.api_key = api_key or os.environ.get("OPENROUTER_API_KEY", "")
         if model:
             self.model = model
         else:
             config = _load_model_config()
-            self.model = config["fast"]
+            self.model = config.get(tier) or config["fast"]
 
         key_hint = f"...{self.api_key[-6:]}" if len(self.api_key) >= 6 else ("(set)" if self.api_key else "(MISSING)")
-        logger.debug("OpenRouterProvider init — model=%s api_key=%s", self.model, key_hint)
+        logger.debug("OpenRouterProvider init — tier=%s model=%s api_key=%s", tier, self.model, key_hint)
 
     def analyze_bullet_stream(self, bullet: str, context: dict) -> Iterator[str]:
         logger.info("analyze_bullet_stream — bullet=%r context=%s", bullet[:120], context)
@@ -178,108 +187,205 @@ class OpenRouterProvider:
         *,
         log_label: str,
         timeout: tuple[float, float] = (10.0, 30.0),
+        tools: list[dict] | None = None,
+        max_tool_rounds: int = 4,
+        tool_overrides: dict | None = None,
     ) -> Iterator[str]:
         """SSE-stream chat completions, yielding incremental content chunks.
 
-        Mirrors the parsing in `analyze_bullet_stream`. Raises on transport
-        failure or non-2xx; a stalled stream trips the per-read timeout.
+        When ``tools`` is provided, runs an OpenAI-style tool-calling loop:
+        accumulates streamed ``tool_calls``, dispatches them against
+        :data:`agent_tools.TOOL_HANDLERS`, appends the assistant + tool
+        messages, and re-issues the request until the model finishes with
+        a normal stop or ``max_tool_rounds`` is reached.
+
+        Tool-call activity is surfaced as out-of-band chunks prefixed with
+        :data:`TOOL_EVENT_PREFIX`; downstream collectors strip these so they
+        do not pollute the model's text output.
         """
         if not self.api_key:
             logger.error("%s — API key missing", log_label)
             raise ValueError(
                 "No API key found. Set the OPENROUTER_API_KEY environment variable."
             )
-        logger.debug("%s — POST %s model=%s stream=True timeout=%s",
-                     log_label, self.BASE_URL, self.model, timeout)
-        t0 = time.perf_counter()
-        chunk_count = 0
-        try:
-            with requests.post(
-                self.BASE_URL,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                    "Accept": "text/event-stream",
-                },
-                json={
-                    "model": self.model,
-                    "stream": True,
-                    "messages": messages,
-                },
-                stream=True,
-                timeout=timeout,
-            ) as response:
-                response.raise_for_status()
-                response.encoding = "utf-8"
-                for line in response.iter_lines(decode_unicode=True):
-                    if not line:
-                        continue
-                    if line.startswith(": "):
-                        continue
-                    if not line.startswith("data: "):
-                        continue
-                    payload = line[6:].strip()
-                    if payload == "[DONE]":
-                        break
-                    try:
-                        data = json.loads(payload)
-                    except json.JSONDecodeError:
-                        logger.debug("%s — skipping non-JSON line: %r",
-                                     log_label, payload[:120])
-                        continue
-                    choices = data.get("choices") or []
-                    if not choices:
-                        continue
-                    delta = choices[0].get("delta") or {}
-                    content = delta.get("content")
-                    if content:
-                        chunk_count += 1
-                        yield content
-            elapsed = time.perf_counter() - t0
-            logger.info("%s — stream done in %.2fs, %d chunks",
-                        log_label, elapsed, chunk_count)
-        except Exception:
-            logger.exception("%s — stream failed", log_label)
-            raise
 
-    def tailor_bullets_stream(
-        self, bullets: list[str], job_description: str, feedback: str | None = None
-    ) -> Iterator[str]:
-        logger.info("tailor_bullets_stream — jd=%r bullets=%d feedback=%s",
-                    job_description[:120], len(bullets),
-                    f"{len(feedback)} chars" if feedback else "none")
-        if not bullets:
-            return
-        numbered = "\n".join(f"{i + 1}. {b}" for i, b in enumerate(bullets))
-        user_message = (
-            f"Job Description:\n{job_description}\n\n"
-            f"Resume Bullets:\n{numbered}\n\n"
-            f"Rewrite each bullet to highlight the skills and impact most relevant to "
-            f"this job. Return ONLY a JSON array of {len(bullets)} strings, in the same "
-            "order as the input. No markdown, no numbering, no explanation."
-        )
-        if feedback:
-            user_message += (
-                "\n\nA prior draft of the resume was graded and received the following "
-                "feedback. Use it to write stronger bullets in this pass while still "
-                "respecting the factual-integrity and structure-preservation constraints.\n"
-                f"<feedback>\n{feedback}\n</feedback>"
-            )
-        yield from self._stream_chat_completion(
-            messages=[
-                {"role": "system", "content": load_prompt("tailor_resume.txt")},
-                {"role": "user", "content": user_message},
-            ],
-            log_label="tailor_bullets",
-        )
+        from .generate_resume.agent_tools import TOOL_HANDLERS
+
+        logger.debug("%s — POST %s model=%s stream=True timeout=%s tools=%s",
+                     log_label, self.BASE_URL, self.model, timeout,
+                     [t["function"]["name"] for t in tools] if tools else None)
+
+        messages = list(messages)
+        rounds_used = 0
+
+        while True:
+            payload_json: dict = {
+                "model": self.model,
+                "stream": True,
+                "messages": messages,
+            }
+            if tools:
+                payload_json["tools"] = tools
+                payload_json["tool_choice"] = (
+                    "none" if rounds_used >= max_tool_rounds else "auto"
+                )
+
+            accumulated_content: list[str] = []
+            tool_calls_acc: dict[int, dict] = {}
+            finish_reason: str | None = None
+            t0 = time.perf_counter()
+            chunk_count = 0
+            try:
+                with requests.post(
+                    self.BASE_URL,
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                        "Accept": "text/event-stream",
+                    },
+                    json=payload_json,
+                    stream=True,
+                    timeout=timeout,
+                ) as response:
+                    response.raise_for_status()
+                    response.encoding = "utf-8"
+                    for line in response.iter_lines(decode_unicode=True):
+                        if not line:
+                            continue
+                        if line.startswith(": "):
+                            continue
+                        if not line.startswith("data: "):
+                            continue
+                        payload = line[6:].strip()
+                        if payload == "[DONE]":
+                            break
+                        try:
+                            data = json.loads(payload)
+                        except json.JSONDecodeError:
+                            logger.debug("%s — skipping non-JSON line: %r",
+                                         log_label, payload[:120])
+                            continue
+                        choices = data.get("choices") or []
+                        if not choices:
+                            continue
+                        choice = choices[0]
+                        delta = choice.get("delta") or {}
+                        content = delta.get("content")
+                        if content:
+                            chunk_count += 1
+                            accumulated_content.append(content)
+                        for tc in delta.get("tool_calls") or []:
+                            idx = tc.get("index", 0)
+                            entry = tool_calls_acc.setdefault(
+                                idx, {"id": None, "name": None, "arguments": ""}
+                            )
+                            if tc.get("id"):
+                                entry["id"] = tc["id"]
+                            fn = tc.get("function") or {}
+                            if fn.get("name"):
+                                entry["name"] = fn["name"]
+                            if fn.get("arguments"):
+                                entry["arguments"] += fn["arguments"]
+                        if choice.get("finish_reason"):
+                            finish_reason = choice["finish_reason"]
+                elapsed = time.perf_counter() - t0
+                logger.info(
+                    "%s — stream done in %.2fs, %d chunks, finish=%s, tool_calls=%d",
+                    log_label, elapsed, chunk_count, finish_reason,
+                    len(tool_calls_acc),
+                )
+            except Exception:
+                logger.exception("%s — stream failed", log_label)
+                raise
+
+            round_content = "".join(accumulated_content)
+
+            if finish_reason != "tool_calls" or not tool_calls_acc:
+                if round_content:
+                    yield round_content
+                return
+
+            if round_content.strip():
+                yield TOOL_EVENT_PREFIX + (
+                    f"[reasoning] round {rounds_used + 1}:\n{round_content}\n"
+                )
+
+            rounds_used += 1
+            assembled: list[dict] = []
+            for idx in sorted(tool_calls_acc):
+                entry = tool_calls_acc[idx]
+                assembled.append({
+                    "id": entry["id"] or f"call_{idx}",
+                    "type": "function",
+                    "function": {
+                        "name": entry["name"] or "",
+                        "arguments": entry["arguments"] or "{}",
+                    },
+                })
+
+            messages.append({
+                "role": "assistant",
+                "content": "".join(accumulated_content) or None,
+                "tool_calls": assembled,
+            })
+
+            for tc in assembled:
+                name = tc["function"]["name"]
+                args_raw = tc["function"]["arguments"]
+                args: dict = {}
+                try:
+                    parsed = json.loads(args_raw) if args_raw else {}
+                    if not isinstance(parsed, dict):
+                        raise ValueError("arguments must decode to a JSON object")
+                    args = parsed
+                except (json.JSONDecodeError, ValueError) as e:
+                    result = {"ok": False, "error": f"invalid arguments: {e}"}
+                else:
+                    handler = (tool_overrides or {}).get(name) or TOOL_HANDLERS.get(name)
+                    if handler is None:
+                        result = {"ok": False, "error": f"unknown tool: {name}"}
+                    else:
+                        try:
+                            result = handler(**args)
+                        except TypeError as e:
+                            result = {"ok": False, "error": f"bad arguments: {e}"}
+                        except Exception as e:
+                            logger.exception("%s — tool %s raised", log_label, name)
+                            result = {"ok": False, "error": str(e)}
+
+                logger.info(
+                    "%s — tool %s round=%d ok=%s",
+                    log_label, name, rounds_used, result.get("ok"),
+                )
+                yield TOOL_EVENT_PREFIX + _format_tool_event(
+                    name, rounds_used, args, result
+                )
+
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": json.dumps(result),
+                })
 
     def fix_latex_stream(self, latex: str, compile_error: str) -> Iterator[str]:
+        from .generate_resume.agent_tools import (
+            OPENAI_TOOL_SCHEMAS,
+            extract_preamble,
+            make_test_compile,
+        )
+
         logger.info("fix_latex_stream — latex_chars=%d error_chars=%d",
                     len(latex), len(compile_error))
+        preamble = extract_preamble(latex)
+        logger.debug(
+            "fix_latex_stream — preamble extracted: %s",
+            f"{len(preamble)} chars" if preamble else "none (minimal fallback)",
+        )
         user_message = (
-            f"pdflatex error log:\n{compile_error}\n\n"
             f"Broken LaTeX source:\n{latex}\n\n"
-            "Return the corrected, complete LaTeX document."
+            f"pdflatex error log:\n{compile_error}\n\n"
+            "Repair the syntax and return the corrected, complete LaTeX "
+            "document as your final assistant message — no prose, no fences."
         )
         yield from self._stream_chat_completion(
             messages=[
@@ -287,23 +393,73 @@ class OpenRouterProvider:
                 {"role": "user", "content": user_message},
             ],
             log_label="fix_latex",
+            tools=[OPENAI_TOOL_SCHEMAS["test_compile"]],
+            tool_overrides={"test_compile": make_test_compile(preamble)},
         )
 
-    def grade_resume_stream(self, latex: str, job_description: str) -> Iterator[str]:
-        logger.info("grade_resume_stream — jd=%r latex_chars=%d",
-                    job_description[:120], len(latex))
+    def grade_resume_stream(
+        self,
+        latex: str,
+        job_description: str,
+        *,
+        over_by: float = 0.0,
+        today: str | None = None,
+        company_research: dict | None = None,
+        profile: dict | None = None,
+    ) -> Iterator[str]:
+        profile_summary = (
+            ", ".join(
+                f"{k}={len(profile.get(k, []))}"
+                for k in ("experience", "projects", "education", "awards", "skills", "hobbies")
+            )
+            if profile else "none"
+        )
+        logger.info(
+            "grade_resume_stream — jd=%r latex_chars=%d over_by=%.3f research=%s profile=%s",
+            job_description[:120], len(latex), over_by,
+            f"{len(company_research)} keys" if company_research else "none",
+            profile_summary,
+        )
+        today = today or datetime.date.today().isoformat()
+        page_status = (
+            f"<page_status>over by {over_by:.2f} page(s) — emit drops</page_status>\n\n"
+            if over_by > 1e-6 else ""
+        )
+        research_block = (
+            f"<company_research>\n{json.dumps(company_research, indent=2)}\n</company_research>\n\n"
+            if company_research else ""
+        )
+        if profile:
+            profile_json = json.dumps({
+                "experience": profile.get("experience", []),
+                "projects": profile.get("projects", []),
+                "education": profile.get("education", []),
+                "awards": profile.get("awards", []),
+                "skills": profile.get("skills", []),
+                "hobbies": profile.get("hobbies", []),
+            }, indent=2)
+            profile_block = f"<profile>\n{profile_json}\n</profile>\n\n"
+        else:
+            profile_block = ""
         user_message = (
+            f"<today>{today}</today>\n\n"
+            f"{page_status}"
+            f"{profile_block}"
+            f"{research_block}"
             f"Job Description:\n{job_description}\n\n"
             f"Resume LaTeX:\n{latex}\n\n"
             "Grade this resume against the job description following the system "
             "instructions exactly."
         )
+        from .generate_resume.agent_tools import OPENAI_TOOL_SCHEMAS
+
         yield from self._stream_chat_completion(
             messages=[
                 {"role": "system", "content": load_prompt("grade_resume.txt")},
                 {"role": "user", "content": user_message},
             ],
             log_label="grade_resume",
+            tools=[OPENAI_TOOL_SCHEMAS["page_length"]],
         )
 
     def _build_generate_resume_messages(
@@ -312,15 +468,21 @@ class OpenRouterProvider:
         job_description: str,
         feedback: str | None,
         previous_latex: str | None = None,
+        today: str | None = None,
+        company_research: dict | None = None,
     ) -> list[dict]:
+        today = today or datetime.date.today().isoformat()
         profile_json = json.dumps({
             "experience": profile.get("experience", []),
             "projects": profile.get("projects", []),
             "education": profile.get("education", []),
+            "awards": profile.get("awards", []),
             "skills": profile.get("skills", []),
+            "hobbies": profile.get("hobbies", []),
         }, indent=2)
 
         sections: list[str] = [
+            f"<today>{today}</today>",
             f"<job_description>\n{job_description}\n</job_description>",
             f"<profile>\n{profile_json}\n</profile>",
         ]
@@ -331,6 +493,10 @@ class OpenRouterProvider:
             sections.append(f"<previous_draft>\n{previous_latex}\n</previous_draft>")
         if feedback:
             sections.append(f"<feedback>\n{feedback}\n</feedback>")
+        if company_research:
+            sections.append(
+                f"<company_research>\n{json.dumps(company_research, indent=2)}\n</company_research>"
+            )
 
         return [
             {"role": "system", "content": load_prompt("generate_resume.txt")},
@@ -343,19 +509,26 @@ class OpenRouterProvider:
         job_description: str,
         feedback: str | None = None,
         previous_latex: str | None = None,
+        today: str | None = None,
+        company_research: dict | None = None,
     ) -> Iterator[str]:
         logger.info(
-            "generate_resume_stream — jd=%r feedback=%s previous_latex=%s",
+            "generate_resume_stream — jd=%r feedback=%s previous_latex=%s research=%s",
             job_description[:120],
             f"{len(feedback)} chars" if feedback else "none",
             f"{len(previous_latex)} chars" if previous_latex else "none",
+            f"{len(company_research)} keys" if company_research else "none",
         )
+        from .generate_resume.agent_tools import OPENAI_TOOL_SCHEMAS
+
         messages = self._build_generate_resume_messages(
-            profile, job_description, feedback, previous_latex
+            profile, job_description, feedback, previous_latex, today,
+            company_research=company_research,
         )
         yield from self._stream_chat_completion(
             messages=messages,
             log_label="generate_resume",
+            tools=[OPENAI_TOOL_SCHEMAS["page_length"]],
         )
 
     def research_company(self, company_name: str, scraped_text: str) -> dict:
@@ -436,6 +609,37 @@ class OpenRouterProvider:
         }
         logger.info("research_company — success, values=%d projects=%d", len(result["core_values"]), len(result["recent_projects"]))
         return result
+
+
+def _format_tool_event(
+    name: str, round_idx: int, args: dict, result: dict
+) -> str:
+    """Render a tool-call event as a multi-line block for UI display."""
+    latex_arg = args.get("latex") if isinstance(args, dict) else None
+    latex_chars = len(latex_arg) if isinstance(latex_arg, str) else 0
+    ok = result.get("ok")
+    badge = "✓" if ok else "✗"
+
+    parts = [f"[tool {badge}] {name} (round {round_idx}, latex={latex_chars} chars)"]
+    if name == "page_length" and ok:
+        fill = result.get("fill")
+        cap = result.get("page_cap")
+        try:
+            parts.append(f"  → fill={float(fill):.3f} / page_cap={cap}")
+        except (TypeError, ValueError):
+            parts.append(f"  → fill={fill} / page_cap={cap}")
+    elif ok:
+        parts.append("  → ok")
+    else:
+        excerpt = (result.get("log_excerpt") or result.get("error") or "").strip()
+        if excerpt:
+            # Indent excerpt for readability; cap to a few lines.
+            lines = excerpt.splitlines()[:6]
+            parts.append("  → failed:")
+            parts.extend(f"      {ln}" for ln in lines)
+        else:
+            parts.append("  → failed")
+    return "\n".join(parts) + "\n"
 
 
 def _format_context(context: dict) -> str:
@@ -591,13 +795,16 @@ def save_auto_resync_prompts(enabled: bool) -> None:
     _settings_cache = current
 
 
-def save_model_config(fast: str) -> None:
+def save_model_config(fast: str, powerful: str) -> None:
     global _model_config_cache
     _APP_DIR.mkdir(parents=True, exist_ok=True)
+    fast = fast.strip()
+    powerful = powerful.strip()
     with open(_MODELS_FILE, "w", encoding="utf-8") as f:
-        f.write(f"fast={fast.strip()}\n")
-    _model_config_cache = {"fast": fast.strip()}
+        f.write(f"fast={fast}\n")
+        f.write(f"powerful={powerful}\n")
+    _model_config_cache = {"fast": fast, "powerful": powerful}
 
 
-def get_provider() -> OpenRouterProvider:
-    return OpenRouterProvider()
+def get_provider(tier: str = "fast") -> OpenRouterProvider:
+    return OpenRouterProvider(tier=tier)

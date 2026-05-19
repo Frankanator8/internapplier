@@ -108,16 +108,7 @@ class _GenerateResumeWorker(QObject):
 
             gen = ResumeGenerator(self._profile, self._jd, research)
 
-            self.progress.emit("Selecting courses…")
-            courses = gen.select_courses(10)
-
-            self.progress.emit("Scoring entries…")
-            scored = gen.score_entries(stream_cb=self.stream.emit)
-
-            self.progress.emit("Building filtered profile…")
-            filtered = gen.build_filtered_profile(stream_cb=self.stream.emit)
-
-            self.progress.emit("Tailoring bullets and generating LaTeX (this can take a minute)…")
+            self.progress.emit("Generating LaTeX (this can take a minute)…")
             latex_result = gen.generate_latex(
                 company=self._company or None,
                 progress_cb=self.progress.emit,
@@ -126,19 +117,15 @@ class _GenerateResumeWorker(QObject):
 
             pdf_path = latex_result.get("pdf")
             logger.info(
-                "_GenerateResumeWorker.run — success, courses=%d sections=%s pages=%s",
-                len(courses), {k: len(v) for k, v in scored.items()},
-                latex_result.get("pages"),
+                "_GenerateResumeWorker.run — success, fill=%s",
+                latex_result.get("fill"),
             )
             self.finished.emit({
                 "research": research,
-                "courses": courses,
-                "scored": scored,
                 "new_research": new_research,
-                "filtered": filtered,
                 "latex": latex_result.get("latex", ""),
                 "pdf": str(pdf_path) if pdf_path else "",
-                "pages": latex_result.get("pages"),
+                "fill": latex_result.get("fill"),
                 "grade": latex_result.get("grade"),
                 "attempts": latex_result.get("attempts") or [],
                 "chosen_attempt": latex_result.get("chosen_attempt"),
@@ -596,59 +583,26 @@ class ApplierPage(QWidget):
         layout.addWidget(self._research_section_header("COMPANY RESEARCH"))
         self._render_research_block(layout, research)
 
-        courses = payload.get("courses") or []
-        layout.addWidget(self._research_section_header("SELECTED COURSES"))
-        if courses:
-            for c in courses:
-                layout.addWidget(self._research_text_row(f"• {c}"))
-        else:
-            layout.addWidget(self._research_text_row("(none)"))
-
-        scored = payload.get("scored") or {}
-        section_titles = [
-            ("relevant_experience", "RELEVANT EXPERIENCE", True),
-            ("projects", "PROJECTS", True),
-            ("awards", "AWARDS", True),
-            ("leadership", "LEADERSHIP", False),
-        ]
-        for key, title, include_relevancy in section_titles:
-            rows = scored.get(key, [])
-            if not rows:
-                continue
-            layout.addWidget(self._research_section_header(title))
-            for r in rows:
-                layout.addWidget(self._ranking_card(r, include_relevancy))
-
-        filtered = payload.get("filtered") or {}
-        if filtered:
-            layout.addWidget(self._research_section_header("FILTERED PROFILE"))
-            edu_courses = sum(len(e.get("courses", []) or []) for e in filtered.get("education", []) or [])
-            layout.addWidget(self._research_text_row(
-                f"experience: {len(filtered.get('experience', []) or [])}   "
-                f"projects: {len(filtered.get('projects', []) or [])}   "
-                f"awards: {len(filtered.get('awards', []) or [])}   "
-                f"education: {len(filtered.get('education', []) or [])}   "
-                f"(courses: {edu_courses})"
-            ))
-
-        pages = payload.get("pages")
+        fill = payload.get("fill")
         grade = payload.get("grade") or {}
         latex = payload.get("latex") or ""
         pdf = payload.get("pdf") or ""
-        if latex or pages is not None or grade or pdf:
+        if latex or fill is not None or grade or pdf:
             layout.addWidget(self._research_section_header("GENERATED RESUME"))
-            if pages is None:
+            if fill is None:
                 layout.addWidget(self._research_text_row("Pages: (failed to compile)"))
             else:
-                layout.addWidget(self._research_text_row(f"Pages: {pages}"))
+                layout.addWidget(self._research_text_row(f"Pages: {fill:.2f}"))
             if grade:
                 layout.addWidget(self._research_text_row(f"Grade: {grade.get('score', 0):.2f}/10"))
-                bullet_fb = grade.get("bullet_feedback") or ""
-                writer_fb = grade.get("writer_feedback") or ""
-                if bullet_fb:
-                    layout.addWidget(self._research_text_row("Bullets: " + bullet_fb))
-                if writer_fb:
-                    layout.addWidget(self._research_text_row("Resume choice: " + writer_fb))
+                fb = grade.get("feedback") or ""
+                if fb:
+                    layout.addWidget(self._research_text_row("Feedback: " + fb))
+                drops = grade.get("drops") or []
+                if drops:
+                    layout.addWidget(self._research_text_row(
+                        "Dropped for page-fit: " + "; ".join(drops)
+                    ))
 
             btn_row_frame = QFrame()
             btn_row = QHBoxLayout(btn_row_frame)
@@ -673,24 +627,26 @@ class ApplierPage(QWidget):
             chosen = payload.get("chosen_attempt")
             if len(attempts) > 1:
                 layout.addWidget(self._research_section_header("ALL ATTEMPTS"))
-                att_row_frame = QFrame()
-                att_row = QHBoxLayout(att_row_frame)
-                att_row.setContentsMargins(0, 0, 0, 0)
-                att_row.setSpacing(8)
                 for a in attempts:
                     n = a.get("attempt")
                     a_pdf = a.get("pdf") or ""
                     a_grade = a.get("grade") or {}
-                    a_pages = a.get("pages")
+                    a_fill = a.get("fill")
+                    a_compile_error = a.get("compile_error") or ""
                     score_part = (
                         f"{a_grade.get('score', 0):.2f}/10"
                         if a_grade else "ungraded"
                     )
                     pages_part = (
-                        f"{a_pages}pg" if a_pages is not None else "compile✗"
+                        f"{a_fill:.2f}pg" if a_fill is not None else "compile✗"
                     )
                     mark = " ★" if n == chosen else ""
                     label = f"Attempt {n} ({score_part}, {pages_part}){mark}"
+
+                    btn_frame = QFrame()
+                    btn_layout = QHBoxLayout(btn_frame)
+                    btn_layout.setContentsMargins(0, 0, 0, 0)
+                    btn_layout.setSpacing(8)
                     btn = _secondary_btn(label, 0)
                     btn.setEnabled(bool(a_pdf))
                     if a_pdf:
@@ -698,38 +654,19 @@ class ApplierPage(QWidget):
                             lambda checked, p=a_pdf:
                             QDesktopServices.openUrl(QUrl.fromLocalFile(p))
                         )
-                    att_row.addWidget(btn)
-                att_row.addStretch()
-                layout.addWidget(att_row_frame)
+                    btn_layout.addWidget(btn)
+                    btn_layout.addStretch()
+                    layout.addWidget(btn_frame)
 
-    def _ranking_card(self, row: dict, include_relevancy: bool) -> QFrame:
-        frame = QFrame()
-        frame.setObjectName("result-bullet-row")
-        outer = QVBoxLayout(frame)
-        outer.setContentsMargins(12, 10, 12, 10)
-        outer.setSpacing(4)
-
-        header = QHBoxLayout()
-        title = QLabel(row.get("label", ""))
-        title.setWordWrap(True)
-        title.setStyleSheet("color: #1d1d1d; font-size: 13px; font-weight: 600;")
-        header.addWidget(title, 1)
-
-        score = QLabel(f"{row.get('final_score', 0.0):.3f}")
-        score.setStyleSheet("color: #1d1d1d; font-size: 16px; font-weight: 700;")
-        header.addWidget(score, 0, Qt.AlignmentFlag.AlignRight)
-        outer.addLayout(header)
-
-        ai = row.get("ai") or {}
-        parts = [f"impact={ai.get('impact', 0):.1f}", f"prestige={ai.get('prestige', 0):.1f}"]
-        if include_relevancy:
-            parts.append(f"relevancy={ai.get('relevancy', 0):.1f}")
-        parts.append(f"recency={row.get('recency', 0.0):.2f}")
-        sub = QLabel("  ".join(parts))
-        sub.setStyleSheet("color: #888; font-size: 12px;")
-        outer.addWidget(sub)
-
-        return frame
+                    a_feedback = a_grade.get("feedback") or ""
+                    if a_compile_error:
+                        layout.addWidget(self._research_text_row(
+                            "Compile error: " + a_compile_error
+                        ))
+                    elif a_feedback:
+                        layout.addWidget(self._research_text_row(
+                            "Feedback: " + a_feedback
+                        ))
 
     def _clear_generate_results(self):
         while self._gen_results_layout.count():
