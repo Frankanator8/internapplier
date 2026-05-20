@@ -531,6 +531,54 @@ class OpenRouterProvider:
             tools=[OPENAI_TOOL_SCHEMAS["page_length"]],
         )
 
+    def answer_question_stream(
+        self,
+        question: str,
+        profile: dict,
+        company_research: dict | None = None,
+        company_name: str | None = None,
+        job_description: str | None = None,
+        today: str | None = None,
+    ) -> Iterator[str]:
+        logger.info(
+            "answer_question_stream — question=%r company=%r research=%s jd=%s",
+            question[:120],
+            company_name,
+            f"{len(company_research)} keys" if company_research else "none",
+            f"{len(job_description)} chars" if job_description else "none",
+        )
+        today = today or datetime.date.today().isoformat()
+        profile_json = json.dumps({
+            "experience": profile.get("experience", []),
+            "projects": profile.get("projects", []),
+            "education": profile.get("education", []),
+            "awards": profile.get("awards", []),
+            "skills": profile.get("skills", []),
+            "hobbies": profile.get("hobbies", []),
+        }, indent=2)
+
+        sections: list[str] = [
+            f"<today>{today}</today>",
+            f"<question>\n{question}\n</question>",
+        ]
+        if company_name:
+            sections.append(f"<company_name>{company_name}</company_name>")
+        sections.append(f"<profile>\n{profile_json}\n</profile>")
+        if company_research:
+            sections.append(
+                f"<company_research>\n{json.dumps(company_research, indent=2)}\n</company_research>"
+            )
+        if job_description:
+            sections.append(f"<job_description>\n{job_description}\n</job_description>")
+
+        yield from self._stream_chat_completion(
+            messages=[
+                {"role": "system", "content": load_prompt("answer_question.txt")},
+                {"role": "user", "content": "\n\n".join(sections)},
+            ],
+            log_label="answer_question",
+        )
+
     def research_company(self, company_name: str, scraped_text: str) -> dict:
         logger.info("research_company — company=%r scraped_chars=%d", company_name, len(scraped_text))
         if not self.api_key:

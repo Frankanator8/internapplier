@@ -135,6 +135,42 @@ class _GenerateResumeWorker(QObject):
             self.error.emit(str(exc))
 
 
+class _QuestionWorker(QObject):
+    finished = pyqtSignal()
+    error = pyqtSignal(str)
+    stream = pyqtSignal(str)
+
+    def __init__(self, question: str, profile: dict, company_name: str, job_description: str, research_cache: dict):
+        super().__init__()
+        self._question = question
+        self._profile = profile
+        self._company = company_name
+        self._jd = job_description
+        self._cache = research_cache or {}
+
+    def run(self):
+        from api.ai_provider import get_provider
+        logger.info(
+            "_QuestionWorker.run — company=%r question=%r jd=%s",
+            self._company, self._question[:80],
+            f"{len(self._jd)} chars" if self._jd else "none",
+        )
+        try:
+            research = _research_from_cache(self._cache, self._company) if self._company else None
+            for chunk in get_provider().answer_question_stream(
+                question=self._question,
+                profile=self._profile,
+                company_research=research,
+                company_name=self._company or None,
+                job_description=self._jd or None,
+            ):
+                self.stream.emit(chunk)
+            self.finished.emit()
+        except Exception as exc:
+            logger.exception("_QuestionWorker.run — failed")
+            self.error.emit(str(exc))
+
+
 class ApplierPage(QWidget):
     def __init__(
         self,
@@ -158,7 +194,7 @@ class ApplierPage(QWidget):
         self._applier_sidebar.setObjectName("sidebar")
         self._applier_sidebar.setFixedWidth(200)
 
-        for label in ("📄  Generate Resume", "🔍  Research Company", "📚  Library"):
+        for label in ("📄  Generate Resume", "🔍  Research Company", "📚  Library", "❓  Answer Question"):
             item = QListWidgetItem(label)
             item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             self._applier_sidebar.addItem(item)
@@ -167,6 +203,7 @@ class ApplierPage(QWidget):
         self._applier_stack.addWidget(self._build_generate_resume_page())
         self._applier_stack.addWidget(self._build_research_page())
         self._applier_stack.addWidget(self._build_library_page())
+        self._applier_stack.addWidget(self._build_answer_question_page())
 
         self._applier_sidebar.currentRowChanged.connect(self._applier_stack.setCurrentIndex)
         self._applier_sidebar.currentRowChanged.connect(self._on_applier_section_changed)
@@ -745,6 +782,135 @@ class ApplierPage(QWidget):
         splitter.setSizes([220, 700])
 
         return self._wrap_page("Library", splitter)
+
+    # ── Answer Question ─────────────────────────────────────────
+    def _build_answer_question_page(self) -> QWidget:
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
+
+        left = QWidget()
+        left.setMinimumWidth(320)
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 8, 0, 0)
+        left_layout.setSpacing(10)
+
+        left_layout.addWidget(_label("Company (optional)"))
+        self._answer_company_input = QLineEdit()
+        self._answer_company_input.setPlaceholderText(
+            "Match a researched company to tailor the answer"
+        )
+        left_layout.addWidget(self._answer_company_input)
+
+        left_layout.addWidget(_label("Question"))
+        self._answer_question_input = QTextEdit()
+        self._answer_question_input.setPlaceholderText(
+            "e.g. Why are you interested in this role?"
+        )
+        left_layout.addWidget(self._answer_question_input, 1)
+
+        left_layout.addWidget(_label("Job Description (optional)"))
+        self._answer_jd_input = QTextEdit()
+        self._answer_jd_input.setPlaceholderText(
+            "Paste the job description to tailor the answer to the role…"
+        )
+        left_layout.addWidget(self._answer_jd_input, 2)
+
+        self._answer_btn = _primary_btn("❓  Answer Question")
+        self._answer_btn.clicked.connect(self._answer_question)
+        left_layout.addWidget(self._answer_btn)
+
+        self._answer_status = QLabel("")
+        self._answer_status.setWordWrap(True)
+        self._answer_status.setStyleSheet("color: #555; font-size: 12px;")
+        left_layout.addWidget(self._answer_status)
+
+        splitter.addWidget(left)
+
+        right = QWidget()
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(0, 8, 0, 0)
+        right_layout.setSpacing(8)
+
+        self._answer_output = QTextEdit()
+        self._answer_output.setReadOnly(True)
+        self._answer_output.setPlaceholderText(
+            "The generated answer will stream here."
+        )
+        right_layout.addWidget(self._answer_output, 1)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        self._answer_copy_btn = _secondary_btn("Copy Answer", 120)
+        self._answer_copy_btn.clicked.connect(
+            lambda: QGuiApplication.clipboard().setText(
+                self._answer_output.toPlainText()
+            )
+        )
+        btn_row.addWidget(self._answer_copy_btn)
+        btn_row.addStretch()
+        right_layout.addLayout(btn_row)
+
+        splitter.addWidget(right)
+        splitter.setSizes([360, 600])
+
+        return self._wrap_page("Answer Question", splitter)
+
+    def _answer_question(self):
+        question = self._answer_question_input.toPlainText().strip()
+        if not question:
+            self._answer_status.setStyleSheet("color: #cc3300; font-size: 12px;")
+            self._answer_status.setText("Type a question first.")
+            return
+
+        company = self._answer_company_input.text().strip()
+        jd = self._answer_jd_input.toPlainText().strip()
+        profile = self._get_profile()
+
+        self._answer_output.clear()
+        self._answer_btn.setEnabled(False)
+        self._answer_btn.setText("Answering…")
+        self._answer_status.setStyleSheet("color: #555; font-size: 12px;")
+        if company and _research_from_cache(self._research_cache, company):
+            self._answer_status.setText(f"Using cached research for {company!r}…")
+        elif company:
+            self._answer_status.setText(
+                f"No cached research for {company!r} — answering from profile only."
+            )
+        else:
+            self._answer_status.setText("Answering from profile…")
+
+        worker = _QuestionWorker(question, profile, company, jd, self._research_cache)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+
+        def on_finished():
+            self._answer_btn.setEnabled(True)
+            self._answer_btn.setText("❓  Answer Question")
+            self._answer_status.setText("")
+            thread.quit()
+
+        def on_error(msg: str):
+            self._answer_btn.setEnabled(True)
+            self._answer_btn.setText("❓  Answer Question")
+            self._answer_status.setStyleSheet("color: #cc3300; font-size: 12px;")
+            self._answer_status.setText(f"Error: {msg}")
+            thread.quit()
+
+        worker.finished.connect(on_finished)
+        worker.error.connect(on_error)
+        worker.stream.connect(self._on_answer_chunk)
+        thread.started.connect(worker.run)
+        thread.finished.connect(thread.deleteLater)
+        self._threads.append(thread)
+        self._workers.append(worker)
+        thread.finished.connect(lambda: self._workers.remove(worker) if worker in self._workers else None)
+        thread.start()
+
+    def _on_answer_chunk(self, chunk: str):
+        self._answer_output.moveCursor(QTextCursor.MoveOperation.End)
+        self._answer_output.insertPlainText(chunk)
+        sb = self._answer_output.verticalScrollBar()
+        sb.setValue(sb.maximum())
 
     def _on_applier_section_changed(self, idx: int):
         if idx == 2:
