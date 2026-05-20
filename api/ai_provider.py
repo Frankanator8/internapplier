@@ -630,6 +630,113 @@ class OpenRouterProvider:
             log_label="grade_interview_response",
         )
 
+    def chat_interview_stream(
+        self,
+        history: list[dict],
+        profile: dict,
+        company_name: str | None = None,
+        company_research: dict | None = None,
+        job_description: str | None = None,
+        today: str | None = None,
+    ) -> Iterator[str]:
+        logger.info(
+            "chat_interview_stream — turns=%d company=%r research=%s jd=%s",
+            len(history),
+            company_name,
+            f"{len(company_research)} keys" if company_research else "none",
+            f"{len(job_description)} chars" if job_description else "none",
+        )
+        today = today or datetime.date.today().isoformat()
+        profile_json = json.dumps({
+            "experience": profile.get("experience", []),
+            "projects": profile.get("projects", []),
+            "education": profile.get("education", []),
+            "awards": profile.get("awards", []),
+            "skills": profile.get("skills", []),
+            "hobbies": profile.get("hobbies", []),
+        }, indent=2)
+
+        context_sections: list[str] = [f"<today>{today}</today>"]
+        if company_name:
+            context_sections.append(f"<company_name>{company_name}</company_name>")
+        context_sections.append(f"<profile>\n{profile_json}\n</profile>")
+        if company_research:
+            context_sections.append(
+                f"<company_research>\n{json.dumps(company_research, indent=2)}\n</company_research>"
+            )
+        if job_description:
+            context_sections.append(f"<job_description>\n{job_description}\n</job_description>")
+
+        messages: list[dict] = [
+            {"role": "system", "content": load_prompt("interview_chat.txt")},
+            {"role": "user", "content": "\n\n".join(context_sections)},
+        ]
+        for turn in history:
+            role = turn.get("role")
+            content = turn.get("content", "")
+            if role in ("user", "assistant") and content:
+                messages.append({"role": role, "content": content})
+
+        yield from self._stream_chat_completion(
+            messages=messages,
+            log_label="chat_interview",
+        )
+
+    def summarize_interview_notes_stream(
+        self,
+        history: list[dict],
+        prior_notes: str,
+        profile: dict,
+        company_name: str | None = None,
+        company_research: dict | None = None,
+        job_description: str | None = None,
+        today: str | None = None,
+    ) -> Iterator[str]:
+        logger.info(
+            "summarize_interview_notes_stream — turns=%d prior_chars=%d company=%r",
+            len(history), len(prior_notes or ""), company_name,
+        )
+        today = today or datetime.date.today().isoformat()
+        profile_json = json.dumps({
+            "experience": profile.get("experience", []),
+            "projects": profile.get("projects", []),
+            "education": profile.get("education", []),
+            "awards": profile.get("awards", []),
+            "skills": profile.get("skills", []),
+            "hobbies": profile.get("hobbies", []),
+        }, indent=2)
+
+        transcript_lines: list[str] = []
+        for turn in history:
+            role = turn.get("role")
+            content = (turn.get("content") or "").strip()
+            if role in ("user", "assistant") and content:
+                transcript_lines.append(f"{role}: {content}")
+        transcript_text = "\n\n".join(transcript_lines)
+
+        sections: list[str] = [
+            f"<today>{today}</today>",
+            f"<prior_notes>\n{prior_notes or ''}\n</prior_notes>",
+            f"<transcript>\n{transcript_text}\n</transcript>",
+            f"<profile>\n{profile_json}\n</profile>",
+        ]
+        if company_name:
+            sections.append(f"<company_name>{company_name}</company_name>")
+        if company_research:
+            sections.append(
+                f"<company_research>\n{json.dumps(company_research, indent=2)}\n</company_research>"
+            )
+        if job_description:
+            sections.append(f"<job_description>\n{job_description}\n</job_description>")
+
+        yield from self._stream_chat_completion(
+            messages=[
+                {"role": "system", "content": load_prompt("interview_chat_notes.txt")},
+                {"role": "user", "content": "\n\n".join(sections)},
+            ],
+            log_label="interview_chat_notes",
+        )
+
     def research_company(self, company_name: str, scraped_text: str) -> dict:
         logger.info("research_company — company=%r scraped_chars=%d", company_name, len(scraped_text))
         if not self.api_key:

@@ -5,6 +5,7 @@ import pathlib
 _APP_DIR = pathlib.Path.home() / "Library" / "Application Support" / "InternApplier"
 _DATA_FILE = _APP_DIR / "resume.json"
 _TEMPLATE_FILE = _APP_DIR / "interview_template.json"
+_FEEDBACK_FILE = _APP_DIR / "interview_feedback.json"
 
 _EMPTY: dict = {
     "general_info": {},
@@ -55,3 +56,29 @@ def save_interview_template(items: list[dict]) -> None:
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(items, f, indent=2)
     os.replace(tmp, _TEMPLATE_FILE)
+
+
+def load_interview_feedback() -> list[dict]:
+    _APP_DIR.mkdir(parents=True, exist_ok=True)
+    if not _FEEDBACK_FILE.exists():
+        return []
+    with open(_FEEDBACK_FILE, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if isinstance(data, dict):
+        sessions = data.get("sessions")
+        return sessions if isinstance(sessions, list) else []
+    return data if isinstance(data, list) else []
+
+
+def save_interview_feedback(sessions: list[dict]) -> None:
+    _APP_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = _FEEDBACK_FILE.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"sessions": sessions}, f, indent=2)
+    os.replace(tmp, _FEEDBACK_FILE)
+
+
+def append_interview_feedback(session: dict) -> None:
+    sessions = load_interview_feedback()
+    sessions.append(session)
+    save_interview_feedback(sessions)

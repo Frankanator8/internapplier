@@ -344,5 +344,9 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage("✓  Saved successfully.", 3000)
 
     def closeEvent(self, event):
+        try:
+            self._interviews_page.flush_active_chat()
+        except Exception:
+            pass
         self._save()
         event.accept()
