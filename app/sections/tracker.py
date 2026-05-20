@@ -20,7 +20,7 @@ _ENTRY_FIELDS = ("company", "role", "date", "link", "status", "notes", "descript
 
 
 def _empty_entry() -> dict:
-    return {k: "" for k in _ENTRY_FIELDS} | {"status": "Applied"}
+    return {k: "" for k in _ENTRY_FIELDS} | {"status": "Applied", "interview_questions": []}
 
 
 class _EntryDialog(QDialog):
@@ -191,7 +191,7 @@ class TrackerPage(QWidget):
             return
         dlg = _EntryDialog(self, self._rows[row])
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            self._rows[row] = dlg.get_data()
+            self._rows[row] = {**self._rows[row], **dlg.get_data()}
             self._refresh_row(row)
 
     def _remove_row(self, btn: QPushButton):
@@ -215,6 +215,10 @@ class TrackerPage(QWidget):
 
     def get_data(self) -> list[dict]:
         return [dict(entry) for entry in self._rows]
+
+    def set_interview_questions(self, row: int, value: list[dict]) -> None:
+        if 0 <= row < len(self._rows):
+            self._rows[row]["interview_questions"] = value
 
     def clear(self):
         self._table.setRowCount(0)

@@ -41,5 +41,8 @@ class ApplicationsPage(QWidget):
     def get_data(self) -> list[dict]:
         return self._tracker_page.get_data()
 
+    def set_interview_questions(self, row: int, value: list[dict]) -> None:
+        self._tracker_page.set_interview_questions(row, value)
+
     def clear(self):
         self._tracker_page.clear()

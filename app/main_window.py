@@ -129,7 +129,12 @@ class MainWindow(QMainWindow):
         self._tabs.addTab(self._applications_page, "📋  Applications")
 
         # ── Tab 3: Interviews ─────────────────────────────────────
-        self._interviews_page = InterviewsPage()
+        self._interviews_page = InterviewsPage(
+            get_profile=self._get_profile_data,
+            get_applications=self._applications_page.get_data,
+            get_research_cache=self._applier_page.get_research_data,
+            set_application_interviews=self._applications_page.set_interview_questions,
+        )
         self._tabs.addTab(self._interviews_page, "🎤  Interviews")
 
         # ── Tab 4: Settings ───────────────────────────────────────
@@ -185,6 +190,10 @@ class MainWindow(QMainWindow):
                     }
                 }
         self._applier_page.load_research_data(research_cache)
+        self._interviews_page.load_questions(
+            data.get("interview_questions") if "interview_questions" in data else None
+        )
+        self._interviews_page.load_template(data_store.load_interview_template())
 
     def _show_import_instructions(self) -> bool:
         """Show a how-to dialog. Returns True if user wants to proceed to file picker."""
@@ -317,6 +326,7 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage(f"✓  Imported from LinkedIn — {summary}", 5000)
 
     def _save(self):
+        self._interviews_page.commit_pending()
         data = {
             "general_info": self._general_info_page.get_data(),
             "experience": self._experience_page.get_data(),
@@ -327,8 +337,10 @@ class MainWindow(QMainWindow):
             "hobbies": self._hobbies_page.get_data(),
             "applications": self._applications_page.get_data(),
             "research_cache": self._applier_page.get_research_data(),
+            "interview_questions": self._interviews_page.get_questions_data(),
         }
         data_store.save(data)
+        data_store.save_interview_template(self._interviews_page.get_template_data())
         self.status_bar.showMessage("✓  Saved successfully.", 3000)
 
     def closeEvent(self, event):

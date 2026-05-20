@@ -30,3 +30,21 @@ python -m api.run
 
 CORS is restricted to `moz-extension://*` origins (and `null`, which Firefox
 sometimes sends from extension contexts). The server binds to `127.0.0.1` only.
+
+## Speech (TTS + STT)
+
+`speech.py` exposes two PyQt6 `QObject` workers backed by macOS built-ins:
+
+- `TextToSpeech` — wraps the `say(1)` command; uses whichever system voice the
+  user has selected in System Settings.
+- `SpeechToText` — wraps Apple's on-device `SFSpeechRecognizer` +
+  `AVAudioEngine` via PyObjC. Fully offline.
+
+The module is macOS-only; on Linux/Windows `is_supported()` returns `False` and
+the speak/start methods raise `NotImplementedError`. The pyobjc dependencies in
+`requirements.txt` are gated with `sys_platform == "darwin"` markers so install
+on other platforms is unaffected.
+
+The first time STT runs, macOS will show two permission prompts — Microphone
+and Speech Recognition — attached to whatever process launched Python
+(Terminal, iTerm, VS Code, or the bundled `.app`). Approve both to continue.

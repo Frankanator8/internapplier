@@ -7,4 +7,6 @@ python-dotenv>=1.0
 beautifulsoup4>=4.12
 playwright>=1.42
 pypdf>=4.0
+pyobjc-framework-Speech>=10.0; sys_platform == "darwin"
+pyobjc-framework-AVFoundation>=10.0; sys_platform == "darwin"
 # One-time setup after install: python -m playwright install chromium
