@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 
 from . import data_store
 
@@ -20,12 +21,23 @@ COMBO_FIELDS = [
 ALL_FIELDS = LINE_FIELDS + COMBO_FIELDS
 
 
+class ApplicationEntry(BaseModel):
+    company: str = ""
+    role: str = ""
+    date: str = ""
+    link: str = ""
+    status: str = "Applied"
+    notes: str = ""
+    description: str = ""
+    interview_questions: list = Field(default_factory=list)
+
+
 app = FastAPI(title="InternApplier Localhost API", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=r"^(moz-extension://.*|null)$",
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -49,3 +61,13 @@ def general_info() -> dict:
 def autofill_fields() -> dict:
     info = data_store.load().get("general_info", {}) or {}
     return {key: info.get(key, "") for key in ALL_FIELDS}
+
+
+@app.post("/applications")
+def create_application(entry: ApplicationEntry) -> dict:
+    data = data_store.load()
+    apps = data.get("applications") or []
+    apps.append(entry.model_dump())
+    data["applications"] = apps
+    data_store.save(data)
+    return {"ok": True, "count": len(apps)}

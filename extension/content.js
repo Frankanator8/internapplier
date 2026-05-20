@@ -139,10 +139,150 @@ function autofillAll(fields) {
   return filled;
 }
 
+function stripHtml(html) {
+  if (!html) return "";
+  const tmp = document.createElement("div");
+  tmp.innerHTML = String(html);
+  return (tmp.textContent || tmp.innerText || "").replace(/\s+\n/g, "\n").trim();
+}
+
+function extractJobPosting() {
+  const scripts = document.querySelectorAll('script[type="application/ld+json"]');
+  for (const s of scripts) {
+    let parsed;
+    try { parsed = JSON.parse(s.textContent || ""); } catch (_) { continue; }
+    const items = Array.isArray(parsed) ? parsed : [parsed];
+    for (const item of items) {
+      if (!item || typeof item !== "object") continue;
+      const type = item["@type"];
+      const isPosting = type === "JobPosting"
+        || (Array.isArray(type) && type.includes("JobPosting"));
+      if (!isPosting) continue;
+      const org = item.hiringOrganization;
+      const company = (org && typeof org === "object" ? org.name : org) || "";
+      return {
+        role: String(item.title || "").trim(),
+        company: String(company || "").trim(),
+        description: stripHtml(item.description || ""),
+      };
+    }
+  }
+  return null;
+}
+
+function metaContent(selector) {
+  const el = document.querySelector(selector);
+  return el ? (el.getAttribute("content") || "").trim() : "";
+}
+
+function splitTitle(title) {
+  if (!title) return { role: "", company: "" };
+  const seps = [" - ", " – ", " — ", " | ", " at ", " @ "];
+  for (const sep of seps) {
+    const idx = title.indexOf(sep);
+    if (idx > 0) {
+      return {
+        role: title.slice(0, idx).trim(),
+        company: title.slice(idx + sep.length).trim(),
+      };
+    }
+  }
+  return { role: title.trim(), company: "" };
+}
+
+function extractPageMeta() {
+  const jp = extractJobPosting();
+  if (jp && (jp.role || jp.company || jp.description)) {
+    return {
+      url: location.href,
+      title: document.title,
+      role: jp.role,
+      company: jp.company,
+      description: jp.description,
+    };
+  }
+  const ogSite = metaContent('meta[property="og:site_name"]');
+  const ogTitle = metaContent('meta[property="og:title"]');
+  const split = splitTitle(ogTitle || document.title || "");
+  return {
+    url: location.href,
+    title: document.title,
+    role: split.role,
+    company: ogSite || split.company,
+    description: "",
+  };
+}
+
+let _pickerState = null;
+
+function stopPicker(result) {
+  if (!_pickerState) return;
+  const { onMove, onClick, onKey, styleEl, lastEl } = _pickerState;
+  document.removeEventListener("mousemove", onMove, true);
+  document.removeEventListener("click", onClick, true);
+  document.removeEventListener("keydown", onKey, true);
+  if (lastEl) lastEl.classList.remove("__ia_picker_hover");
+  if (styleEl && styleEl.parentNode) styleEl.parentNode.removeChild(styleEl);
+  _pickerState = null;
+  try {
+    browser.runtime.sendMessage({ type: "PICKER_RESULT", result });
+  } catch (_) { /* popup may be closed */ }
+}
+
+function startPicker() {
+  if (_pickerState) return;
+  const styleEl = document.createElement("style");
+  styleEl.textContent =
+    ".__ia_picker_hover { outline: 2px solid #2563eb !important; " +
+    "outline-offset: -2px !important; cursor: crosshair !important; }";
+  document.head.appendChild(styleEl);
+
+  const state = { styleEl, lastEl: null, onMove: null, onClick: null, onKey: null };
+  state.onMove = (e) => {
+    if (state.lastEl) state.lastEl.classList.remove("__ia_picker_hover");
+    state.lastEl = e.target;
+    if (state.lastEl && state.lastEl.classList) {
+      state.lastEl.classList.add("__ia_picker_hover");
+    }
+  };
+  state.onClick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const el = e.target;
+    const text = el ? (el.innerText || el.textContent || "").trim() : "";
+    stopPicker({ ok: true, description: text });
+  };
+  state.onKey = (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      stopPicker({ ok: false, cancelled: true });
+    }
+  };
+  _pickerState = state;
+  document.addEventListener("mousemove", state.onMove, true);
+  document.addEventListener("click", state.onClick, true);
+  document.addEventListener("keydown", state.onKey, true);
+}
+
 browser.runtime.onMessage.addListener((msg) => {
   if (msg && msg.type === "AUTOFILL") {
     const filled = autofillAll(msg.fields);
     return Promise.resolve({ filled });
+  }
+  if (msg && msg.type === "EXTRACT_PAGE_META") {
+    try {
+      return Promise.resolve(extractPageMeta());
+    } catch (e) {
+      return Promise.resolve({
+        url: location.href, title: document.title,
+        role: "", company: "", description: "",
+        error: String(e && e.message || e),
+      });
+    }
+  }
+  if (msg && msg.type === "START_PICKER") {
+    startPicker();
+    return Promise.resolve({ ok: true });
   }
 });
 

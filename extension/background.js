@@ -26,6 +26,51 @@ async function checkHealth() {
   }
 }
 
+async function activeTabId() {
+  const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+  return tabs[0] ? tabs[0].id : null;
+}
+
+async function extractPageMeta() {
+  const tabId = await activeTabId();
+  if (tabId == null) return { ok: false, reason: "no active tab" };
+  try {
+    const meta = await browser.tabs.sendMessage(tabId, { type: "EXTRACT_PAGE_META" });
+    return { ok: true, meta };
+  } catch (e) {
+    return { ok: false, reason: String(e && e.message || e) };
+  }
+}
+
+async function startPicker() {
+  const tabId = await activeTabId();
+  if (tabId == null) return { ok: false, reason: "no active tab" };
+  try {
+    await browser.storage.local.remove("picked_description");
+  } catch (_) {}
+  try {
+    await browser.tabs.sendMessage(tabId, { type: "START_PICKER" });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: String(e && e.message || e) };
+  }
+}
+
+async function createApplication(entry) {
+  try {
+    const res = await fetch(`${API_BASE}/applications`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(entry || {}),
+    });
+    let body = null;
+    try { body = await res.json(); } catch (_) {}
+    return { ok: res.ok, status: res.status, body };
+  } catch (e) {
+    return { ok: false, status: 0, error: String(e && e.message || e) };
+  }
+}
+
 browser.runtime.onMessage.addListener((msg, _sender) => {
   if (msg && msg.type === "GET_FIELDS") {
     return getFields({ forceRefresh: !!msg.forceRefresh });
@@ -41,6 +86,22 @@ browser.runtime.onMessage.addListener((msg, _sender) => {
       await browser.tabs.sendMessage(tabs[0].id, { type: "AUTOFILL", fields });
       return { ok: true };
     })();
+  }
+  if (msg && msg.type === "EXTRACT_PAGE_META") {
+    return extractPageMeta();
+  }
+  if (msg && msg.type === "START_PICKER") {
+    return startPicker();
+  }
+  if (msg && msg.type === "CREATE_APPLICATION") {
+    return createApplication(msg.entry);
+  }
+  if (msg && msg.type === "PICKER_RESULT") {
+    if (msg.result && msg.result.ok && msg.result.description) {
+      browser.storage.local.set({ picked_description: msg.result.description })
+        .catch(() => {});
+    }
+    return Promise.resolve({ ok: true });
   }
 });
 

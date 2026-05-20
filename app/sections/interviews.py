@@ -811,10 +811,10 @@ class InterviewChatPage(QWidget):
         self._input.installEventFilter(self)
 
         self._populate_job_picker()
-        self._maybe_setup_speech()
-
-        # Kick off opening turn from AI.
-        QTimer.singleShot(0, self._kick_off_opening_turn)
+        # Speech setup and the opening AI turn are deferred until the page is
+        # actually shown — otherwise TTS prewarm and the first interviewer reply
+        # fire at app startup, while the user is on a different tab.
+        self._opening_kicked: bool = False
 
     # ── Camera preview (local display only — never sent to AI) ───
     def _build_camera_preview(self) -> QWidget:
@@ -947,6 +947,7 @@ class InterviewChatPage(QWidget):
 
     def hideEvent(self, event):  # noqa: N802
         self._stop_camera()
+        self._stop_speaking()
         super().hideEvent(event)
 
     # ── Speech wiring ────────────────────────────────────────────
@@ -1113,6 +1114,10 @@ class InterviewChatPage(QWidget):
         super().showEvent(event)
         self._populate_job_picker()
         self._start_camera()
+        if not self._opening_kicked:
+            self._opening_kicked = True
+            self._maybe_setup_speech()
+            QTimer.singleShot(0, self._kick_off_opening_turn)
 
     # ── Transcript bubbles ───────────────────────────────────────
     def _add_bubble(self, role: str, text: str) -> QLabel:
@@ -1283,7 +1288,11 @@ class InterviewChatPage(QWidget):
 
         def on_chunk(delta: str):
             buffer["text"] += delta
-            bubble_body.setText(buffer["text"])
+            try:
+                bubble_body.setText(buffer["text"])
+            except RuntimeError:
+                # Bubble was deleted (e.g. New Chat clicked mid-stream).
+                return
             self._scroll_transcript_to_bottom()
 
         def on_finished():
@@ -1291,7 +1300,7 @@ class InterviewChatPage(QWidget):
             spoke = False
             if final:
                 self._history.append({"role": "assistant", "content": final})
-                if self._tts is not None:
+                if self._tts is not None and self.isVisible():
                     self._speak(final)
                     spoke = True
                 self._spawn_notes_worker()
@@ -1305,7 +1314,10 @@ class InterviewChatPage(QWidget):
                 self._auto_start_listening()
 
         def on_error(msg: str):
-            bubble_body.setText(f"(error: {msg})")
+            try:
+                bubble_body.setText(f"(error: {msg})")
+            except RuntimeError:
+                pass
             self._set_reply_in_flight(False)
             thread.quit()
 

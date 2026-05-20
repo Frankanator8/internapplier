@@ -61,6 +61,11 @@ class MainWindow(QMainWindow):
         save_action.triggered.connect(self._save)
         toolbar.addAction(save_action)
 
+        refresh_action = QAction("🔄  Refresh", self)
+        refresh_action.setShortcut("Ctrl+R")
+        refresh_action.triggered.connect(self._refresh_applications)
+        toolbar.addAction(refresh_action)
+
         # ── Status bar ────────────────────────────────────────────
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
@@ -325,6 +330,37 @@ class MainWindow(QMainWindow):
 
         self.status_bar.showMessage(f"✓  Imported from LinkedIn — {summary}", 5000)
 
+    def _refresh_applications(self):
+        on_disk = data_store.load().get("applications") or []
+        self._applications_page.clear()
+        for entry in on_disk:
+            self._applications_page.add_entry(entry)
+        self.status_bar.showMessage(
+            f"✓  Refreshed applications ({len(on_disk)} entries).", 3000
+        )
+
+    def _merged_applications(self) -> list[dict]:
+        in_memory = self._applications_page.get_data()
+        try:
+            on_disk = data_store.load().get("applications") or []
+        except Exception:
+            return in_memory
+
+        def key(e: dict) -> tuple:
+            return (
+                (e.get("company") or "").strip().lower(),
+                (e.get("role") or "").strip().lower(),
+                (e.get("date") or "").strip(),
+                (e.get("link") or "").strip(),
+            )
+
+        seen = {key(e) for e in in_memory}
+        merged = list(in_memory)
+        for entry in on_disk:
+            if key(entry) not in seen:
+                merged.append(entry)
+        return merged
+
     def _save(self):
         self._interviews_page.commit_pending()
         data = {
@@ -335,7 +371,7 @@ class MainWindow(QMainWindow):
             "awards": self._awards_page.get_data(),
             "skills": self._skills_page.get_data(),
             "hobbies": self._hobbies_page.get_data(),
-            "applications": self._applications_page.get_data(),
+            "applications": self._merged_applications(),
             "research_cache": self._applier_page.get_research_data(),
             "interview_questions": self._interviews_page.get_questions_data(),
         }

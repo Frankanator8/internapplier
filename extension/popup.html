@@ -6,7 +6,7 @@
     <style>
       body {
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        width: 260px;
+        width: 320px;
         margin: 0;
         padding: 14px 16px;
         background: #ffffff;
@@ -30,18 +30,108 @@
       }
       button:hover { background: #1d4ed8; }
       button:disabled { background: #9ca3af; cursor: not-allowed; }
+      button.secondary {
+        background: #ffffff;
+        color: #374151;
+        border: 1px solid #d1d5db;
+      }
+      button.secondary:hover { background: #f3f4f6; }
+      .stack > * + * { margin-top: 8px; }
       .result { font-size: 12px; margin-top: 8px; color: #6b7280; min-height: 1em; }
+      .hidden { display: none; }
+      label.field { display: block; font-size: 11px; color: #6b7280; margin-bottom: 2px; }
+      .row { margin-bottom: 8px; }
+      .row input, .row select, .row textarea {
+        width: 100%;
+        box-sizing: border-box;
+        font-size: 12px;
+        padding: 6px 8px;
+        border: 1px solid #d1d5db;
+        border-radius: 4px;
+        font-family: inherit;
+      }
+      .row textarea { min-height: 90px; resize: vertical; }
+      .desc-row .desc-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 2px;
+      }
+      .pick-btn {
+        width: auto;
+        padding: 2px 8px;
+        font-size: 11px;
+        background: #ffffff;
+        color: #2563eb;
+        border: 1px solid #2563eb;
+        border-radius: 4px;
+      }
+      .pick-btn:hover { background: #eff6ff; }
+      .form-actions { display: flex; gap: 8px; }
+      .form-actions button { flex: 1; }
     </style>
   </head>
   <body>
-    <h1>InternApplier Autofill</h1>
-    <div class="status">
-      <span id="dot" class="dot"></span>
-      <span id="status-text">Checking server…</span>
+    <div id="main-view">
+      <h1>InternApplier Autofill</h1>
+      <div class="status">
+        <span id="dot" class="dot"></span>
+        <span id="status-text">Checking server…</span>
+      </div>
+      <div id="name" class="name"></div>
+      <div class="stack">
+        <button id="fill-btn" disabled>Autofill this page</button>
+        <button id="create-btn" class="secondary" disabled>Create new job application from page</button>
+      </div>
+      <div id="result" class="result"></div>
     </div>
-    <div id="name" class="name"></div>
-    <button id="fill-btn" disabled>Autofill this page</button>
-    <div id="result" class="result"></div>
+
+    <div id="form-view" class="hidden">
+      <h1>New Application</h1>
+      <div class="row">
+        <label class="field" for="f-company">Company</label>
+        <input id="f-company" type="text">
+      </div>
+      <div class="row">
+        <label class="field" for="f-role">Role</label>
+        <input id="f-role" type="text">
+      </div>
+      <div class="row">
+        <label class="field" for="f-date">Date Applied</label>
+        <input id="f-date" type="text" placeholder="YYYY-MM-DD">
+      </div>
+      <div class="row">
+        <label class="field" for="f-link">Link</label>
+        <input id="f-link" type="text">
+      </div>
+      <div class="row">
+        <label class="field" for="f-status">Status</label>
+        <select id="f-status">
+          <option>Applied</option>
+          <option>Phone Screen</option>
+          <option>Interview</option>
+          <option>Offer</option>
+          <option>Rejected</option>
+        </select>
+      </div>
+      <div class="row">
+        <label class="field" for="f-notes">Notes</label>
+        <input id="f-notes" type="text">
+      </div>
+      <div class="row desc-row">
+        <div class="desc-header">
+          <label class="field" for="f-description">Job Description</label>
+          <button id="pick-btn" class="pick-btn" type="button">Pick from page</button>
+        </div>
+        <textarea id="f-description"></textarea>
+      </div>
+      <div class="form-actions">
+        <button id="cancel-btn" class="secondary">Cancel</button>
+        <button id="save-btn">Save</button>
+      </div>
+      <div id="form-result" class="result"></div>
+    </div>
+
     <script src="popup.js"></script>
   </body>
 </html>
