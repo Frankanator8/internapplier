@@ -16,6 +16,7 @@ from .sections.skills import SkillsPage
 from .sections.hobbies import HobbiesPage
 from .sections.applications import ApplicationsPage
 from .sections.applier import ApplierPage
+from .sections.interviews import InterviewsPage
 from .sections.settings import SettingsPage
 
 _SIDEBAR_ITEMS = [
@@ -127,7 +128,11 @@ class MainWindow(QMainWindow):
         self._applications_page = ApplicationsPage()
         self._tabs.addTab(self._applications_page, "📋  Applications")
 
-        # ── Tab 3: Settings ───────────────────────────────────────
+        # ── Tab 3: Interviews ─────────────────────────────────────
+        self._interviews_page = InterviewsPage()
+        self._tabs.addTab(self._interviews_page, "🎤  Interviews")
+
+        # ── Tab 4: Settings ───────────────────────────────────────
         self._settings_page = SettingsPage(status_bar=self.status_bar)
         self._tabs.addTab(self._settings_page, "⚙️  Settings")
 

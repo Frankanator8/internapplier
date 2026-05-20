@@ -1,7 +1,8 @@
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
+    QWidget, QVBoxLayout, QHBoxLayout,
     QFrame, QLineEdit, QLabel, QStatusBar, QTabWidget, QPlainTextEdit,
     QScrollArea, QSpinBox, QFileDialog, QCheckBox,
+    QListWidget, QListWidgetItem, QStackedWidget,
 )
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QFont
@@ -15,20 +16,51 @@ class SettingsPage(QWidget):
         super().__init__()
         self._status_bar = status_bar
 
-        scroll = QScrollArea(self)
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self._sidebar = QListWidget()
+        self._sidebar.setObjectName("sidebar")
+        self._sidebar.setFixedWidth(200)
+
+        for label in ("🤖  AI Model", "📄  Resume", "📝  System Prompts"):
+            item = QListWidgetItem(label)
+            item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            self._sidebar.addItem(item)
+
+        self._stack = QStackedWidget()
+        self._stack.addWidget(self._build_ai_model_page())
+        self._stack.addWidget(self._build_resume_page())
+        self._stack.addWidget(self._build_prompts_page())
+
+        self._sidebar.currentRowChanged.connect(self._stack.setCurrentIndex)
+        self._sidebar.setCurrentRow(0)
+
+        outer.addWidget(self._sidebar)
+        outer.addWidget(self._stack, 1)
+
+    def _wrap_scroll(self, card: QFrame) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
-        root_layout = QVBoxLayout(self)
-        root_layout.setContentsMargins(0, 0, 0, 0)
-        root_layout.addWidget(scroll)
+        layout.addWidget(scroll)
 
         inner = QWidget()
         scroll.setWidget(inner)
 
-        outer = QVBoxLayout(inner)
-        outer.setContentsMargins(40, 40, 40, 40)
-        outer.setSpacing(0)
+        inner_layout = QVBoxLayout(inner)
+        inner_layout.setContentsMargins(40, 40, 40, 40)
+        inner_layout.setSpacing(0)
+        inner_layout.addWidget(card)
+        inner_layout.addStretch()
+        return page
 
+    def _build_ai_model_page(self) -> QWidget:
         card = QFrame()
         card.setObjectName("card")
         card.setMaximumWidth(560)
@@ -40,42 +72,38 @@ class SettingsPage(QWidget):
         title.setStyleSheet("font-size: 16px; font-weight: bold; color: #0a66c2;")
         card_layout.addWidget(title)
 
-        hint = QLabel(
-            'Enter any model ID available on <a href="https://openrouter.ai/models">'
-            'openrouter.ai/models</a>. '
-            '<b>The powerful model must support tool/function calling</b> — '
-            "it's used for resume generation, grading, and LaTeX repair, all "
-            "of which invoke host-side tools (test_compile, page_length)."
-        )
-        hint.setOpenExternalLinks(True)
-        hint.setWordWrap(True)
-        hint.setStyleSheet("font-size: 12px; color: #666;")
-        card_layout.addWidget(hint)
-
-        form = QFormLayout()
-        form.setSpacing(12)
-        form.setLabelAlignment(form.labelAlignment())
-
         config = ai_provider._load_model_config()
 
         self._fast_edit = QLineEdit()
         self._fast_edit.setText(config.get("fast", ai_provider.DEFAULT_FAST_MODEL))
         self._fast_edit.setPlaceholderText(ai_provider.DEFAULT_FAST_MODEL)
-
         self._resize_edit(self._fast_edit, self._fast_edit.text())
         self._fast_edit.textChanged.connect(lambda t: self._resize_edit(self._fast_edit, t))
-
-        form.addRow(_label("Fast model"), self._fast_edit)
 
         self._powerful_edit = QLineEdit()
         self._powerful_edit.setText(config.get("powerful", ai_provider.DEFAULT_POWERFUL_MODEL))
         self._powerful_edit.setPlaceholderText(ai_provider.DEFAULT_POWERFUL_MODEL)
-
         self._resize_edit(self._powerful_edit, self._powerful_edit.text())
         self._powerful_edit.textChanged.connect(lambda t: self._resize_edit(self._powerful_edit, t))
 
-        form.addRow(_label("Powerful model"), self._powerful_edit)
-        card_layout.addLayout(form)
+        card_layout.addWidget(self._build_model_section(
+            section_label="Fast model",
+            line_edit=self._fast_edit,
+            capabilities=["Streaming", "Text generation", "JSON output"],
+            used_for=["Bullet analysis", "Company research", "Answer questions"],
+        ))
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color: #e0e0e0;")
+        card_layout.addWidget(sep)
+
+        card_layout.addWidget(self._build_model_section(
+            section_label="Powerful model",
+            line_edit=self._powerful_edit,
+            capabilities=["Streaming", "Tool / function calling", "Agentic loop (4 rounds)"],
+            used_for=["Resume generation", "Resume grading", "LaTeX repair"],
+        ))
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(12)
@@ -88,9 +116,68 @@ class SettingsPage(QWidget):
         btn_row.addStretch()
         card_layout.addLayout(btn_row)
 
-        outer.addWidget(card)
+        return self._wrap_scroll(card)
 
-        # ── Resume card ──────────────────────────────────────────────────
+    def _build_model_section(
+        self,
+        section_label: str,
+        line_edit: QLineEdit,
+        capabilities: list[str],
+        used_for: list[str],
+    ) -> QWidget:
+        container = QWidget()
+        container.setStyleSheet("background: transparent;")
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        layout.addWidget(_label(section_label))
+
+        input_row = QHBoxLayout()
+        input_row.setSpacing(0)
+        input_row.addWidget(line_edit)
+        input_row.addStretch()
+        layout.addLayout(input_row)
+
+        cap_row = QHBoxLayout()
+        cap_row.setSpacing(6)
+        req_label = QLabel("Required:")
+        req_label.setStyleSheet("font-size: 11px; color: #555555; font-weight: 600;")
+        cap_row.addWidget(req_label)
+        for cap in capabilities:
+            cap_row.addWidget(self._make_capability_chip(cap))
+        cap_row.addStretch()
+        layout.addLayout(cap_row)
+
+        used_row = QHBoxLayout()
+        used_row.setSpacing(6)
+        used_label = QLabel("Used for:")
+        used_label.setStyleSheet("font-size: 11px; color: #555555; font-weight: 600;")
+        used_row.addWidget(used_label)
+        used_val = QLabel(", ".join(used_for))
+        used_val.setStyleSheet("font-size: 12px; color: #666;")
+        used_row.addWidget(used_val)
+        used_row.addStretch()
+        layout.addLayout(used_row)
+
+        return container
+
+    @staticmethod
+    def _make_capability_chip(text: str) -> QFrame:
+        chip = QFrame()
+        chip.setStyleSheet(
+            "QFrame { background: #e8f0fb; border: none; border-radius: 10px; }"
+            "QLabel { color: #0a66c2; font-size: 11px; font-weight: 600;"
+            " background: transparent; }"
+        )
+        layout = QHBoxLayout(chip)
+        layout.setContentsMargins(8, 3, 8, 3)
+        layout.setSpacing(0)
+        layout.addWidget(QLabel(text))
+        chip.setFixedHeight(22)
+        return chip
+
+    def _build_resume_page(self) -> QWidget:
         mono = QFont("Menlo")
         mono.setStyleHint(QFont.StyleHint.Monospace)
         mono.setPointSize(11)
@@ -177,10 +264,9 @@ class SettingsPage(QWidget):
         rt_btn_row.addStretch()
         rc_layout.addLayout(rt_btn_row)
 
-        outer.addSpacing(24)
-        outer.addWidget(resume_card)
+        return self._wrap_scroll(resume_card)
 
-        # ── System Prompts card ──────────────────────────────────────────
+    def _build_prompts_page(self) -> QWidget:
         prompts_card = QFrame()
         prompts_card.setObjectName("card")
         prompts_card.setMaximumWidth(800)
@@ -262,9 +348,8 @@ class SettingsPage(QWidget):
             self._prompt_statuses[filename] = status_lbl
 
         pc_layout.addWidget(tabs)
-        outer.addSpacing(24)
-        outer.addWidget(prompts_card)
-        outer.addStretch()
+
+        return self._wrap_scroll(prompts_card)
 
     def _toggle_auto_resync(self, state: int) -> None:
         enabled = bool(state)
