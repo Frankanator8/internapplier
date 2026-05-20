@@ -6,6 +6,7 @@ _APP_DIR = pathlib.Path.home() / "Library" / "Application Support" / "InternAppl
 _DATA_FILE = _APP_DIR / "resume.json"
 
 _EMPTY: dict = {
+    "general_info": {},
     "experience": [],
     "projects": [],
     "education": [],

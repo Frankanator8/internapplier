@@ -82,6 +82,11 @@ QFrame#card {
     border-radius: 10px;
 }
 
+/* ── Labels ─────────────────────────────────────────────────── */
+QLabel {
+    background: transparent;
+}
+
 /* ── Form labels ────────────────────────────────────────────── */
 QLabel#field-label {
     color: #555555;

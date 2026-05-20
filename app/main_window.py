@@ -7,6 +7,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QAction, QFont
 
 from . import data_store, linkedin_import
+from .sections.general_info import GeneralInfoPage
 from .sections.experience import ExperiencePage
 from .sections.projects import ProjectsPage
 from .sections.education import EducationPage
@@ -18,6 +19,7 @@ from .sections.applier import ApplierPage
 from .sections.settings import SettingsPage
 
 _SIDEBAR_ITEMS = [
+    ("👤  General Info", GeneralInfoPage),
     ("💼  Experience", ExperiencePage),
     ("🚀  Projects", ProjectsPage),
     ("🎓  Education", EducationPage),
@@ -79,6 +81,7 @@ class MainWindow(QMainWindow):
 
         self._stack = QStackedWidget()
 
+        self._general_info_page = GeneralInfoPage()
         self._experience_page = ExperiencePage()
         self._projects_page = ProjectsPage()
         self._education_page = EducationPage()
@@ -91,6 +94,7 @@ class MainWindow(QMainWindow):
             page.get_common_skills = self._get_global_skills
 
         pages = [
+            self._general_info_page,
             self._experience_page,
             self._projects_page,
             self._education_page,
@@ -141,6 +145,7 @@ class MainWindow(QMainWindow):
 
     def _get_profile_data(self) -> dict:
         return {
+            "general_info": self._general_info_page.get_data(),
             "experience": self._experience_page.get_data(),
             "projects": self._projects_page.get_data(),
             "education": self._education_page.get_data(),
@@ -150,6 +155,7 @@ class MainWindow(QMainWindow):
 
     def _load(self):
         data = data_store.load()
+        self._general_info_page.load(data.get("general_info", {}))
         for entry in data.get("experience", []):
             self._experience_page.add_entry(entry)
         for entry in data.get("projects", []):
@@ -307,6 +313,7 @@ class MainWindow(QMainWindow):
 
     def _save(self):
         data = {
+            "general_info": self._general_info_page.get_data(),
             "experience": self._experience_page.get_data(),
             "projects": self._projects_page.get_data(),
             "education": self._education_page.get_data(),

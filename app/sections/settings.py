@@ -218,6 +218,7 @@ class SettingsPage(QWidget):
             ("Generate Resume", "generate_resume.txt"),
             ("Grade Resume", "grade_resume.txt"),
             ("Research Company", "research_company.txt"),
+            ("Fix LaTeX", "fix_latex.txt"),
         ]:
             tab = QWidget()
             tab_layout = QVBoxLayout(tab)
