@@ -8,7 +8,7 @@ import re
 import shutil
 from typing import Any, Callable
 
-from app.ai_provider import (
+from api.ai_provider import (
     TOOL_EVENT_PREFIX,
     OpenRouterProvider,
     get_max_generation_attempts,

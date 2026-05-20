@@ -1,8 +1,10 @@
 PyQt6>=6.0
 PyQt6-WebEngine>=6.0
+fastapi>=0.110
+uvicorn>=0.27
 requests>=2.31
 python-dotenv>=1.0
 beautifulsoup4>=4.12
-playwright>=1.40
+playwright>=1.42
 pypdf>=4.0
 # One-time setup after install: python -m playwright install chromium

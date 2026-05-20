@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>InternApplier Autofill</title>
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        width: 260px;
+        margin: 0;
+        padding: 14px 16px;
+        background: #ffffff;
+        color: #1f2937;
+      }
+      h1 { font-size: 14px; margin: 0 0 10px; }
+      .status { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-bottom: 8px; }
+      .dot { width: 8px; height: 8px; border-radius: 50%; background: #9ca3af; }
+      .dot.ok { background: #10b981; }
+      .dot.err { background: #ef4444; }
+      .name { font-size: 13px; margin-bottom: 12px; color: #374151; }
+      button {
+        width: 100%;
+        padding: 8px 10px;
+        font-size: 13px;
+        background: #2563eb;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      button:hover { background: #1d4ed8; }
+      button:disabled { background: #9ca3af; cursor: not-allowed; }
+      .result { font-size: 12px; margin-top: 8px; color: #6b7280; min-height: 1em; }
+    </style>
+  </head>
+  <body>
+    <h1>InternApplier Autofill</h1>
+    <div class="status">
+      <span id="dot" class="dot"></span>
+      <span id="status-text">Checking server…</span>
+    </div>
+    <div id="name" class="name"></div>
+    <button id="fill-btn" disabled>Autofill this page</button>
+    <div id="result" class="result"></div>
+    <script src="popup.js"></script>
+  </body>
+</html>

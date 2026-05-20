@@ -70,7 +70,7 @@ class _AnalyzeWorker(QObject):
         self._context = context
 
     def run(self):
-        from app.ai_provider import get_provider
+        from api.ai_provider import get_provider
         logger.info("_AnalyzeWorker.run — bullet=%r", self._bullet[:80])
         try:
             buf: list[str] = []

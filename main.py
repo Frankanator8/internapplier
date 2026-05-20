@@ -1,6 +1,7 @@
 import logging
 import pathlib
 import sys
+import threading
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -30,10 +31,24 @@ def _setup_logging() -> None:
 
 _setup_logging()
 
+import uvicorn
 from PyQt6.QtWidgets import QApplication
-from app import ai_provider
+from api import ai_provider
 from app.main_window import MainWindow
 from app.style import GLOBAL_STYLESHEET
+
+
+def _start_api_server() -> None:
+    config = uvicorn.Config(
+        "api.server:app",
+        host="127.0.0.1",
+        port=8765,
+        reload=False,
+        log_config=None,
+    )
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, name="api-server", daemon=True)
+    thread.start()
 
 
 def main():
@@ -44,6 +59,7 @@ def main():
     ai_provider._seed_prompts()
     if ai_provider.get_auto_resync_prompts():
         ai_provider.resync_all_prompts()
+    _start_api_server()
     app = QApplication(sys.argv)
     app.setApplicationName("InternApplier")
     app.setStyleSheet(GLOBAL_STYLESHEET)

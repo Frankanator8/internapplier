@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QFont
 
-from .. import ai_provider
+from api import ai_provider
 from .base import _label, _primary_btn, _secondary_btn
 
 

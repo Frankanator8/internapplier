@@ -86,7 +86,7 @@ def test_compile(latex: str) -> dict[str, Any]:
 def page_length(latex: str) -> dict[str, Any]:
     """Compile `latex` and return its pdf_page_fill alongside the configured page cap."""
     # Imported lazily to avoid a circular import (ai_provider <-> agent_tools).
-    from app.ai_provider import get_resume_page_cap
+    from api.ai_provider import get_resume_page_cap
 
     page_cap = get_resume_page_cap()
     if not isinstance(latex, str) or not latex.strip():

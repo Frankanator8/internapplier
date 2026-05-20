@@ -29,8 +29,8 @@ class _ResearchWorker(QObject):
         self._url = url
 
     def run(self):
-        from app.ai_provider import get_provider
-        from app.web_scraper import SiteBlockedError, fetch_company_pages
+        from api.ai_provider import get_provider
+        from api.web_scraper import SiteBlockedError, fetch_company_pages
         logger.info("_ResearchWorker.run — company=%r url=%r", self._company_name, self._url)
         try:
             self.progress.emit(f"Fetching pages from {self._url}…")
@@ -84,8 +84,8 @@ class _GenerateResumeWorker(QObject):
         self._cache = research_cache or {}
 
     def run(self):
-        from app.ai_provider import get_provider
-        from app.generate_resume import ResumeGenerator
+        from api.ai_provider import get_provider
+        from api.generate_resume import ResumeGenerator
         logger.info("_GenerateResumeWorker.run — company=%r jd=%r", self._company, self._jd[:80])
         try:
             new_research = False
@@ -93,7 +93,7 @@ class _GenerateResumeWorker(QObject):
             if research is not None:
                 self.progress.emit(f"Using cached research for {self._company!r}…")
             elif self._company and self._url:
-                from app.web_scraper import fetch_company_pages
+                from api.web_scraper import fetch_company_pages
                 self.progress.emit(f"Scraping {self._url}…")
                 text = fetch_company_pages(self._url)
                 self.progress.emit(f"Scraped {len(text):,} chars — analyzing…")
@@ -753,7 +753,7 @@ class ApplierPage(QWidget):
     def _refresh_library(self):
         if not hasattr(self, "_library_list"):
             return
-        from app.ai_provider import get_resume_output_dir
+        from api.ai_provider import get_resume_output_dir
 
         prev_path = self._current_library_path()
         out_dir = get_resume_output_dir()
@@ -826,7 +826,7 @@ class ApplierPage(QWidget):
     def _reveal_library_item(self):
         path = self._current_library_path()
         if not path:
-            from app.ai_provider import get_resume_output_dir
+            from api.ai_provider import get_resume_output_dir
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(get_resume_output_dir())))
             return
         import pathlib

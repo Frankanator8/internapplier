@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QAction, QFont
 
-from . import data_store, linkedin_import
+from api import data_store, linkedin_import
 from .sections.general_info import GeneralInfoPage
 from .sections.experience import ExperiencePage
 from .sections.projects import ProjectsPage

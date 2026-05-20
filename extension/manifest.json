@@ -1,0 +1,38 @@
+{
+  "manifest_version": 2,
+  "name": "InternApplier Autofill",
+  "version": "0.1.0",
+  "description": "Fills job application forms from your local InternApplier profile.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "internapplier-autofill@localhost"
+    }
+  },
+  "permissions": [
+    "activeTab",
+    "storage",
+    "http://127.0.0.1:8765/*"
+  ],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "browser_action": {
+    "default_title": "InternApplier Autofill",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "48": "icons/icon-48.png",
+      "96": "icons/icon-96.png"
+    }
+  },
+  "icons": {
+    "48": "icons/icon-48.png",
+    "96": "icons/icon-96.png"
+  }
+}
