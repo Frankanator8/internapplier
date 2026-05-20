@@ -47,7 +47,7 @@ class _GradeWorker(QObject):
             self._question[:80], len(self._response), self._company_name,
         )
         try:
-            for chunk in get_provider().grade_interview_response_stream(
+            for chunk in get_provider(tier="fast").grade_interview_response_stream(
                 question=self._question,
                 response=self._response,
                 profile=self._profile,
@@ -189,6 +189,40 @@ class _NotesWorker(QObject):
         except Exception as exc:
             logger.exception("_NotesWorker.run — failed")
             self.error.emit(str(exc))
+
+
+def _extract_partial_feedback(buf: str) -> str:
+    """Pull the `feedback` string out of a possibly-incomplete JSON buffer.
+
+    Lets us stream the body text as it arrives instead of waiting for the
+    whole JSON object to close.
+    """
+    idx = buf.find('"feedback"')
+    if idx < 0:
+        return ""
+    colon = buf.find(':', idx)
+    if colon < 0:
+        return ""
+    start = buf.find('"', colon + 1)
+    if start < 0:
+        return ""
+    out: list[str] = []
+    i = start + 1
+    n = len(buf)
+    while i < n:
+        c = buf[i]
+        if c == '\\' and i + 1 < n:
+            nxt = buf[i + 1]
+            out.append(
+                {'n': '\n', 't': '\t', '"': '"', '\\': '\\', '/': '/'}.get(nxt, nxt)
+            )
+            i += 2
+        elif c == '"':
+            break
+        else:
+            out.append(c)
+            i += 1
+    return ''.join(out)
 
 
 _DEFAULT_QUESTIONS: list[str] = [
@@ -714,6 +748,7 @@ class InterviewChatPage(QWidget):
         # ── Side panel ────────────────────────────────────────────
         side = QWidget()
         side.setFixedWidth(340)
+        side.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
         side_layout = QVBoxLayout(side)
         side_layout.setContentsMargins(8, 18, 20, 14)
         side_layout.setSpacing(8)
@@ -726,8 +761,10 @@ class InterviewChatPage(QWidget):
         side_layout.addWidget(_label("Feedback", "section-title"))
 
         self._side_tabs = QTabWidget()
+        self._side_tabs.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         self._cards_scroll = QScrollArea()
+        self._cards_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._cards_scroll.setWidgetResizable(True)
         self._cards_scroll.setFrameShape(QFrame.Shape.NoFrame)
         cards_host = QWidget()
@@ -746,6 +783,7 @@ class InterviewChatPage(QWidget):
         self._side_tabs.addTab(self._cards_scroll, "Per-Answer")
 
         self._notes_view = QTextBrowser()
+        self._notes_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._notes_view.setPlaceholderText(
             "Overall coaching notes will populate as the conversation progresses."
         )
@@ -776,40 +814,108 @@ class InterviewChatPage(QWidget):
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(0)
         container.setFixedHeight(190)
+        self._camera_layout = v
+        self._camera_placeholder: QLabel | None = None
+
+        # Fire the macOS permission prompt early (fire-and-forget). Without
+        # this, QCamera silently shows black frames the first time.
+        self._kick_macos_camera_permission()
 
         try:
             from PyQt6.QtMultimedia import QCamera, QMediaCaptureSession, QMediaDevices
             from PyQt6.QtMultimediaWidgets import QVideoWidget
         except Exception:
             logger.info("Camera preview unavailable — QtMultimedia not present")
-            placeholder = QLabel("Camera unavailable")
-            placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            placeholder.setStyleSheet("color: #bbb; font-size: 12px;")
-            v.addWidget(placeholder)
+            self._show_camera_placeholder("Camera unavailable")
             return container
 
         device = QMediaDevices.defaultVideoInput()
         if device is None or device.isNull():
-            placeholder = QLabel("No camera detected")
-            placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            placeholder.setStyleSheet("color: #bbb; font-size: 12px;")
-            v.addWidget(placeholder)
+            self._show_camera_placeholder(self._no_device_hint())
             return container
 
-        self._video_widget = QVideoWidget()
-        self._video_widget.setStyleSheet("background: #000;")
-        v.addWidget(self._video_widget)
-
         try:
+            self._video_widget = QVideoWidget()
+            self._video_widget.setStyleSheet("background: #000;")
+            v.addWidget(self._video_widget)
+
             self._camera = QCamera(device)
             self._capture_session = QMediaCaptureSession()
             self._capture_session.setCamera(self._camera)
             self._capture_session.setVideoOutput(self._video_widget)
+            # Surface camera errors (denied permission, in-use, etc.) in the UI.
+            try:
+                self._camera.errorOccurred.connect(self._on_camera_error)
+            except Exception:
+                pass
         except Exception:
             logger.exception("Camera preview setup failed")
             self._camera = None
             self._capture_session = None
+            self._show_camera_placeholder("Camera setup failed")
         return container
+
+    def _show_camera_placeholder(self, text: str):
+        # Replace the video widget with a label, or update the existing one.
+        if self._camera_placeholder is not None:
+            self._camera_placeholder.setText(text)
+            return
+        if getattr(self, "_video_widget", None) is not None:
+            self._camera_layout.removeWidget(self._video_widget)
+            self._video_widget.deleteLater()
+            self._video_widget = None
+        label = QLabel(text)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setStyleSheet("color: #bbb; font-size: 12px;")
+        label.setWordWrap(True)
+        self._camera_layout.addWidget(label)
+        self._camera_placeholder = label
+
+    def _kick_macos_camera_permission(self):
+        import sys
+        if sys.platform != "darwin":
+            return
+        try:
+            from AVFoundation import AVCaptureDevice, AVMediaTypeVideo
+        except Exception:
+            return
+        try:
+            status = AVCaptureDevice.authorizationStatusForMediaType_(AVMediaTypeVideo)
+        except Exception:
+            return
+        # 3 = Authorized; nothing to do. 1/2 = Restricted/Denied; prompt won't help.
+        if status != 0:
+            return
+        try:
+            # Fire-and-forget. The handler may never run if Info.plist lacks
+            # NSCameraUsageDescription, so we don't block UI on it.
+            AVCaptureDevice.requestAccessForMediaType_completionHandler_(
+                AVMediaTypeVideo, lambda _granted: None
+            )
+        except Exception:
+            logger.exception("Camera permission request failed")
+
+    def _no_device_hint(self) -> str:
+        import sys
+        if sys.platform == "darwin":
+            return (
+                "No camera detected.\nIf you have one, allow access in\n"
+                "System Settings → Privacy & Security → Camera."
+            )
+        if sys.platform.startswith("win"):
+            return (
+                "No camera detected.\nIf you have one, allow access in\n"
+                "Settings → Privacy & security → Camera."
+            )
+        return "No camera detected."
+
+    def _on_camera_error(self, *_args):
+        try:
+            err = self._camera.errorString() if self._camera else ""
+        except Exception:
+            err = ""
+        logger.warning("Camera error: %s", err or "unknown")
+        self._show_camera_placeholder(err or "Camera unavailable")
 
     def _start_camera(self):
         if self._camera is not None:
@@ -1033,6 +1139,10 @@ class InterviewChatPage(QWidget):
         bar = self._transcript_scroll.verticalScrollBar()
         bar.setValue(bar.maximum())
 
+    def _scroll_cards_to_bottom(self):
+        bar = self._cards_scroll.verticalScrollBar()
+        bar.setValue(bar.maximum())
+
     # ── Per-answer feedback cards ────────────────────────────────
     def _add_feedback_card(self, question: str) -> dict:
         if self._cards_empty_label is not None:
@@ -1064,9 +1174,16 @@ class InterviewChatPage(QWidget):
             | Qt.TextInteractionFlag.TextSelectableByKeyboard
         )
         body.setStyleSheet("font-size: 13px;")
+        body.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        body.setMinimumWidth(1)
+        body_sp = body.sizePolicy()
+        body_sp.setHeightForWidth(True)
+        body_sp.setVerticalPolicy(QSizePolicy.Policy.MinimumExpanding)
+        body.setSizePolicy(body_sp)
         v.addWidget(body)
 
         self._cards_layout_v.addWidget(card)
+        QTimer.singleShot(0, self._scroll_cards_to_bottom)
         record = {
             "question": question,
             "answer": "",
@@ -1207,6 +1324,10 @@ class InterviewChatPage(QWidget):
 
         def on_chunk(delta: str):
             card["buffer"] += delta
+            partial = _extract_partial_feedback(card["buffer"])
+            if partial:
+                card["title"].setText("STREAMING…")
+                card["body"].setText(partial)
 
         def on_finished():
             buf = card["buffer"]
