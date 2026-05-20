@@ -10,7 +10,8 @@ from PyQt6.QtCore import QObject, QSize, QThread, QTimer, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QPushButton, QScrollArea, QSizePolicy,
-    QStackedWidget, QTabWidget, QTextBrowser, QTextEdit, QVBoxLayout, QWidget,
+    QSplitter, QStackedWidget, QTabWidget, QTextBrowser, QTextEdit,
+    QVBoxLayout, QWidget,
 )
 
 from .base import _icon_btn, _label, _primary_btn, _secondary_btn
@@ -520,16 +521,29 @@ class JobInterviewPage(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
+        outer.addWidget(splitter, 1)
+
+        left = QWidget()
+        left.setMinimumWidth(180)
+        left.setMaximumWidth(280)
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(16, 16, 8, 0)
+        left_layout.setSpacing(6)
+        left_layout.addWidget(_label("Templates & Jobs"))
+
         self._sidebar = QListWidget()
-        self._sidebar.setObjectName("sidebar")
-        self._sidebar.setFixedWidth(220)
-        outer.addWidget(self._sidebar)
+        self._sidebar.setObjectName("company-cache-list")
+        left_layout.addWidget(self._sidebar, 1)
+        splitter.addWidget(left)
 
         self._editor = InterviewQuestionsPage(
             get_profile=get_profile,
             get_job_context=self._current_job_context,
         )
-        outer.addWidget(self._editor, 1)
+        splitter.addWidget(self._editor)
+        splitter.setSizes([220, 700])
 
         self._sidebar.currentRowChanged.connect(self._on_row_changed)
 
@@ -1487,10 +1501,22 @@ class PastFeedbackPage(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
+        outer.addWidget(splitter, 1)
+
+        left = QWidget()
+        left.setMinimumWidth(200)
+        left.setMaximumWidth(320)
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(16, 16, 8, 0)
+        left_layout.setSpacing(6)
+        left_layout.addWidget(_label("Saved Sessions"))
+
         self._list = QListWidget()
-        self._list.setObjectName("sidebar")
-        self._list.setFixedWidth(260)
-        outer.addWidget(self._list)
+        self._list.setObjectName("company-cache-list")
+        left_layout.addWidget(self._list, 1)
+        splitter.addWidget(left)
 
         self._right = QWidget()
         right_layout = QVBoxLayout(self._right)
@@ -1507,7 +1533,8 @@ class PastFeedbackPage(QWidget):
         self._detail_tabs.addTab(self._notes_view, "Overall Notes")
         right_layout.addWidget(self._detail_tabs, 1)
 
-        outer.addWidget(self._right, 1)
+        splitter.addWidget(self._right)
+        splitter.setSizes([240, 700])
 
         self._sessions: list[dict] = []
         self._list.currentRowChanged.connect(self._on_select)
