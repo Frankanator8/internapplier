@@ -14,7 +14,7 @@ from .sections.education import EducationPage
 from .sections.awards import AwardsPage
 from .sections.skills import SkillsPage
 from .sections.hobbies import HobbiesPage
-from .sections.tracker import TrackerPage
+from .sections.applications import ApplicationsPage
 from .sections.applier import ApplierPage
 from .sections.settings import SettingsPage
 
@@ -123,9 +123,9 @@ class MainWindow(QMainWindow):
         )
         self._tabs.addTab(self._applier_page, "✦  Applier")
 
-        # ── Tab 2: Tracker ────────────────────────────────────────
-        self._tracker_page = TrackerPage()
-        self._tabs.addTab(self._tracker_page, "📋  Tracker")
+        # ── Tab 2: Applications ───────────────────────────────────
+        self._applications_page = ApplicationsPage()
+        self._tabs.addTab(self._applications_page, "📋  Applications")
 
         # ── Tab 3: Settings ───────────────────────────────────────
         self._settings_page = SettingsPage(status_bar=self.status_bar)
@@ -167,7 +167,7 @@ class MainWindow(QMainWindow):
         self._skills_page.load(data.get("skills", []))
         self._hobbies_page.load(data.get("hobbies", []))
         for entry in data.get("applications", []):
-            self._tracker_page.add_entry(entry)
+            self._applications_page.add_entry(entry)
         research_cache = data.get("research_cache") or {}
         if not research_cache:
             # Migrate from old single-entry format
@@ -320,7 +320,7 @@ class MainWindow(QMainWindow):
             "awards": self._awards_page.get_data(),
             "skills": self._skills_page.get_data(),
             "hobbies": self._hobbies_page.get_data(),
-            "applications": self._tracker_page.get_data(),
+            "applications": self._applications_page.get_data(),
             "research_cache": self._applier_page.get_research_data(),
         }
         data_store.save(data)

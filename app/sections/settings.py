@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import (
     QFrame, QLineEdit, QLabel, QStatusBar, QTabWidget, QPlainTextEdit,
     QScrollArea, QSpinBox, QFileDialog, QCheckBox,
 )
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QFont
 
 from api import ai_provider
@@ -206,6 +206,10 @@ class SettingsPage(QWidget):
         pc_layout.addWidget(self._auto_resync_checkbox)
 
         tabs = QTabWidget()
+        tabs.setUsesScrollButtons(True)
+        tabs.setElideMode(Qt.TextElideMode.ElideNone)
+        tabs.tabBar().setUsesScrollButtons(True)
+        tabs.tabBar().setElideMode(Qt.TextElideMode.ElideNone)
         mono = QFont("Menlo")
         mono.setStyleHint(QFont.StyleHint.Monospace)
         mono.setPointSize(11)
@@ -217,6 +221,7 @@ class SettingsPage(QWidget):
             ("Analyze Bullet", "analyze_bullet.txt"),
             ("Generate Resume", "generate_resume.txt"),
             ("Grade Resume", "grade_resume.txt"),
+            ("Score Alignment", "score_alignment.txt"),
             ("Research Company", "research_company.txt"),
             ("Fix LaTeX", "fix_latex.txt"),
         ]:
