@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout, QListWidget, QListWidgetItem, QStackedWidget, QWidget,
 )
 
-from .tracker import TrackerPage
+from .tracker_page import TrackerPage
 
 
 class ApplicationsPage(QWidget):
