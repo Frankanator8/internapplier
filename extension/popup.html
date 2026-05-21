@@ -81,9 +81,12 @@
       </div>
       <div id="name" class="name"></div>
       <div class="stack">
-        <button id="fill-btn" disabled>Autofill this page</button>
-        <button id="create-btn" class="secondary" disabled>Create new job application from page</button>
-        <button id="add-link-btn" class="secondary" disabled>Add link to existing application</button>
+        <div class="row" style="margin-bottom: 0;">
+          <label class="field" for="load-target">Application</label>
+          <select id="load-target"></select>
+        </div>
+        <button id="load-btn" disabled>Load Application</button>
+        <button id="create-btn" class="secondary" disabled>Make New Application</button>
       </div>
       <div id="result" class="result"></div>
     </div>
@@ -141,23 +144,6 @@
         <button id="save-btn">Save</button>
       </div>
       <div id="form-result" class="result"></div>
-    </div>
-
-    <div id="attach-view" class="hidden">
-      <h1>Attach Link to Application</h1>
-      <div class="row">
-        <label class="field">Page URL</label>
-        <div id="attach-url" style="font-size: 12px; word-break: break-all; color: #374151;"></div>
-      </div>
-      <div class="row">
-        <label class="field" for="attach-target">Application</label>
-        <select id="attach-target"></select>
-      </div>
-      <div class="form-actions">
-        <button id="attach-cancel-btn" class="secondary">Cancel</button>
-        <button id="attach-save-btn">Add link</button>
-      </div>
-      <div id="attach-result" class="result"></div>
     </div>
 
     <script src="popup.js"></script>

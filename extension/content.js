@@ -29,6 +29,9 @@ const ALIASES = [
   ["ethnicity",           [/ethnic|race/]],
   ["veteran_status",      [/veteran/]],
   ["disability_status",   [/disab/]],
+  ["company",             [/company|employer|organization|organisation/]],
+  ["role",                [/job\s*title|position|role/]],
+  ["description",         [/cover\s*letter|why\s*(do\s*you\s*)?(want|interested)|message|about\s*you/]],
 ];
 
 function normalize(s) {

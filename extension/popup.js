@@ -1,17 +1,10 @@
 const dot = document.getElementById("dot");
 const statusText = document.getElementById("status-text");
 const nameEl = document.getElementById("name");
-const fillBtn = document.getElementById("fill-btn");
+const loadTarget = document.getElementById("load-target");
+const loadBtn = document.getElementById("load-btn");
 const createBtn = document.getElementById("create-btn");
-const addLinkBtn = document.getElementById("add-link-btn");
 const resultEl = document.getElementById("result");
-
-const attachView = document.getElementById("attach-view");
-const attachUrlEl = document.getElementById("attach-url");
-const attachTarget = document.getElementById("attach-target");
-const attachSaveBtn = document.getElementById("attach-save-btn");
-const attachCancelBtn = document.getElementById("attach-cancel-btn");
-const attachResult = document.getElementById("attach-result");
 
 const mainView = document.getElementById("main-view");
 const formView = document.getElementById("form-view");
@@ -79,69 +72,6 @@ async function loadStatuses() {
   } catch (_) {}
 }
 
-async function refreshStatus() {
-  let ok = false;
-  try {
-    const res = await fetch(`${API_BASE}/health`, { cache: "no-store" });
-    ok = res.ok;
-  } catch (_) {
-    ok = false;
-  }
-  dot.classList.remove("ok", "err");
-  if (ok) {
-    dot.classList.add("ok");
-    statusText.textContent = "Connected to localhost:8765";
-    fillBtn.disabled = false;
-    createBtn.disabled = false;
-    if (addLinkBtn) addLinkBtn.disabled = false;
-    try {
-      const res = await fetch(`${API_BASE}/profile/general_info`);
-      const info = await res.json();
-      const name = [info.first_name, info.last_name].filter(Boolean).join(" ");
-      nameEl.textContent = name ? `Profile: ${name}` : "Profile loaded (no name)";
-    } catch (_) {
-      nameEl.textContent = "";
-    }
-  } else {
-    dot.classList.add("err");
-    statusText.textContent = "Server unreachable";
-    fillBtn.disabled = true;
-    createBtn.disabled = true;
-    if (addLinkBtn) addLinkBtn.disabled = true;
-    nameEl.textContent = "";
-  }
-}
-
-fillBtn.addEventListener("click", async () => {
-  resultEl.textContent = "Filling…";
-  fillBtn.disabled = true;
-  try {
-    const reply = await browser.runtime.sendMessage({ type: "AUTOFILL_ACTIVE_TAB" });
-    resultEl.textContent = reply && reply.ok ? "Done." : "Could not autofill.";
-  } catch (e) {
-    resultEl.textContent = `Error: ${e.message}`;
-  } finally {
-    fillBtn.disabled = false;
-  }
-});
-
-function showForm() {
-  mainView.classList.add("hidden");
-  formView.classList.remove("hidden");
-}
-
-function showMain() {
-  formView.classList.add("hidden");
-  if (attachView) attachView.classList.add("hidden");
-  mainView.classList.remove("hidden");
-}
-
-function showAttach() {
-  mainView.classList.add("hidden");
-  formView.classList.add("hidden");
-  attachView.classList.remove("hidden");
-}
-
 function pickBestMatch(apps, meta) {
   if (!Array.isArray(apps) || !apps.length) return -1;
   const company = (meta.company || "").toLowerCase().trim();
@@ -159,39 +89,35 @@ function pickBestMatch(apps, meta) {
   return apps[0].index;
 }
 
-async function openAttachView() {
-  attachResult.textContent = "Loading…";
-  attachTarget.innerHTML = "";
-  attachUrlEl.textContent = "";
+function pickByLink(apps, url) {
+  if (!Array.isArray(apps) || !apps.length || !url) return -1;
+  for (const a of apps) {
+    const links = Array.isArray(a.links) ? a.links : [];
+    if (links.includes(url)) return a.index;
+  }
+  return -1;
+}
+
+async function populateLoadDropdown() {
+  loadTarget.innerHTML = "";
   let meta = {};
   try {
     const reply = await browser.runtime.sendMessage({ type: "EXTRACT_PAGE_META" });
     if (reply && reply.ok) meta = reply.meta || {};
   } catch (_) {}
-  const url = meta.url || "";
-  attachUrlEl.textContent = url || "(unknown URL)";
-  attachView.dataset.url = url;
 
   let apps = [];
-  let listErr = "";
   try {
     const reply = await browser.runtime.sendMessage({ type: "LIST_APPLICATIONS" });
-    if (reply && reply.ok && Array.isArray(reply.body)) {
-      apps = reply.body;
-    } else if (!reply) {
-      listErr = "Background script did not respond — reload the extension.";
-    } else {
-      listErr = reply.error || `HTTP ${reply.status}` || "unexpected response";
-    }
-  } catch (e) {
-    listErr = String(e && e.message || e);
-  }
+    if (reply && reply.ok && Array.isArray(reply.body)) apps = reply.body;
+  } catch (_) {}
 
   if (!apps.length) {
-    attachResult.textContent = listErr
-      ? `Could not load applications: ${listErr}`
-      : "No existing applications. Create one first.";
-    showAttach();
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "(no applications)";
+    loadTarget.appendChild(opt);
+    loadBtn.disabled = true;
     return;
   }
 
@@ -200,65 +126,83 @@ async function openAttachView() {
     opt.value = String(a.index);
     const company = a.company || "(no company)";
     const role = a.role || "(no role)";
-    const count = (a.links || []).length;
-    opt.textContent = `${company} — ${role}${count ? ` (${count} link${count === 1 ? "" : "s"})` : ""}`;
-    attachTarget.appendChild(opt);
+    opt.textContent = `${company} — ${role}`;
+    loadTarget.appendChild(opt);
   }
-  const best = pickBestMatch(apps, meta);
-  if (best >= 0) attachTarget.value = String(best);
-  attachResult.textContent = "";
-  showAttach();
+
+  let best = pickByLink(apps, meta.url);
+  if (best < 0) best = pickBestMatch(apps, meta);
+  if (best >= 0) loadTarget.value = String(best);
+  loadBtn.disabled = false;
 }
 
-if (addLinkBtn) {
-  addLinkBtn.addEventListener("click", () => {
-    openAttachView().catch((e) => {
-      resultEl.textContent = `Error: ${e.message}`;
-    });
-  });
-}
-
-if (attachCancelBtn) {
-  attachCancelBtn.addEventListener("click", () => {
-    attachResult.textContent = "";
-    showMain();
-  });
-}
-
-if (attachSaveBtn) {
-  attachSaveBtn.addEventListener("click", async () => {
-    const url = (attachView.dataset.url || "").trim();
-    const idxStr = attachTarget.value;
-    if (!url) {
-      attachResult.textContent = "No page URL detected.";
-      return;
-    }
-    if (idxStr === "" || idxStr == null) {
-      attachResult.textContent = "Pick an application.";
-      return;
-    }
-    const index = parseInt(idxStr, 10);
-    attachSaveBtn.disabled = true;
-    attachResult.textContent = "Saving…";
+async function refreshStatus() {
+  let ok = false;
+  try {
+    const res = await fetch(`${API_BASE}/health`, { cache: "no-store" });
+    ok = res.ok;
+  } catch (_) {
+    ok = false;
+  }
+  dot.classList.remove("ok", "err");
+  if (ok) {
+    dot.classList.add("ok");
+    statusText.textContent = "Connected to localhost:8765";
+    createBtn.disabled = false;
     try {
-      const reply = await browser.runtime.sendMessage({
-        type: "ATTACH_LINK",
-        index,
-        url,
-      });
-      if (reply && reply.ok) {
-        resultEl.textContent = "Link added.";
-        showMain();
-      } else {
-        const detail = reply && (reply.error || (reply.body && JSON.stringify(reply.body)) || `HTTP ${reply.status}`);
-        attachResult.textContent = `Failed: ${detail || "unknown error"}`;
-      }
-    } catch (e) {
-      attachResult.textContent = `Error: ${e.message}`;
-    } finally {
-      attachSaveBtn.disabled = false;
+      const res = await fetch(`${API_BASE}/profile/general_info`);
+      const info = await res.json();
+      const name = [info.first_name, info.last_name].filter(Boolean).join(" ");
+      nameEl.textContent = name ? `Profile: ${name}` : "Profile loaded (no name)";
+    } catch (_) {
+      nameEl.textContent = "";
     }
-  });
+    await populateLoadDropdown();
+  } else {
+    dot.classList.add("err");
+    statusText.textContent = "Server unreachable";
+    loadBtn.disabled = true;
+    createBtn.disabled = true;
+    loadTarget.innerHTML = "";
+    nameEl.textContent = "";
+  }
+}
+
+loadBtn.addEventListener("click", async () => {
+  const idxStr = loadTarget.value;
+  if (idxStr === "" || idxStr == null) {
+    resultEl.textContent = "Pick an application.";
+    return;
+  }
+  const index = parseInt(idxStr, 10);
+  resultEl.textContent = "Loading…";
+  loadBtn.disabled = true;
+  try {
+    const reply = await browser.runtime.sendMessage({
+      type: "AUTOFILL_WITH_APPLICATION",
+      index,
+    });
+    if (reply && reply.ok) {
+      resultEl.textContent = "Done.";
+    } else {
+      const detail = reply && (reply.error || reply.reason || `HTTP ${reply.status}`);
+      resultEl.textContent = `Could not autofill: ${detail || "unknown error"}`;
+    }
+  } catch (e) {
+    resultEl.textContent = `Error: ${e.message}`;
+  } finally {
+    loadBtn.disabled = false;
+  }
+});
+
+function showForm() {
+  mainView.classList.add("hidden");
+  formView.classList.remove("hidden");
+}
+
+function showMain() {
+  formView.classList.add("hidden");
+  mainView.classList.remove("hidden");
 }
 
 function readForm() {
@@ -380,6 +324,7 @@ saveBtn.addEventListener("click", async () => {
       formResult.textContent = "";
       resultEl.textContent = "Application saved.";
       showMain();
+      await populateLoadDropdown();
     } else {
       const detail = reply && (reply.error || (reply.body && JSON.stringify(reply.body)) || `HTTP ${reply.status}`);
       formResult.textContent = `Save failed: ${detail || "unknown error"}`;

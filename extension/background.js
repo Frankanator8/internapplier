@@ -131,6 +131,26 @@ browser.runtime.onMessage.addListener((msg, _sender) => {
       return { ok: true };
     })();
   }
+  if (msg && msg.type === "AUTOFILL_WITH_APPLICATION") {
+    return (async () => {
+      const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+      if (!tabs[0]) return { ok: false, reason: "no active tab" };
+      const fields = { ...(await getFields({ forceRefresh: true })) };
+      try {
+        const listed = await listApplications();
+        if (listed.ok && Array.isArray(listed.body)) {
+          const app = listed.body.find((a) => a.index === msg.index);
+          if (app) {
+            if (app.company) fields.company = app.company;
+            if (app.role) fields.role = app.role;
+            if (app.description) fields.description = app.description;
+          }
+        }
+      } catch (_) {}
+      await browser.tabs.sendMessage(tabs[0].id, { type: "AUTOFILL", fields });
+      return { ok: true };
+    })();
+  }
   if (msg && msg.type === "EXTRACT_PAGE_META") {
     return extractPageMeta();
   }
