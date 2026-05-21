@@ -2,7 +2,6 @@ const API_BASE = "http://127.0.0.1:8765";
 const CACHE_KEY = "autofill_fields";
 const STATUSES_CACHE_KEY = "statuses_cache";
 const PICKED_KEY = "picked";
-const PICKER_TAB_KEY = "picker_tab_id";
 
 async function fetchStatuses() {
   const res = await fetch(`${API_BASE}/statuses`, { cache: "no-store" });
@@ -50,16 +49,8 @@ async function activeTabId() {
   return tabs[0] ? tabs[0].id : null;
 }
 
-async function pageTabId() {
-  try {
-    const stored = await browser.storage.local.get(PICKER_TAB_KEY);
-    if (stored[PICKER_TAB_KEY] != null) return stored[PICKER_TAB_KEY];
-  } catch (_) {}
-  return activeTabId();
-}
-
 async function extractPageMeta() {
-  const tabId = await pageTabId();
+  const tabId = await activeTabId();
   if (tabId == null) return { ok: false, reason: "no active tab" };
   try {
     const meta = await browser.tabs.sendMessage(tabId, { type: "EXTRACT_PAGE_META" });
@@ -70,33 +61,13 @@ async function extractPageMeta() {
 }
 
 async function startPicker(field) {
-  const tabId = await pageTabId();
+  const tabId = await activeTabId();
   if (tabId == null) return { ok: false, reason: "no active tab" };
   try {
     await browser.storage.local.remove(PICKED_KEY);
   } catch (_) {}
   try {
     await browser.tabs.sendMessage(tabId, { type: "START_PICKER", field: field || "description" });
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, reason: String(e && e.message || e) };
-  }
-}
-
-async function openDetachedForm() {
-  try {
-    const tabId = await activeTabId();
-    if (tabId != null) {
-      await browser.storage.local.set({ [PICKER_TAB_KEY]: tabId });
-    }
-  } catch (_) {}
-  try {
-    await browser.windows.create({
-      url: browser.runtime.getURL("popup.html?detached=1"),
-      type: "popup",
-      width: 380,
-      height: 760,
-    });
     return { ok: true };
   } catch (e) {
     return { ok: false, reason: String(e && e.message || e) };
@@ -166,9 +137,6 @@ browser.runtime.onMessage.addListener((msg, _sender) => {
   if (msg && msg.type === "START_PICKER") {
     return startPicker(msg.field);
   }
-  if (msg && msg.type === "OPEN_DETACHED_FORM") {
-    return openDetachedForm();
-  }
   if (msg && msg.type === "GET_STATUSES") {
     return getStatuses({ forceRefresh: !!msg.forceRefresh });
   }
@@ -190,6 +158,14 @@ browser.runtime.onMessage.addListener((msg, _sender) => {
     return Promise.resolve({ ok: true });
   }
 });
+
+if (browser.browserAction && browser.browserAction.onClicked) {
+  browser.browserAction.onClicked.addListener(() => {
+    if (browser.sidebarAction && browser.sidebarAction.toggle) {
+      browser.sidebarAction.toggle().catch(() => {});
+    }
+  });
+}
 
 // Warm the caches when the extension starts.
 fetchFields().catch(() => {});

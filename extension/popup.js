@@ -30,8 +30,6 @@ const API_BASE = "http://127.0.0.1:8765";
 const PICKED_KEY = "picked";
 const DRAFT_KEY = "application_draft";
 
-const IS_DETACHED = new URLSearchParams(location.search).get("detached") === "1";
-
 const FIELD_TO_INPUT = {
   company: fCompany,
   role: fRole,
@@ -335,36 +333,16 @@ async function loadDraftOrExtract() {
   showForm();
 }
 
-createBtn.addEventListener("click", async () => {
-  if (IS_DETACHED) {
-    loadDraftOrExtract().catch((e) => {
-      resultEl.textContent = `Error: ${e.message}`;
-    });
-    return;
-  }
-  await saveDraft().catch(() => {});
-  try {
-    await browser.runtime.sendMessage({ type: "OPEN_DETACHED_FORM" });
-    window.close();
-  } catch (e) {
+createBtn.addEventListener("click", () => {
+  loadDraftOrExtract().catch((e) => {
     resultEl.textContent = `Error: ${e.message}`;
-  }
+  });
 });
 
 document.querySelectorAll(".pick-btn").forEach((btn) => {
   btn.addEventListener("click", async () => {
     const field = btn.getAttribute("data-pick-field") || "description";
     await saveDraft();
-    if (!IS_DETACHED) {
-      try {
-        await browser.runtime.sendMessage({ type: "OPEN_DETACHED_FORM" });
-        window.close();
-        return;
-      } catch (e) {
-        formResult.textContent = `Error: ${e.message}`;
-        return;
-      }
-    }
     try {
       await browser.runtime.sendMessage({ type: "START_PICKER", field });
       formResult.textContent = `Click an element on the page to set ${field} (Esc to cancel).`;
@@ -377,10 +355,6 @@ document.querySelectorAll(".pick-btn").forEach((btn) => {
 cancelBtn.addEventListener("click", async () => {
   await browser.storage.local.remove([DRAFT_KEY, PICKED_KEY]);
   formResult.textContent = "";
-  if (IS_DETACHED) {
-    window.close();
-    return;
-  }
   showMain();
 });
 
@@ -405,10 +379,6 @@ saveBtn.addEventListener("click", async () => {
       await browser.storage.local.remove([DRAFT_KEY, PICKED_KEY]);
       formResult.textContent = "";
       resultEl.textContent = "Application saved.";
-      if (IS_DETACHED) {
-        window.close();
-        return;
-      }
       showMain();
     } else {
       const detail = reply && (reply.error || (reply.body && JSON.stringify(reply.body)) || `HTTP ${reply.status}`);
@@ -439,20 +409,13 @@ browser.runtime.onMessage.addListener((msg) => {
   const stored = await browser.storage.local.get([DRAFT_KEY, PICKED_KEY]);
   const haveDraft = !!stored[DRAFT_KEY];
   const havePicked = !!stored[PICKED_KEY];
-  if (IS_DETACHED || haveDraft || havePicked) {
+  if (haveDraft || havePicked) {
     if (haveDraft) writeForm(stored[DRAFT_KEY]);
     else writeForm({ date: todayISO() });
     if (havePicked) {
       applyPicked(stored[PICKED_KEY]);
       await browser.storage.local.remove(PICKED_KEY);
     }
-    if (IS_DETACHED && !haveDraft && !havePicked) {
-      // Fresh detached window — extract page meta to seed the form.
-      try {
-        await loadDraftOrExtract();
-      } catch (_) {}
-    } else {
-      showForm();
-    }
+    showForm();
   }
 })();

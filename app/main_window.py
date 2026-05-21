@@ -258,17 +258,24 @@ class MainWindow(QMainWindow):
             return
 
         summary = linkedin_import.summarize(data)
-        if not any(data[k] for k in ("experience", "projects", "education", "awards", "skills")):
+        if not any(
+            data[k]
+            for k in ("experience", "projects", "education", "awards", "skills", "general_info")
+        ):
             QMessageBox.warning(
                 self, "Nothing to import",
                 "The archive parsed successfully but contained no resume data.\n\n"
-                "Make sure your LinkedIn export included Positions, Projects, "
-                "Education, and Skills.",
+                "Make sure your LinkedIn export included Profile, Positions, "
+                "Projects, Education, and Skills.",
             )
             return
 
+        existing_general = {
+            k: v for k, v in self._general_info_page.get_data().items() if v
+        }
         has_existing = bool(
-            self._experience_page.get_data()
+            existing_general
+            or self._experience_page.get_data()
             or self._projects_page.get_data()
             or self._education_page.get_data()
             or self._awards_page.get_data()
@@ -331,6 +338,18 @@ class MainWindow(QMainWindow):
         else:
             for s in data["skills"]:
                 self._skills_page._add_item(s)
+
+        imported_general = data.get("general_info") or {}
+        if imported_general:
+            current_general = self._general_info_page.get_data()
+            if mode == "replace":
+                merged = {**current_general, **imported_general}
+            else:
+                merged = dict(current_general)
+                for k, v in imported_general.items():
+                    if not merged.get(k):
+                        merged[k] = v
+            self._general_info_page.load(merged)
 
         self.status_bar.showMessage(f"✓  Imported from LinkedIn — {summary}", 5000)
 
