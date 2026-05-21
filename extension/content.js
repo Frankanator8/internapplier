@@ -229,7 +229,7 @@ function stopPicker(result) {
   } catch (_) { /* popup may be closed */ }
 }
 
-function startPicker() {
+function startPicker(field) {
   if (_pickerState) return;
   const styleEl = document.createElement("style");
   styleEl.textContent =
@@ -237,7 +237,7 @@ function startPicker() {
     "outline-offset: -2px !important; cursor: crosshair !important; }";
   document.head.appendChild(styleEl);
 
-  const state = { styleEl, lastEl: null, onMove: null, onClick: null, onKey: null };
+  const state = { styleEl, lastEl: null, onMove: null, onClick: null, onKey: null, field: field || "description" };
   state.onMove = (e) => {
     if (state.lastEl) state.lastEl.classList.remove("__ia_picker_hover");
     state.lastEl = e.target;
@@ -249,13 +249,18 @@ function startPicker() {
     e.preventDefault();
     e.stopPropagation();
     const el = e.target;
-    const text = el ? (el.innerText || el.textContent || "").trim() : "";
-    stopPicker({ ok: true, description: text });
+    let value = el ? (el.innerText || el.textContent || "").trim() : "";
+    if (state.field === "link") {
+      const a = el && (el.closest ? el.closest("a") : null);
+      if (a && a.href) value = a.href;
+      else value = location.href;
+    }
+    stopPicker({ ok: true, field: state.field, value });
   };
   state.onKey = (e) => {
     if (e.key === "Escape") {
       e.preventDefault();
-      stopPicker({ ok: false, cancelled: true });
+      stopPicker({ ok: false, field: state.field, cancelled: true });
     }
   };
   _pickerState = state;
@@ -281,7 +286,7 @@ browser.runtime.onMessage.addListener((msg) => {
     }
   }
   if (msg && msg.type === "START_PICKER") {
-    startPicker();
+    startPicker(msg.field);
     return Promise.resolve({ ok: true });
   }
 });

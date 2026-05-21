@@ -130,7 +130,11 @@ class MainWindow(QMainWindow):
         self._tabs.addTab(self._applier_page, "✦  Applier")
 
         # ── Tab 2: Applications ───────────────────────────────────
-        self._applications_page = ApplicationsPage()
+        self._applications_page = ApplicationsPage(
+            get_profile=self._get_profile_data,
+            get_research_cache=self._applier_page.get_research_data,
+            save_fn=self._save,
+        )
         self._tabs.addTab(self._applications_page, "📋  Applications")
 
         # ── Tab 3: Interviews ─────────────────────────────────────
@@ -340,26 +344,7 @@ class MainWindow(QMainWindow):
         )
 
     def _merged_applications(self) -> list[dict]:
-        in_memory = self._applications_page.get_data()
-        try:
-            on_disk = data_store.load().get("applications") or []
-        except Exception:
-            return in_memory
-
-        def key(e: dict) -> tuple:
-            return (
-                (e.get("company") or "").strip().lower(),
-                (e.get("role") or "").strip().lower(),
-                (e.get("date") or "").strip(),
-                (e.get("link") or "").strip(),
-            )
-
-        seen = {key(e) for e in in_memory}
-        merged = list(in_memory)
-        for entry in on_disk:
-            if key(entry) not in seen:
-                merged.append(entry)
-        return merged
+        return self._applications_page.get_data()
 
     def _save(self):
         self._interviews_page.commit_pending()

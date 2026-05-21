@@ -25,12 +25,33 @@ _DEFAULT_TEMPLATE: list[dict] = [
 ]
 
 
+def _migrate_application_links(data: dict) -> bool:
+    apps = data.get("applications")
+    if not isinstance(apps, list):
+        return False
+    changed = False
+    for entry in apps:
+        if not isinstance(entry, dict):
+            continue
+        if "links" not in entry:
+            old = entry.get("link", "")
+            entry["links"] = [old] if isinstance(old, str) and old else []
+            changed = True
+        if "link" in entry:
+            del entry["link"]
+            changed = True
+    return changed
+
+
 def load() -> dict:
     _APP_DIR.mkdir(parents=True, exist_ok=True)
     if not _DATA_FILE.exists():
         return {k: list(v) for k, v in _EMPTY.items()}
     with open(_DATA_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+        data = json.load(f)
+    if _migrate_application_links(data):
+        save(data)
+    return data
 
 
 def save(data: dict) -> None:

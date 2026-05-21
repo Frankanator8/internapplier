@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Callable
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QHBoxLayout, QListWidget, QListWidgetItem, QStackedWidget, QWidget,
@@ -9,7 +11,13 @@ from .tracker import TrackerPage
 
 
 class ApplicationsPage(QWidget):
-    def __init__(self, parent=None):
+    def __init__(
+        self,
+        parent=None,
+        get_profile: Callable[[], dict] | None = None,
+        get_research_cache: Callable[[], dict] | None = None,
+        save_fn: Callable[[], None] | None = None,
+    ):
         super().__init__(parent)
 
         outer = QHBoxLayout(self)
@@ -24,7 +32,11 @@ class ApplicationsPage(QWidget):
         item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self._sidebar.addItem(item)
 
-        self._tracker_page = TrackerPage()
+        self._tracker_page = TrackerPage(
+            get_profile=get_profile,
+            get_research_cache=get_research_cache,
+            save_fn=save_fn,
+        )
 
         self._stack = QStackedWidget()
         self._stack.addWidget(self._tracker_page)

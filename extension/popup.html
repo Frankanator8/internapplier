@@ -51,7 +51,7 @@
         font-family: inherit;
       }
       .row textarea { min-height: 90px; resize: vertical; }
-      .desc-row .desc-header {
+      .row .row-header {
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -65,6 +65,7 @@
         color: #2563eb;
         border: 1px solid #2563eb;
         border-radius: 4px;
+        cursor: pointer;
       }
       .pick-btn:hover { background: #eff6ff; }
       .form-actions { display: flex; gap: 8px; }
@@ -82,6 +83,7 @@
       <div class="stack">
         <button id="fill-btn" disabled>Autofill this page</button>
         <button id="create-btn" class="secondary" disabled>Create new job application from page</button>
+        <button id="add-link-btn" class="secondary" disabled>Add link to existing application</button>
       </div>
       <div id="result" class="result"></div>
     </div>
@@ -89,39 +91,48 @@
     <div id="form-view" class="hidden">
       <h1>New Application</h1>
       <div class="row">
-        <label class="field" for="f-company">Company</label>
+        <div class="row-header">
+          <label class="field" for="f-company">Company</label>
+          <button class="pick-btn" type="button" data-pick-field="company">Pick from page</button>
+        </div>
         <input id="f-company" type="text">
       </div>
       <div class="row">
-        <label class="field" for="f-role">Role</label>
+        <div class="row-header">
+          <label class="field" for="f-role">Role</label>
+          <button class="pick-btn" type="button" data-pick-field="role">Pick from page</button>
+        </div>
         <input id="f-role" type="text">
       </div>
       <div class="row">
-        <label class="field" for="f-date">Date Applied</label>
+        <div class="row-header">
+          <label class="field" for="f-date">Date Applied</label>
+          <button class="pick-btn" type="button" data-pick-field="date">Pick from page</button>
+        </div>
         <input id="f-date" type="text" placeholder="YYYY-MM-DD">
       </div>
       <div class="row">
-        <label class="field" for="f-link">Link</label>
+        <div class="row-header">
+          <label class="field" for="f-link">Link</label>
+          <button class="pick-btn" type="button" data-pick-field="link">Pick from page</button>
+        </div>
         <input id="f-link" type="text">
       </div>
       <div class="row">
         <label class="field" for="f-status">Status</label>
-        <select id="f-status">
-          <option>Applied</option>
-          <option>Phone Screen</option>
-          <option>Interview</option>
-          <option>Offer</option>
-          <option>Rejected</option>
-        </select>
+        <select id="f-status"></select>
       </div>
       <div class="row">
-        <label class="field" for="f-notes">Notes</label>
+        <div class="row-header">
+          <label class="field" for="f-notes">Notes</label>
+          <button class="pick-btn" type="button" data-pick-field="notes">Pick from page</button>
+        </div>
         <input id="f-notes" type="text">
       </div>
-      <div class="row desc-row">
-        <div class="desc-header">
+      <div class="row">
+        <div class="row-header">
           <label class="field" for="f-description">Job Description</label>
-          <button id="pick-btn" class="pick-btn" type="button">Pick from page</button>
+          <button class="pick-btn" type="button" data-pick-field="description">Pick from page</button>
         </div>
         <textarea id="f-description"></textarea>
       </div>
@@ -130,6 +141,23 @@
         <button id="save-btn">Save</button>
       </div>
       <div id="form-result" class="result"></div>
+    </div>
+
+    <div id="attach-view" class="hidden">
+      <h1>Attach Link to Application</h1>
+      <div class="row">
+        <label class="field">Page URL</label>
+        <div id="attach-url" style="font-size: 12px; word-break: break-all; color: #374151;"></div>
+      </div>
+      <div class="row">
+        <label class="field" for="attach-target">Application</label>
+        <select id="attach-target"></select>
+      </div>
+      <div class="form-actions">
+        <button id="attach-cancel-btn" class="secondary">Cancel</button>
+        <button id="attach-save-btn">Add link</button>
+      </div>
+      <div id="attach-result" class="result"></div>
     </div>
 
     <script src="popup.js"></script>

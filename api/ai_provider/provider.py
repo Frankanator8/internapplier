@@ -2,89 +2,21 @@ import datetime
 import json
 import logging
 import os
-import pathlib
 import time
 from typing import Iterator
 
 import requests
 
+from .formatting import (
+    TOOL_EVENT_PREFIX,
+    _format_context,
+    _format_tool_event,
+    _profile_json,
+)
+from .prompts import load_prompt
+from .settings import _load_model_config, get_resume_template
+
 logger = logging.getLogger(__name__)
-
-# Out-of-band marker prefix for streamed tool-event lines. Downstream
-# collectors (e.g. ResumeGenerator._collect_stream) detect this prefix to
-# route tool events to the UI without polluting the model's text output.
-TOOL_EVENT_PREFIX = "\x1e"
-
-_APP_DIR = pathlib.Path.home() / "Library" / "Application Support" / "InternApplier"
-_MODELS_FILE = _APP_DIR / "models.txt"
-_SETTINGS_FILE = _APP_DIR / "settings.json"
-_PROMPTS_DIR = pathlib.Path(__file__).parent.parent / "prompts"
-_APP_PROMPTS_DIR = _APP_DIR / "prompts"
-
-
-def _seed_prompts() -> None:
-    _APP_PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
-    for src in _PROMPTS_DIR.glob("*.txt"):
-        dst = _APP_PROMPTS_DIR / src.name
-        if not dst.exists():
-            dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
-
-
-def resync_all_prompts() -> None:
-    _APP_PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
-    for src in _PROMPTS_DIR.glob("*.txt"):
-        dst = _APP_PROMPTS_DIR / src.name
-        dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
-
-
-def load_prompt(name: str) -> str:
-    return (_APP_PROMPTS_DIR / name).read_text(encoding="utf-8").strip()
-
-
-def default_prompt(name: str) -> str:
-    return (_PROMPTS_DIR / name).read_text(encoding="utf-8").strip()
-
-
-def save_prompt(name: str, content: str) -> None:
-    _APP_PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
-    (_APP_PROMPTS_DIR / name).write_text(content, encoding="utf-8")
-
-DEFAULT_FAST_MODEL = "google/gemini-2.0-flash-exp:free"
-DEFAULT_POWERFUL_MODEL = "openai/gpt-4o-mini"
-
-_model_config_cache: dict[str, str] | None = None
-
-
-def _load_model_config() -> dict[str, str]:
-    global _model_config_cache
-    if _model_config_cache is not None:
-        return _model_config_cache
-
-    defaults = {"fast": DEFAULT_FAST_MODEL, "powerful": DEFAULT_POWERFUL_MODEL}
-
-    _APP_DIR.mkdir(parents=True, exist_ok=True)
-    _seed_prompts()
-    if not _MODELS_FILE.exists():
-        with open(_MODELS_FILE, "w", encoding="utf-8") as f:
-            f.write(f"fast={DEFAULT_FAST_MODEL}\n")
-            f.write(f"powerful={DEFAULT_POWERFUL_MODEL}\n")
-        _model_config_cache = defaults
-        return _model_config_cache
-
-    config = dict(defaults)
-    with open(_MODELS_FILE, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, value = line.partition("=")
-            key = key.strip().lower()
-            value = value.strip()
-            if key in defaults and value:
-                config[key] = value
-
-    _model_config_cache = config
-    return _model_config_cache
 
 
 class OpenRouterProvider:
@@ -108,15 +40,8 @@ class OpenRouterProvider:
 
     def analyze_bullet_stream(self, bullet: str, context: dict) -> Iterator[str]:
         logger.info("analyze_bullet_stream — bullet=%r context=%s", bullet[:120], context)
-        if not self.api_key:
-            logger.error("analyze_bullet_stream — API key missing")
-            raise ValueError(
-                "No API key found. Set the OPENROUTER_API_KEY environment variable."
-            )
-
-        context_line = _format_context(context)
         user_message = (
-            f"{context_line}\n\n"
+            f"{_format_context(context)}\n\n"
             f'Resume bullet: "{bullet}"\n\n'
             "Please provide:\n"
             "1. CRITIQUE: A 1-2 sentence assessment of this bullet's weaknesses "
@@ -124,62 +49,14 @@ class OpenRouterProvider:
             "2. REWRITE A: An improved version of this bullet.\n"
             "3. REWRITE B: A second, alternative improved version."
         )
-
-        logger.debug("analyze_bullet_stream — POST %s model=%s stream=True", self.BASE_URL, self.model)
-        t0 = time.perf_counter()
-        chunk_count = 0
-        try:
-            with requests.post(
-                self.BASE_URL,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                    "Accept": "text/event-stream",
-                },
-                json={
-                    "model": self.model,
-                    "stream": True,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": load_prompt("analyze_bullet.txt"),
-                        },
-                        {"role": "user", "content": user_message},
-                    ],
-                },
-                stream=True,
-                timeout=60,
-            ) as response:
-                response.raise_for_status()
-                response.encoding = "utf-8"
-                for line in response.iter_lines(decode_unicode=True):
-                    if not line:
-                        continue
-                    if line.startswith(": "):
-                        continue
-                    if not line.startswith("data: "):
-                        continue
-                    payload = line[6:].strip()
-                    if payload == "[DONE]":
-                        break
-                    try:
-                        data = json.loads(payload)
-                    except json.JSONDecodeError:
-                        logger.debug("analyze_bullet_stream — skipping non-JSON line: %r", payload[:120])
-                        continue
-                    choices = data.get("choices") or []
-                    if not choices:
-                        continue
-                    delta = choices[0].get("delta") or {}
-                    content = delta.get("content")
-                    if content:
-                        chunk_count += 1
-                        yield content
-            elapsed = time.perf_counter() - t0
-            logger.info("analyze_bullet_stream — done in %.2fs, %d chunks", elapsed, chunk_count)
-        except Exception:
-            logger.exception("analyze_bullet_stream — request failed")
-            raise
+        yield from self._stream_chat_completion(
+            messages=[
+                {"role": "system", "content": load_prompt("analyze_bullet.txt")},
+                {"role": "user", "content": user_message},
+            ],
+            log_label="analyze_bullet_stream",
+            timeout=(10.0, 60.0),
+        )
 
     def _stream_chat_completion(
         self,
@@ -209,7 +86,7 @@ class OpenRouterProvider:
                 "No API key found. Set the OPENROUTER_API_KEY environment variable."
             )
 
-        from .generate_resume.agent_tools import TOOL_HANDLERS
+        from ..generate_resume.agent_tools import TOOL_HANDLERS
 
         logger.debug("%s — POST %s model=%s stream=True timeout=%s tools=%s",
                      log_label, self.BASE_URL, self.model, timeout,
@@ -250,11 +127,7 @@ class OpenRouterProvider:
                     response.raise_for_status()
                     response.encoding = "utf-8"
                     for line in response.iter_lines(decode_unicode=True):
-                        if not line:
-                            continue
-                        if line.startswith(": "):
-                            continue
-                        if not line.startswith("data: "):
+                        if not line or line.startswith(": ") or not line.startswith("data: "):
                             continue
                         payload = line[6:].strip()
                         if payload == "[DONE]":
@@ -367,36 +240,6 @@ class OpenRouterProvider:
                     "content": json.dumps(result),
                 })
 
-    def fix_latex_stream(self, latex: str, compile_error: str) -> Iterator[str]:
-        from .generate_resume.agent_tools import (
-            OPENAI_TOOL_SCHEMAS,
-            extract_preamble,
-            make_test_compile,
-        )
-
-        logger.info("fix_latex_stream — latex_chars=%d error_chars=%d",
-                    len(latex), len(compile_error))
-        preamble = extract_preamble(latex)
-        logger.debug(
-            "fix_latex_stream — preamble extracted: %s",
-            f"{len(preamble)} chars" if preamble else "none (minimal fallback)",
-        )
-        user_message = (
-            f"Broken LaTeX source:\n{latex}\n\n"
-            f"pdflatex error log:\n{compile_error}\n\n"
-            "Repair the syntax and return the corrected, complete LaTeX "
-            "document as your final assistant message — no prose, no fences."
-        )
-        yield from self._stream_chat_completion(
-            messages=[
-                {"role": "system", "content": load_prompt("fix_latex.txt")},
-                {"role": "user", "content": user_message},
-            ],
-            log_label="fix_latex",
-            tools=[OPENAI_TOOL_SCHEMAS["test_compile"]],
-            tool_overrides={"test_compile": make_test_compile(preamble)},
-        )
-
     def grade_resume_stream(
         self,
         latex: str,
@@ -429,18 +272,9 @@ class OpenRouterProvider:
             f"<company_research>\n{json.dumps(company_research, indent=2)}\n</company_research>\n\n"
             if company_research else ""
         )
-        if profile:
-            profile_json = json.dumps({
-                "experience": profile.get("experience", []),
-                "projects": profile.get("projects", []),
-                "education": profile.get("education", []),
-                "awards": profile.get("awards", []),
-                "skills": profile.get("skills", []),
-                "hobbies": profile.get("hobbies", []),
-            }, indent=2)
-            profile_block = f"<profile>\n{profile_json}\n</profile>\n\n"
-        else:
-            profile_block = ""
+        profile_block = (
+            f"<profile>\n{_profile_json(profile)}\n</profile>\n\n" if profile else ""
+        )
         user_message = (
             f"<today>{today}</today>\n\n"
             f"{page_status}"
@@ -451,7 +285,7 @@ class OpenRouterProvider:
             "Grade this resume against the job description following the system "
             "instructions exactly."
         )
-        from .generate_resume.agent_tools import OPENAI_TOOL_SCHEMAS
+        from ..generate_resume.agent_tools import OPENAI_TOOL_SCHEMAS
 
         yield from self._stream_chat_completion(
             messages=[
@@ -472,19 +306,10 @@ class OpenRouterProvider:
         company_research: dict | None = None,
     ) -> list[dict]:
         today = today or datetime.date.today().isoformat()
-        profile_json = json.dumps({
-            "experience": profile.get("experience", []),
-            "projects": profile.get("projects", []),
-            "education": profile.get("education", []),
-            "awards": profile.get("awards", []),
-            "skills": profile.get("skills", []),
-            "hobbies": profile.get("hobbies", []),
-        }, indent=2)
-
         sections: list[str] = [
             f"<today>{today}</today>",
             f"<job_description>\n{job_description}\n</job_description>",
-            f"<profile>\n{profile_json}\n</profile>",
+            f"<profile>\n{_profile_json(profile)}\n</profile>",
         ]
         template = get_resume_template().strip()
         if template:
@@ -519,7 +344,7 @@ class OpenRouterProvider:
             f"{len(previous_latex)} chars" if previous_latex else "none",
             f"{len(company_research)} keys" if company_research else "none",
         )
-        from .generate_resume.agent_tools import OPENAI_TOOL_SCHEMAS
+        from ..generate_resume.agent_tools import OPENAI_TOOL_SCHEMAS
 
         messages = self._build_generate_resume_messages(
             profile, job_description, feedback, previous_latex, today,
@@ -548,22 +373,13 @@ class OpenRouterProvider:
             f"{len(job_description)} chars" if job_description else "none",
         )
         today = today or datetime.date.today().isoformat()
-        profile_json = json.dumps({
-            "experience": profile.get("experience", []),
-            "projects": profile.get("projects", []),
-            "education": profile.get("education", []),
-            "awards": profile.get("awards", []),
-            "skills": profile.get("skills", []),
-            "hobbies": profile.get("hobbies", []),
-        }, indent=2)
-
         sections: list[str] = [
             f"<today>{today}</today>",
             f"<question>\n{question}\n</question>",
         ]
         if company_name:
             sections.append(f"<company_name>{company_name}</company_name>")
-        sections.append(f"<profile>\n{profile_json}\n</profile>")
+        sections.append(f"<profile>\n{_profile_json(profile)}\n</profile>")
         if company_research:
             sections.append(
                 f"<company_research>\n{json.dumps(company_research, indent=2)}\n</company_research>"
@@ -598,15 +414,6 @@ class OpenRouterProvider:
             f"{len(job_description)} chars" if job_description else "none",
         )
         today = today or datetime.date.today().isoformat()
-        profile_json = json.dumps({
-            "experience": profile.get("experience", []),
-            "projects": profile.get("projects", []),
-            "education": profile.get("education", []),
-            "awards": profile.get("awards", []),
-            "skills": profile.get("skills", []),
-            "hobbies": profile.get("hobbies", []),
-        }, indent=2)
-
         sections: list[str] = [
             f"<today>{today}</today>",
             f"<question>\n{question}\n</question>",
@@ -614,7 +421,7 @@ class OpenRouterProvider:
         ]
         if company_name:
             sections.append(f"<company_name>{company_name}</company_name>")
-        sections.append(f"<profile>\n{profile_json}\n</profile>")
+        sections.append(f"<profile>\n{_profile_json(profile)}\n</profile>")
         if company_research:
             sections.append(
                 f"<company_research>\n{json.dumps(company_research, indent=2)}\n</company_research>"
@@ -647,19 +454,10 @@ class OpenRouterProvider:
             f"{len(job_description)} chars" if job_description else "none",
         )
         today = today or datetime.date.today().isoformat()
-        profile_json = json.dumps({
-            "experience": profile.get("experience", []),
-            "projects": profile.get("projects", []),
-            "education": profile.get("education", []),
-            "awards": profile.get("awards", []),
-            "skills": profile.get("skills", []),
-            "hobbies": profile.get("hobbies", []),
-        }, indent=2)
-
         context_sections: list[str] = [f"<today>{today}</today>"]
         if company_name:
             context_sections.append(f"<company_name>{company_name}</company_name>")
-        context_sections.append(f"<profile>\n{profile_json}\n</profile>")
+        context_sections.append(f"<profile>\n{_profile_json(profile)}\n</profile>")
         if company_research:
             context_sections.append(
                 f"<company_research>\n{json.dumps(company_research, indent=2)}\n</company_research>"
@@ -697,15 +495,6 @@ class OpenRouterProvider:
             len(history), len(prior_notes or ""), company_name,
         )
         today = today or datetime.date.today().isoformat()
-        profile_json = json.dumps({
-            "experience": profile.get("experience", []),
-            "projects": profile.get("projects", []),
-            "education": profile.get("education", []),
-            "awards": profile.get("awards", []),
-            "skills": profile.get("skills", []),
-            "hobbies": profile.get("hobbies", []),
-        }, indent=2)
-
         transcript_lines: list[str] = []
         for turn in history:
             role = turn.get("role")
@@ -718,7 +507,7 @@ class OpenRouterProvider:
             f"<today>{today}</today>",
             f"<prior_notes>\n{prior_notes or ''}\n</prior_notes>",
             f"<transcript>\n{transcript_text}\n</transcript>",
-            f"<profile>\n{profile_json}\n</profile>",
+            f"<profile>\n{_profile_json(profile)}\n</profile>",
         ]
         if company_name:
             sections.append(f"<company_name>{company_name}</company_name>")
@@ -815,201 +604,6 @@ class OpenRouterProvider:
         }
         logger.info("research_company — success, values=%d projects=%d", len(result["core_values"]), len(result["recent_projects"]))
         return result
-
-
-def _format_tool_event(
-    name: str, round_idx: int, args: dict, result: dict
-) -> str:
-    """Render a tool-call event as a multi-line block for UI display."""
-    latex_arg = args.get("latex") if isinstance(args, dict) else None
-    latex_chars = len(latex_arg) if isinstance(latex_arg, str) else 0
-    ok = result.get("ok")
-    badge = "✓" if ok else "✗"
-
-    parts = [f"[tool {badge}] {name} (round {round_idx}, latex={latex_chars} chars)"]
-    if name == "page_length" and ok:
-        fill = result.get("fill")
-        cap = result.get("page_cap")
-        try:
-            parts.append(f"  → fill={float(fill):.3f} / page_cap={cap}")
-        except (TypeError, ValueError):
-            parts.append(f"  → fill={fill} / page_cap={cap}")
-    elif ok:
-        parts.append("  → ok")
-    else:
-        excerpt = (result.get("log_excerpt") or result.get("error") or "").strip()
-        if excerpt:
-            # Indent excerpt for readability; cap to a few lines.
-            lines = excerpt.splitlines()[:6]
-            parts.append("  → failed:")
-            parts.extend(f"      {ln}" for ln in lines)
-        else:
-            parts.append("  → failed")
-    return "\n".join(parts) + "\n"
-
-
-def _format_context(context: dict) -> str:
-    kind = context.get("type", "")
-    if kind == "experience":
-        return (
-            f"Context: Work experience at {context.get('company', 'a company')}, "
-            f"role: {context.get('role', 'unknown role')}."
-        )
-    if kind == "project":
-        return f"Context: Personal/academic project — {context.get('name', 'unnamed project')}."
-    if kind == "education":
-        return (
-            f"Context: Education at {context.get('school', 'a school')}, "
-            f"degree: {context.get('degree', 'unknown degree')}."
-        )
-    return ""
-
-
-_settings_cache: dict | None = None
-
-
-def _load_settings() -> dict:
-    global _settings_cache
-    if _settings_cache is not None:
-        return _settings_cache
-    if not _SETTINGS_FILE.exists():
-        _settings_cache = {}
-        return _settings_cache
-    try:
-        with open(_SETTINGS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        _settings_cache = data if isinstance(data, dict) else {}
-    except (json.JSONDecodeError, OSError):
-        _settings_cache = {}
-    return _settings_cache
-
-
-def get_resume_template() -> str:
-    return str(_load_settings().get("resume_template", ""))
-
-
-def save_resume_template(text: str) -> None:
-    global _settings_cache
-    _APP_DIR.mkdir(parents=True, exist_ok=True)
-    current = dict(_load_settings())
-    current["resume_template"] = text
-    with open(_SETTINGS_FILE, "w", encoding="utf-8") as f:
-        json.dump(current, f, indent=2)
-    _settings_cache = current
-
-
-DEFAULT_RESUME_PAGE_CAP = 1
-
-
-def get_resume_page_cap() -> int:
-    val = _load_settings().get("resume_page_cap", DEFAULT_RESUME_PAGE_CAP)
-    try:
-        n = int(val)
-    except (TypeError, ValueError):
-        return DEFAULT_RESUME_PAGE_CAP
-    return n if n >= 1 else DEFAULT_RESUME_PAGE_CAP
-
-
-def save_resume_page_cap(pages: int) -> None:
-    global _settings_cache
-    _APP_DIR.mkdir(parents=True, exist_ok=True)
-    current = dict(_load_settings())
-    current["resume_page_cap"] = int(pages)
-    with open(_SETTINGS_FILE, "w", encoding="utf-8") as f:
-        json.dump(current, f, indent=2)
-    _settings_cache = current
-
-
-DEFAULT_RESUME_OUTPUT_DIR = pathlib.Path.home() / "Documents" / "Resumes"
-
-
-def get_resume_output_dir() -> pathlib.Path:
-    val = _load_settings().get("resume_output_dir")
-    if not val:
-        return DEFAULT_RESUME_OUTPUT_DIR
-    return pathlib.Path(str(val)).expanduser()
-
-
-def save_resume_output_dir(path: str) -> None:
-    global _settings_cache
-    _APP_DIR.mkdir(parents=True, exist_ok=True)
-    current = dict(_load_settings())
-    current["resume_output_dir"] = str(path).strip()
-    with open(_SETTINGS_FILE, "w", encoding="utf-8") as f:
-        json.dump(current, f, indent=2)
-    _settings_cache = current
-
-
-DEFAULT_MAX_GENERATION_ATTEMPTS = 2
-
-
-def get_max_generation_attempts() -> int:
-    val = _load_settings().get("max_generation_attempts", DEFAULT_MAX_GENERATION_ATTEMPTS)
-    try:
-        n = int(val)
-    except (TypeError, ValueError):
-        return DEFAULT_MAX_GENERATION_ATTEMPTS
-    return n if n >= 1 else DEFAULT_MAX_GENERATION_ATTEMPTS
-
-
-def save_max_generation_attempts(n: int) -> None:
-    global _settings_cache
-    _APP_DIR.mkdir(parents=True, exist_ok=True)
-    current = dict(_load_settings())
-    current["max_generation_attempts"] = int(n)
-    with open(_SETTINGS_FILE, "w", encoding="utf-8") as f:
-        json.dump(current, f, indent=2)
-    _settings_cache = current
-
-
-DEFAULT_MAX_LATEX_FIX_ATTEMPTS = 2
-
-
-def get_max_latex_fix_attempts() -> int:
-    val = _load_settings().get("max_latex_fix_attempts", DEFAULT_MAX_LATEX_FIX_ATTEMPTS)
-    try:
-        n = int(val)
-    except (TypeError, ValueError):
-        return DEFAULT_MAX_LATEX_FIX_ATTEMPTS
-    return n if n >= 0 else DEFAULT_MAX_LATEX_FIX_ATTEMPTS
-
-
-def save_max_latex_fix_attempts(n: int) -> None:
-    global _settings_cache
-    _APP_DIR.mkdir(parents=True, exist_ok=True)
-    current = dict(_load_settings())
-    current["max_latex_fix_attempts"] = int(n)
-    with open(_SETTINGS_FILE, "w", encoding="utf-8") as f:
-        json.dump(current, f, indent=2)
-    _settings_cache = current
-
-
-DEFAULT_AUTO_RESYNC_PROMPTS = False
-
-
-def get_auto_resync_prompts() -> bool:
-    return bool(_load_settings().get("auto_resync_prompts", DEFAULT_AUTO_RESYNC_PROMPTS))
-
-
-def save_auto_resync_prompts(enabled: bool) -> None:
-    global _settings_cache
-    _APP_DIR.mkdir(parents=True, exist_ok=True)
-    current = dict(_load_settings())
-    current["auto_resync_prompts"] = bool(enabled)
-    with open(_SETTINGS_FILE, "w", encoding="utf-8") as f:
-        json.dump(current, f, indent=2)
-    _settings_cache = current
-
-
-def save_model_config(fast: str, powerful: str) -> None:
-    global _model_config_cache
-    _APP_DIR.mkdir(parents=True, exist_ok=True)
-    fast = fast.strip()
-    powerful = powerful.strip()
-    with open(_MODELS_FILE, "w", encoding="utf-8") as f:
-        f.write(f"fast={fast}\n")
-        f.write(f"powerful={powerful}\n")
-    _model_config_cache = {"fast": fast, "powerful": powerful}
 
 
 def get_provider(tier: str = "fast") -> OpenRouterProvider:

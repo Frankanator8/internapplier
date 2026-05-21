@@ -3,7 +3,15 @@ const statusText = document.getElementById("status-text");
 const nameEl = document.getElementById("name");
 const fillBtn = document.getElementById("fill-btn");
 const createBtn = document.getElementById("create-btn");
+const addLinkBtn = document.getElementById("add-link-btn");
 const resultEl = document.getElementById("result");
+
+const attachView = document.getElementById("attach-view");
+const attachUrlEl = document.getElementById("attach-url");
+const attachTarget = document.getElementById("attach-target");
+const attachSaveBtn = document.getElementById("attach-save-btn");
+const attachCancelBtn = document.getElementById("attach-cancel-btn");
+const attachResult = document.getElementById("attach-result");
 
 const mainView = document.getElementById("main-view");
 const formView = document.getElementById("form-view");
@@ -14,20 +22,63 @@ const fLink = document.getElementById("f-link");
 const fStatus = document.getElementById("f-status");
 const fNotes = document.getElementById("f-notes");
 const fDescription = document.getElementById("f-description");
-const pickBtn = document.getElementById("pick-btn");
 const saveBtn = document.getElementById("save-btn");
 const cancelBtn = document.getElementById("cancel-btn");
 const formResult = document.getElementById("form-result");
 
 const API_BASE = "http://127.0.0.1:8765";
-const PICKED_KEY = "picked_description";
+const PICKED_KEY = "picked";
 const DRAFT_KEY = "application_draft";
+
+const IS_DETACHED = new URLSearchParams(location.search).get("detached") === "1";
+
+const FIELD_TO_INPUT = {
+  company: fCompany,
+  role: fRole,
+  date: fDate,
+  link: fLink,
+  notes: fNotes,
+  description: fDescription,
+};
+
+let defaultStatus = "Applied";
 
 function todayISO() {
   const d = new Date();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${d.getFullYear()}-${m}-${day}`;
+}
+
+function populateStatusOptions(statuses, def) {
+  if (!Array.isArray(statuses) || !statuses.length) return;
+  const current = fStatus.value;
+  fStatus.innerHTML = "";
+  for (const s of statuses) {
+    const opt = document.createElement("option");
+    opt.value = s;
+    opt.textContent = s;
+    fStatus.appendChild(opt);
+  }
+  if (def) defaultStatus = def;
+  if (current && statuses.includes(current)) fStatus.value = current;
+  else fStatus.value = defaultStatus;
+}
+
+async function loadStatuses() {
+  try {
+    const cached = await browser.runtime.sendMessage({ type: "GET_STATUSES" });
+    if (cached && Array.isArray(cached.statuses)) {
+      populateStatusOptions(cached.statuses, cached.default);
+    }
+  } catch (_) {}
+  try {
+    const res = await fetch(`${API_BASE}/statuses`, { cache: "no-store" });
+    if (res.ok) {
+      const data = await res.json();
+      populateStatusOptions(data.statuses, data.default);
+    }
+  } catch (_) {}
 }
 
 async function refreshStatus() {
@@ -44,6 +95,7 @@ async function refreshStatus() {
     statusText.textContent = "Connected to localhost:8765";
     fillBtn.disabled = false;
     createBtn.disabled = false;
+    if (addLinkBtn) addLinkBtn.disabled = false;
     try {
       const res = await fetch(`${API_BASE}/profile/general_info`);
       const info = await res.json();
@@ -57,6 +109,7 @@ async function refreshStatus() {
     statusText.textContent = "Server unreachable";
     fillBtn.disabled = true;
     createBtn.disabled = true;
+    if (addLinkBtn) addLinkBtn.disabled = true;
     nameEl.textContent = "";
   }
 }
@@ -81,7 +134,133 @@ function showForm() {
 
 function showMain() {
   formView.classList.add("hidden");
+  if (attachView) attachView.classList.add("hidden");
   mainView.classList.remove("hidden");
+}
+
+function showAttach() {
+  mainView.classList.add("hidden");
+  formView.classList.add("hidden");
+  attachView.classList.remove("hidden");
+}
+
+function pickBestMatch(apps, meta) {
+  if (!Array.isArray(apps) || !apps.length) return -1;
+  const company = (meta.company || "").toLowerCase().trim();
+  const role = (meta.role || "").toLowerCase().trim();
+  if (company) {
+    for (const a of apps) {
+      if ((a.company || "").toLowerCase().trim() === company) return a.index;
+    }
+  }
+  if (role) {
+    for (const a of apps) {
+      if ((a.role || "").toLowerCase().trim() === role) return a.index;
+    }
+  }
+  return apps[0].index;
+}
+
+async function openAttachView() {
+  attachResult.textContent = "Loading…";
+  attachTarget.innerHTML = "";
+  attachUrlEl.textContent = "";
+  let meta = {};
+  try {
+    const reply = await browser.runtime.sendMessage({ type: "EXTRACT_PAGE_META" });
+    if (reply && reply.ok) meta = reply.meta || {};
+  } catch (_) {}
+  const url = meta.url || "";
+  attachUrlEl.textContent = url || "(unknown URL)";
+  attachView.dataset.url = url;
+
+  let apps = [];
+  let listErr = "";
+  try {
+    const reply = await browser.runtime.sendMessage({ type: "LIST_APPLICATIONS" });
+    if (reply && reply.ok && Array.isArray(reply.body)) {
+      apps = reply.body;
+    } else if (!reply) {
+      listErr = "Background script did not respond — reload the extension.";
+    } else {
+      listErr = reply.error || `HTTP ${reply.status}` || "unexpected response";
+    }
+  } catch (e) {
+    listErr = String(e && e.message || e);
+  }
+
+  if (!apps.length) {
+    attachResult.textContent = listErr
+      ? `Could not load applications: ${listErr}`
+      : "No existing applications. Create one first.";
+    showAttach();
+    return;
+  }
+
+  for (const a of apps) {
+    const opt = document.createElement("option");
+    opt.value = String(a.index);
+    const company = a.company || "(no company)";
+    const role = a.role || "(no role)";
+    const count = (a.links || []).length;
+    opt.textContent = `${company} — ${role}${count ? ` (${count} link${count === 1 ? "" : "s"})` : ""}`;
+    attachTarget.appendChild(opt);
+  }
+  const best = pickBestMatch(apps, meta);
+  if (best >= 0) attachTarget.value = String(best);
+  attachResult.textContent = "";
+  showAttach();
+}
+
+if (addLinkBtn) {
+  addLinkBtn.addEventListener("click", () => {
+    openAttachView().catch((e) => {
+      resultEl.textContent = `Error: ${e.message}`;
+    });
+  });
+}
+
+if (attachCancelBtn) {
+  attachCancelBtn.addEventListener("click", () => {
+    attachResult.textContent = "";
+    showMain();
+  });
+}
+
+if (attachSaveBtn) {
+  attachSaveBtn.addEventListener("click", async () => {
+    const url = (attachView.dataset.url || "").trim();
+    const idxStr = attachTarget.value;
+    if (!url) {
+      attachResult.textContent = "No page URL detected.";
+      return;
+    }
+    if (idxStr === "" || idxStr == null) {
+      attachResult.textContent = "Pick an application.";
+      return;
+    }
+    const index = parseInt(idxStr, 10);
+    attachSaveBtn.disabled = true;
+    attachResult.textContent = "Saving…";
+    try {
+      const reply = await browser.runtime.sendMessage({
+        type: "ATTACH_LINK",
+        index,
+        url,
+      });
+      if (reply && reply.ok) {
+        resultEl.textContent = "Link added.";
+        showMain();
+      } else {
+        const detail = reply && (reply.error || (reply.body && JSON.stringify(reply.body)) || `HTTP ${reply.status}`);
+        attachResult.textContent = `Failed: ${detail || "unknown error"}`;
+      }
+    } catch (e) {
+      attachResult.textContent = `Error: ${e.message}`;
+    } finally {
+      attachSaveBtn.disabled = false;
+    }
+  });
 }
 
 function readForm() {
@@ -101,7 +280,8 @@ function writeForm(data) {
   fRole.value = data.role || "";
   fDate.value = data.date || todayISO();
   fLink.value = data.link || "";
-  fStatus.value = data.status || "Applied";
+  if (data.status) fStatus.value = data.status;
+  else fStatus.value = defaultStatus;
   fNotes.value = data.notes || "";
   fDescription.value = data.description || "";
 }
@@ -112,6 +292,16 @@ async function saveDraft() {
   } catch (_) {}
 }
 
+function applyPicked(picked) {
+  if (!picked || !picked.field) return;
+  const input = FIELD_TO_INPUT[picked.field];
+  if (!input) return;
+  input.value = picked.value || "";
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  saveDraft();
+  formResult.textContent = `Picked ${picked.field}.`;
+}
+
 async function loadDraftOrExtract() {
   const stored = await browser.storage.local.get([DRAFT_KEY, PICKED_KEY]);
   const draft = stored[DRAFT_KEY];
@@ -119,9 +309,8 @@ async function loadDraftOrExtract() {
   if (draft) {
     writeForm(draft);
     if (picked) {
-      fDescription.value = picked;
+      applyPicked(picked);
       await browser.storage.local.remove(PICKED_KEY);
-      await saveDraft();
     }
     showForm();
     return;
@@ -137,7 +326,7 @@ async function loadDraftOrExtract() {
     role: meta.role || "",
     date: todayISO(),
     link: meta.url || "",
-    status: "Applied",
+    status: defaultStatus,
     notes: "",
     description: meta.description || "",
   });
@@ -146,25 +335,52 @@ async function loadDraftOrExtract() {
   showForm();
 }
 
-createBtn.addEventListener("click", () => {
-  loadDraftOrExtract().catch((e) => {
+createBtn.addEventListener("click", async () => {
+  if (IS_DETACHED) {
+    loadDraftOrExtract().catch((e) => {
+      resultEl.textContent = `Error: ${e.message}`;
+    });
+    return;
+  }
+  await saveDraft().catch(() => {});
+  try {
+    await browser.runtime.sendMessage({ type: "OPEN_DETACHED_FORM" });
+    window.close();
+  } catch (e) {
     resultEl.textContent = `Error: ${e.message}`;
-  });
+  }
 });
 
-pickBtn.addEventListener("click", async () => {
-  await saveDraft();
-  try {
-    await browser.runtime.sendMessage({ type: "START_PICKER" });
-    formResult.textContent = "Click an element on the page (Esc to cancel). Reopen the popup after picking.";
-  } catch (e) {
-    formResult.textContent = `Error: ${e.message}`;
-  }
+document.querySelectorAll(".pick-btn").forEach((btn) => {
+  btn.addEventListener("click", async () => {
+    const field = btn.getAttribute("data-pick-field") || "description";
+    await saveDraft();
+    if (!IS_DETACHED) {
+      try {
+        await browser.runtime.sendMessage({ type: "OPEN_DETACHED_FORM" });
+        window.close();
+        return;
+      } catch (e) {
+        formResult.textContent = `Error: ${e.message}`;
+        return;
+      }
+    }
+    try {
+      await browser.runtime.sendMessage({ type: "START_PICKER", field });
+      formResult.textContent = `Click an element on the page to set ${field} (Esc to cancel).`;
+    } catch (e) {
+      formResult.textContent = `Error: ${e.message}`;
+    }
+  });
 });
 
 cancelBtn.addEventListener("click", async () => {
   await browser.storage.local.remove([DRAFT_KEY, PICKED_KEY]);
   formResult.textContent = "";
+  if (IS_DETACHED) {
+    window.close();
+    return;
+  }
   showMain();
 });
 
@@ -176,15 +392,23 @@ saveBtn.addEventListener("click", async () => {
   }
   saveBtn.disabled = true;
   formResult.textContent = "Saving…";
+  const payload = { ...entry };
+  const linkVal = (payload.link || "").trim();
+  delete payload.link;
+  payload.links = linkVal ? [linkVal] : [];
   try {
     const reply = await browser.runtime.sendMessage({
       type: "CREATE_APPLICATION",
-      entry,
+      entry: payload,
     });
     if (reply && reply.ok) {
       await browser.storage.local.remove([DRAFT_KEY, PICKED_KEY]);
       formResult.textContent = "";
       resultEl.textContent = "Application saved.";
+      if (IS_DETACHED) {
+        window.close();
+        return;
+      }
       showMain();
     } else {
       const detail = reply && (reply.error || (reply.body && JSON.stringify(reply.body)) || `HTTP ${reply.status}`);
@@ -202,17 +426,33 @@ saveBtn.addEventListener("click", async () => {
   el.addEventListener("change", saveDraft);
 });
 
+browser.runtime.onMessage.addListener((msg) => {
+  if (msg && msg.type === "PICKED" && msg.picked) {
+    applyPicked(msg.picked);
+    browser.storage.local.remove(PICKED_KEY).catch(() => {});
+  }
+});
+
 (async function init() {
+  await loadStatuses();
   await refreshStatus();
   const stored = await browser.storage.local.get([DRAFT_KEY, PICKED_KEY]);
-  if (stored[DRAFT_KEY] || stored[PICKED_KEY]) {
-    if (stored[DRAFT_KEY]) writeForm(stored[DRAFT_KEY]);
+  const haveDraft = !!stored[DRAFT_KEY];
+  const havePicked = !!stored[PICKED_KEY];
+  if (IS_DETACHED || haveDraft || havePicked) {
+    if (haveDraft) writeForm(stored[DRAFT_KEY]);
     else writeForm({ date: todayISO() });
-    if (stored[PICKED_KEY]) {
-      fDescription.value = stored[PICKED_KEY];
+    if (havePicked) {
+      applyPicked(stored[PICKED_KEY]);
       await browser.storage.local.remove(PICKED_KEY);
-      await saveDraft();
     }
-    showForm();
+    if (IS_DETACHED && !haveDraft && !havePicked) {
+      // Fresh detached window — extract page meta to seed the form.
+      try {
+        await loadDraftOrExtract();
+      } catch (_) {}
+    } else {
+      showForm();
+    }
   }
 })();

@@ -12,7 +12,6 @@ from api.ai_provider import (
     TOOL_EVENT_PREFIX,
     OpenRouterProvider,
     get_max_generation_attempts,
-    get_max_latex_fix_attempts,
     get_provider,
     get_resume_output_dir,
     get_resume_page_cap,
@@ -267,92 +266,15 @@ class ResumeGenerator:
             return latex, compile_latex(latex), None
         except LatexCompileError as e:
             compile_error = f"{e}\n{e.log_excerpt}".strip()
-
-        max_fix = get_max_latex_fix_attempts()
-        last_error_signature: str | None = None
-        for fix_idx in range(1, max_fix + 1):
-            logger.warning(
-                "generate_latex — attempt %d compile failed; latex-fixer pass %d/%d",
-                attempt, fix_idx, max_fix,
-            )
-            _emit(
-                stream_cb,
-                "fix-latex",
-                f"[fix-latex] attempt {attempt} pass {fix_idx}/{max_fix}: "
-                f"repairing LaTeX\n{compile_error}",
-            )
-            if progress_cb:
-                progress_cb(
-                    f"Attempt {attempt}: fixing LaTeX (pass {fix_idx}/{max_fix})…"
-                )
-
-            try:
-                fixed = self._fix_latex_text(latex, compile_error, stream_cb)
-            except Exception:
-                logger.exception(
-                    "_compile_with_fix — fixer failed on attempt %d pass %d",
-                    attempt, fix_idx,
-                )
-                break
-
-            if not fixed or fixed == latex:
-                logger.info(
-                    "_compile_with_fix — fixer returned no change; aborting repair loop"
-                )
-                break
-            extracted = extract_document(fixed)
-            if extracted is None:
-                logger.warning(
-                    "_compile_with_fix — fixer output missing \\documentclass{...} "
-                    "(likely prose pollution, %d chars); keeping previous LaTeX",
-                    len(fixed),
-                )
-                break
-            if extracted != fixed:
-                logger.info(
-                    "_compile_with_fix — trimmed %d chars of surrounding prose",
-                    len(fixed) - len(extracted),
-                )
-            latex = extracted
-
-            try:
-                return latex, compile_latex(latex), None
-            except LatexCompileError as e:
-                new_error = f"{e}\n{e.log_excerpt}".strip()
-                signature = str(e)
-                if signature == last_error_signature:
-                    logger.info(
-                        "_compile_with_fix — same error after fix; aborting repair loop"
-                    )
-                    compile_error = new_error
-                    break
-                last_error_signature = signature
-                compile_error = new_error
-
         _emit(
             stream_cb,
             "compile-error",
-            f"[compile-error] attempt {attempt}: LaTeX failed to compile after fixer "
+            f"[compile-error] attempt {attempt}: LaTeX failed to compile "
             f"— grading raw LaTeX anyway\n{compile_error}",
         )
         if progress_cb:
             progress_cb(f"Attempt {attempt}: compile failed — grading anyway")
         return latex, None, compile_error
-
-    def _fix_latex_text(
-        self,
-        latex: str,
-        compile_error: str,
-        stream_cb: Callable[[str, str], None] | None,
-    ) -> str:
-        return _strip_code_fence(
-            _collect_stream(
-                "fix-latex",
-                self.provider.fix_latex_stream(latex, compile_error),
-                stream_cb,
-            ),
-            lang_hints=("latex", "tex"),
-        )
 
     def _grade_resume_text(
         self,

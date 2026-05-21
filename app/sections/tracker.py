@@ -1,26 +1,121 @@
 from __future__ import annotations
 
 import html
+import logging
+from typing import Callable
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QComboBox, QPushButton, QLabel, QHeaderView, QAbstractItemView,
     QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QTextEdit,
+    QMessageBox, QRadioButton, QButtonGroup,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QThread
 
-from .base import _label, _primary_btn
+from api.constants import DEFAULT_STATUS, STATUS_OPTIONS
 
-_STATUS_OPTIONS = ["Applied", "Phone Screen", "Interview", "Offer", "Rejected"]
+from .base import _label, _primary_btn, _secondary_btn
+
+logger = logging.getLogger(__name__)
+
+_STATUS_OPTIONS = STATUS_OPTIONS
 
 _COLUMNS = ["Company", "Role", "Date Applied", "Status", "Notes", ""]
 _COL_COMPANY, _COL_ROLE, _COL_DATE, _COL_STATUS, _COL_NOTES, _COL_DEL = range(6)
 
-_ENTRY_FIELDS = ("company", "role", "date", "link", "status", "notes", "description")
+_ENTRY_FIELDS = ("company", "role", "date", "status", "notes", "description")
 
 
 def _empty_entry() -> dict:
-    return {k: "" for k in _ENTRY_FIELDS} | {"status": "Applied", "interview_questions": []}
+    return {k: "" for k in _ENTRY_FIELDS} | {
+        "status": DEFAULT_STATUS,
+        "links": [],
+        "interview_questions": [],
+    }
+
+
+class _LinksEditor(QWidget):
+    def __init__(self, links: list[str], parent=None):
+        super().__init__(parent)
+        self._rows: list[tuple[QWidget, QRadioButton, QLineEdit]] = []
+        self._group = QButtonGroup(self)
+        self._group.setExclusive(True)
+
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(4)
+
+        self._rows_holder = QVBoxLayout()
+        self._rows_holder.setContentsMargins(0, 0, 0, 0)
+        self._rows_holder.setSpacing(4)
+        self._layout.addLayout(self._rows_holder)
+
+        add_btn = QPushButton("+ Add link")
+        add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        add_btn.clicked.connect(lambda: self._add_row("", check_primary=False))
+        self._layout.addWidget(add_btn, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        if not links:
+            self._add_row("", check_primary=True)
+        else:
+            for i, u in enumerate(links):
+                self._add_row(u, check_primary=(i == 0))
+
+    def _add_row(self, url: str, check_primary: bool):
+        row_widget = QWidget()
+        row_layout = QHBoxLayout(row_widget)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(6)
+
+        radio = QRadioButton()
+        radio.setToolTip("Primary link")
+        self._group.addButton(radio)
+        edit = QLineEdit(url)
+        edit.setPlaceholderText("https://…")
+        remove_btn = QPushButton("✕")
+        remove_btn.setFixedSize(24, 24)
+        remove_btn.setToolTip("Remove link")
+        remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        remove_btn.clicked.connect(lambda _=False, w=row_widget: self._remove_row(w))
+
+        row_layout.addWidget(radio)
+        row_layout.addWidget(edit, 1)
+        row_layout.addWidget(remove_btn)
+
+        self._rows_holder.addWidget(row_widget)
+        self._rows.append((row_widget, radio, edit))
+
+        if check_primary or not any(r.isChecked() for _, r, _ in self._rows):
+            radio.setChecked(True)
+
+    def _remove_row(self, row_widget: QWidget):
+        for i, (w, radio, _edit) in enumerate(self._rows):
+            if w is row_widget:
+                was_primary = radio.isChecked()
+                self._group.removeButton(radio)
+                self._rows_holder.removeWidget(w)
+                w.deleteLater()
+                self._rows.pop(i)
+                break
+        if self._rows and not any(r.isChecked() for _, r, _ in self._rows):
+            self._rows[0][1].setChecked(True)
+
+    def get_links(self) -> list[str]:
+        primary: str | None = None
+        others: list[str] = []
+        for _w, radio, edit in self._rows:
+            url = edit.text().strip()
+            if not url:
+                continue
+            if radio.isChecked() and primary is None:
+                primary = url
+            else:
+                others.append(url)
+        result = []
+        if primary is not None:
+            result.append(primary)
+        result.extend(others)
+        return result
 
 
 class _EntryDialog(QDialog):
@@ -35,7 +130,10 @@ class _EntryDialog(QDialog):
         self._company = QLineEdit(data["company"])
         self._role = QLineEdit(data["role"])
         self._date = QLineEdit(data["date"])
-        self._link = QLineEdit(data["link"])
+        links_value = data.get("links")
+        if not isinstance(links_value, list):
+            links_value = []
+        self._links = _LinksEditor([u for u in links_value if isinstance(u, str)])
         self._status = QComboBox()
         for s in _STATUS_OPTIONS:
             self._status.addItem(s)
@@ -49,7 +147,7 @@ class _EntryDialog(QDialog):
         form.addRow("Company", self._company)
         form.addRow("Role", self._role)
         form.addRow("Date Applied", self._date)
-        form.addRow("Link", self._link)
+        form.addRow("Links", self._links)
         form.addRow("Status", self._status)
         form.addRow("Notes", self._notes)
         form.addRow("Job Description", self._description)
@@ -69,7 +167,7 @@ class _EntryDialog(QDialog):
             "company": self._company.text().strip(),
             "role": self._role.text().strip(),
             "date": self._date.text().strip(),
-            "link": self._link.text().strip(),
+            "links": self._links.get_links(),
             "status": self._status.currentText(),
             "notes": self._notes.text().strip(),
             "description": self._description.toPlainText().strip(),
@@ -77,9 +175,23 @@ class _EntryDialog(QDialog):
 
 
 class TrackerPage(QWidget):
-    def __init__(self, parent=None):
+    def __init__(
+        self,
+        parent=None,
+        get_profile: Callable[[], dict] | None = None,
+        get_research_cache: Callable[[], dict] | None = None,
+        save_fn: Callable[[], None] | None = None,
+    ):
         super().__init__(parent)
         self._rows: list[dict] = []
+        self._get_profile = get_profile
+        self._get_research_cache = get_research_cache
+        self._save_fn = save_fn
+        self._prep_queue: list[int] = []
+        self._prep_threads: list[QThread] = []
+        self._prep_workers: list = []
+        self._prep_btn: QPushButton | None = None
+        self._prep_status: QLabel | None = None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(28, 24, 28, 16)
@@ -88,6 +200,12 @@ class TrackerPage(QWidget):
         header_row = QHBoxLayout()
         header_row.addWidget(_label("Application Tracker", "section-title"))
         header_row.addStretch()
+        self._prep_status = QLabel("")
+        self._prep_status.setStyleSheet("color: #555; font-size: 12px;")
+        header_row.addWidget(self._prep_status)
+        self._prep_btn = _secondary_btn("⚙  Prep All Materials", 170)
+        self._prep_btn.clicked.connect(self._on_prep_all_clicked)
+        header_row.addWidget(self._prep_btn)
         add_btn = _primary_btn("+ Add Application")
         add_btn.clicked.connect(self._on_add_clicked)
         header_row.addWidget(add_btn)
@@ -115,7 +233,7 @@ class TrackerPage(QWidget):
         self._table.setColumnWidth(_COL_ROLE, 160)
         self._table.setColumnWidth(_COL_DATE, 110)
         self._table.setColumnWidth(_COL_STATUS, 120)
-        self._table.setColumnWidth(_COL_DEL, 40)
+        self._table.setColumnWidth(_COL_DEL, 48)
 
         outer.addWidget(self._table)
 
@@ -137,7 +255,9 @@ class TrackerPage(QWidget):
         entry = self._rows[row]
 
         self._table.setItem(row, _COL_COMPANY, QTableWidgetItem(entry["company"]))
-        self._render_role_cell(row, entry["role"], entry["link"])
+        links = entry.get("links") if isinstance(entry.get("links"), list) else []
+        primary_link = links[0] if links else ""
+        self._render_role_cell(row, entry["role"], primary_link)
         self._table.setItem(row, _COL_DATE, QTableWidgetItem(entry["date"]))
         self._table.setItem(row, _COL_NOTES, QTableWidgetItem(entry["notes"]))
 
@@ -159,11 +279,13 @@ class TrackerPage(QWidget):
             del_btn = QPushButton("✕")
             del_btn.setObjectName("icon-btn")
             del_btn.setFixedSize(28, 28)
+            del_btn.setToolTip("Delete application")
+            del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             del_btn.clicked.connect(lambda _checked=False, b=del_btn: self._remove_row(b))
 
             cell_widget = QWidget()
             cell_layout = QHBoxLayout(cell_widget)
-            cell_layout.setContentsMargins(4, 0, 4, 0)
+            cell_layout.setContentsMargins(0, 0, 0, 0)
             cell_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
             cell_layout.addWidget(del_btn)
             self._table.setCellWidget(row, _COL_DEL, cell_widget)
@@ -201,6 +323,11 @@ class TrackerPage(QWidget):
                 self._table.removeRow(r)
                 del self._rows[r]
                 self._rebind_row_callbacks()
+                if self._save_fn:
+                    try:
+                        self._save_fn()
+                    except Exception:
+                        logger.exception("Delete row: save_fn failed")
                 return
 
     def _rebind_row_callbacks(self):
@@ -212,6 +339,110 @@ class TrackerPage(QWidget):
                 except TypeError:
                     pass
                 combo.currentTextChanged.connect(lambda txt, row=r: self._on_status_changed(row, txt))
+
+    def _on_prep_all_clicked(self):
+        if self._get_profile is None:
+            QMessageBox.warning(self, "Prep All Materials", "Profile not available.")
+            return
+
+        queue = [i for i, e in enumerate(self._rows) if e.get("status") == "Added"]
+        if not queue:
+            QMessageBox.information(
+                self, "Prep All Materials", "No applications with status 'Added'."
+            )
+            return
+
+        self._prep_queue = queue
+        if self._prep_btn is not None:
+            self._prep_btn.setEnabled(False)
+            self._prep_btn.setText("Prepping…")
+        self._prep_next()
+
+    def _prep_next(self):
+        if not self._prep_queue:
+            if self._prep_btn is not None:
+                self._prep_btn.setEnabled(True)
+                self._prep_btn.setText("⚙  Prep All Materials")
+            if self._prep_status is not None:
+                self._prep_status.setText("✓  Done.")
+            if self._save_fn:
+                try:
+                    self._save_fn()
+                except Exception:
+                    logger.exception("Prep All: save_fn failed")
+            return
+
+        row = self._prep_queue.pop(0)
+        if not (0 <= row < len(self._rows)):
+            self._prep_next()
+            return
+
+        entry = self._rows[row]
+        jd = (entry.get("description") or "").strip()
+        company = (entry.get("company") or "").strip()
+        if not jd:
+            logger.info("Prep All: skipping row %d (%r) — no description", row, company)
+            if self._prep_status is not None:
+                self._prep_status.setText(f"Skipped {company or 'row'} — no JD.")
+            self._prep_next()
+            return
+
+        from .applier import _GenerateResumeWorker  # lazy import to avoid cycle
+
+        profile = self._get_profile() if self._get_profile else {}
+        cache = self._get_research_cache() if self._get_research_cache else {}
+        links_val = entry.get("links") or []
+        url = (links_val[0] if links_val else "").strip()
+
+        remaining = len(self._prep_queue)
+        if self._prep_status is not None:
+            self._prep_status.setText(
+                f"Generating for {company or 'application'}… ({remaining} more queued)"
+            )
+
+        worker = _GenerateResumeWorker(profile, jd, company, url, cache)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        self._prep_threads.append(thread)
+        self._prep_workers.append(worker)
+
+        def cleanup():
+            thread.quit()
+
+        def on_finished(_payload: dict):
+            if 0 <= row < len(self._rows):
+                self._rows[row]["status"] = "Materials Prepped"
+                combo = self._table.cellWidget(row, _COL_STATUS)
+                if isinstance(combo, QComboBox):
+                    combo.setCurrentText("Materials Prepped")
+            if self._save_fn:
+                try:
+                    self._save_fn()
+                except Exception:
+                    logger.exception("Prep All: save_fn failed mid-batch")
+            cleanup()
+            self._prep_next()
+
+        def on_error(msg: str):
+            logger.error("Prep All: row %d (%r) failed — %s", row, company, msg)
+            if self._prep_status is not None:
+                self._prep_status.setText(f"Error on {company or 'row'}: {msg}")
+            cleanup()
+            self._prep_next()
+
+        def on_progress(msg: str):
+            if self._prep_status is not None:
+                self._prep_status.setText(f"{company}: {msg}")
+
+        worker.finished.connect(on_finished)
+        worker.error.connect(on_error)
+        worker.progress.connect(on_progress)
+        thread.started.connect(worker.run)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(
+            lambda: self._prep_workers.remove(worker) if worker in self._prep_workers else None
+        )
+        thread.start()
 
     def get_data(self) -> list[dict]:
         return [dict(entry) for entry in self._rows]

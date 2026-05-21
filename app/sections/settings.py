@@ -309,7 +309,6 @@ class SettingsPage(QWidget):
             ("Grade Resume", "grade_resume.txt"),
             ("Score Alignment", "score_alignment.txt"),
             ("Research Company", "research_company.txt"),
-            ("Fix LaTeX", "fix_latex.txt"),
         ]:
             tab = QWidget()
             tab_layout = QVBoxLayout(tab)

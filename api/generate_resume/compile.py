@@ -144,19 +144,6 @@ def pdf_page_fill(pdf: Path) -> float:
         return float(n_pages)
 
 
-def test_latex_compiles(latex: str) -> tuple[bool, str]:
-    """Return (True, "") if `latex` (a complete document) compiles, else
-    (False, log_excerpt). Uses a throwaway temp dir."""
-    try:
-        compile_latex(latex)
-    except LatexCompileError as e:
-        excerpt = getattr(e, "log_excerpt", "") or str(e)
-        logger.warning("test_latex_compiles — failed: %s", str(e))
-        return False, excerpt
-    logger.info("test_latex_compiles — ok (%d chars)", len(latex))
-    return True, ""
-
-
 def _extract_error_excerpt(log_text: str, max_chars: int = 1500) -> str:
     lines = log_text.splitlines()
     err_idx = next((i for i, ln in enumerate(lines) if ln.startswith("!")), None)
