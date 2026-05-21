@@ -14,9 +14,32 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from api.ai_provider import strip_code_fence
+
 from .base import _icon_btn, _label, _primary_btn, _secondary_btn
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_grade_payload(buf: str) -> tuple[float | None, str]:
+    """Parse a grade_interview JSON payload from a streamed buffer.
+
+    Returns (score, feedback). Raises ValueError if the payload is missing
+    required keys or the score is non-numeric. Strips markdown fences first
+    since the fast-tier model sometimes wraps JSON despite the prompt.
+    """
+    cleaned = strip_code_fence(buf, lang_hints=("json",))
+    obj = json.loads(cleaned)
+    if not isinstance(obj, dict) or "score" not in obj or "feedback" not in obj:
+        raise ValueError("missing required keys")
+    try:
+        score = float(obj["score"])
+    except (TypeError, ValueError) as exc:
+        raise ValueError("score not numeric") from exc
+    feedback = obj.get("feedback") or ""
+    if not isinstance(feedback, str):
+        feedback = str(feedback)
+    return score, feedback
 
 
 class _GradeWorker(QObject):
@@ -421,17 +444,16 @@ class InterviewQuestionsPage(QWidget):
             grade_btn.setEnabled(True)
             buf = card.property("_fb_buffer") or ""
             try:
-                parsed = json.loads(buf)
-                score = parsed.get("score")
-                feedback = parsed.get("feedback", "") or ""
-                score_str = (
-                    f"{score:g}" if isinstance(score, (int, float)) else str(score)
-                )
-                fb_title.setText(f"AI FEEDBACK · SCORE {score_str}/10")
+                score, feedback = _parse_grade_payload(buf)
+                fb_title.setText(f"AI FEEDBACK · SCORE {score:g}/10")
                 fb_body.setText(feedback if feedback else "No feedback — answer looks strong.")
-            except (ValueError, TypeError):
-                fb_title.setText("AI FEEDBACK")
-                fb_body.setText(buf)
+            except (ValueError, TypeError) as exc:
+                logger.error(
+                    "_GradeWorker.on_finished — parse failed: %s; raw=%r",
+                    exc, buf[:500],
+                )
+                fb_title.setText("AI FEEDBACK · ERROR")
+                fb_body.setText("AI returned unexpected format — please try again.")
             thread.quit()
 
         def on_error(msg: str):
@@ -1358,20 +1380,21 @@ class InterviewChatPage(QWidget):
         def on_finished():
             buf = card["buffer"]
             try:
-                parsed = json.loads(buf)
-                score = parsed.get("score")
-                feedback = parsed.get("feedback", "") or ""
-                score_str = (
-                    f"{score:g}" if isinstance(score, (int, float)) else str(score)
-                )
-                card["title"].setText(f"SCORE {score_str}/10")
+                score, feedback = _parse_grade_payload(buf)
                 rendered = feedback if feedback else "Strong answer — nothing actionable."
+                score_str = f"{score:g}"
+                card["title"].setText(f"SCORE {score_str}/10")
                 card["body"].setText(rendered)
                 card["rubric_md"] = f"**Score:** {score_str}/10\n\n{rendered}"
-            except (ValueError, TypeError):
-                card["title"].setText("FEEDBACK")
-                card["body"].setText(buf)
-                card["rubric_md"] = buf
+            except (ValueError, TypeError) as exc:
+                logger.error(
+                    "_FeedbackWorker.on_finished — parse failed: %s; raw=%r",
+                    exc, buf[:500],
+                )
+                err = "AI returned unexpected format — please try again."
+                card["title"].setText("FEEDBACK · ERROR")
+                card["body"].setText(err)
+                card["rubric_md"] = err
             thread.quit()
 
         def on_error(msg: str):

@@ -1,6 +1,31 @@
 import json
+import re
 
 TOOL_EVENT_PREFIX = "\x1e"
+
+
+def strip_code_fence(raw: str, lang_hints: tuple[str, ...] = ()) -> str:
+    raw = raw.strip()
+    for hint in lang_hints:
+        closed = re.search(
+            r"```" + re.escape(hint) + r"[ \t]*\r?\n(.*?)```",
+            raw, re.DOTALL | re.IGNORECASE,
+        )
+        if closed:
+            return closed.group(1).strip()
+        unclosed = re.search(
+            r"```" + re.escape(hint) + r"[ \t]*\r?\n(.*)\Z",
+            raw, re.DOTALL | re.IGNORECASE,
+        )
+        if unclosed:
+            return unclosed.group(1).rstrip("`").strip()
+    closed = re.search(r"```[a-zA-Z0-9_+-]*[ \t]*\r?\n(.*?)```", raw, re.DOTALL)
+    if closed:
+        return closed.group(1).strip()
+    unclosed = re.search(r"```[a-zA-Z0-9_+-]*[ \t]*\r?\n(.*)\Z", raw, re.DOTALL)
+    if unclosed:
+        return unclosed.group(1).rstrip("`").strip()
+    return raw
 
 _PROFILE_KEYS = ("experience", "projects", "education", "awards", "skills", "hobbies")
 

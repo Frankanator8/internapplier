@@ -147,6 +147,8 @@ class OpenRouterProvider:
                         if content:
                             chunk_count += 1
                             accumulated_content.append(content)
+                            if not tools:
+                                yield content
                         for tc in delta.get("tool_calls") or []:
                             idx = tc.get("index", 0)
                             entry = tool_calls_acc.setdefault(
@@ -174,7 +176,7 @@ class OpenRouterProvider:
             round_content = "".join(accumulated_content)
 
             if finish_reason != "tool_calls" or not tool_calls_acc:
-                if round_content:
+                if round_content and tools:
                     yield round_content
                 return
 

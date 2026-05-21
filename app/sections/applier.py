@@ -6,9 +6,9 @@ from typing import Callable
 from PyQt6.QtCore import QObject, QThread, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QFont, QGuiApplication, QTextCursor
 from PyQt6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-    QMessageBox, QPlainTextEdit, QScrollArea, QSizePolicy, QSplitter,
-    QStackedWidget, QTextEdit, QVBoxLayout, QWidget,
+    QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+    QListWidgetItem, QMessageBox, QPlainTextEdit, QScrollArea, QSizePolicy,
+    QSplitter, QStackedWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineSettings
@@ -231,6 +231,12 @@ class ApplierPage(QWidget):
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 8, 0, 0)
         left_layout.setSpacing(10)
+
+        left_layout.addWidget(_label("Fill from Application"))
+        self._gen_app_picker = QComboBox()
+        self._gen_app_picker.currentIndexChanged.connect(self._on_fill_from_application)
+        left_layout.addWidget(self._gen_app_picker)
+        self._refresh_app_picker()
 
         form_row = QHBoxLayout()
         form_row.setSpacing(8)
@@ -913,8 +919,46 @@ class ApplierPage(QWidget):
         sb.setValue(sb.maximum())
 
     def _on_applier_section_changed(self, idx: int):
+        if idx == 0:
+            self._refresh_app_picker()
         if idx == 2:
             self._refresh_library()
+
+    def _refresh_app_picker(self):
+        if not hasattr(self, "_gen_app_picker"):
+            return
+        from api import data_store
+        picker = self._gen_app_picker
+        picker.blockSignals(True)
+        picker.clear()
+        picker.addItem("— Select an application —", None)
+        try:
+            entries = data_store.load().get("applications") or []
+        except Exception:
+            logger.exception("_refresh_app_picker — failed to load applications")
+            entries = []
+        for entry in entries:
+            company = (entry.get("company") or "").strip()
+            role = (entry.get("role") or "").strip()
+            if company and role:
+                label = f"{company} — {role}"
+            else:
+                label = company or role or "(untitled)"
+            picker.addItem(label, entry)
+        picker.setCurrentIndex(0)
+        picker.blockSignals(False)
+
+    def _on_fill_from_application(self, idx: int):
+        if idx <= 0:
+            return
+        entry = self._gen_app_picker.itemData(idx)
+        if not isinstance(entry, dict):
+            return
+        self._gen_name_input.setText(entry.get("company", "") or "")
+        self._gen_jd_input.setPlainText(entry.get("description", "") or "")
+        self._gen_app_picker.blockSignals(True)
+        self._gen_app_picker.setCurrentIndex(0)
+        self._gen_app_picker.blockSignals(False)
 
     def _refresh_library(self):
         if not hasattr(self, "_library_list"):

@@ -15,6 +15,7 @@ from api.ai_provider import (
     get_provider,
     get_resume_output_dir,
     get_resume_page_cap,
+    strip_code_fence,
 )
 
 from .compile import LatexCompileError, compile_latex, extract_document, pdf_page_fill
@@ -46,30 +47,6 @@ def _collect_stream(
         if stream_cb is not None:
             stream_cb(stage, chunk)
     return "".join(parts).strip()
-
-
-def _strip_code_fence(raw: str, lang_hints: tuple[str, ...] = ()) -> str:
-    raw = raw.strip()
-    for hint in lang_hints:
-        closed = re.search(
-            r"```" + re.escape(hint) + r"[ \t]*\r?\n(.*?)```",
-            raw, re.DOTALL | re.IGNORECASE,
-        )
-        if closed:
-            return closed.group(1).strip()
-        unclosed = re.search(
-            r"```" + re.escape(hint) + r"[ \t]*\r?\n(.*)\Z",
-            raw, re.DOTALL | re.IGNORECASE,
-        )
-        if unclosed:
-            return unclosed.group(1).rstrip("`").strip()
-    closed = re.search(r"```[a-zA-Z0-9_+-]*[ \t]*\r?\n(.*?)```", raw, re.DOTALL)
-    if closed:
-        return closed.group(1).strip()
-    unclosed = re.search(r"```[a-zA-Z0-9_+-]*[ \t]*\r?\n(.*)\Z", raw, re.DOTALL)
-    if unclosed:
-        return unclosed.group(1).rstrip("`").strip()
-    return raw
 
 
 def _norm(s: str) -> str:
@@ -228,7 +205,7 @@ class ResumeGenerator:
         today: str,
         stream_cb: Callable[[str, str], None] | None,
     ) -> str:
-        raw = _strip_code_fence(
+        raw = strip_code_fence(
             _collect_stream(
                 "generate",
                 self.provider.generate_resume_stream(
@@ -284,7 +261,7 @@ class ResumeGenerator:
         profile: dict,
         stream_cb: Callable[[str, str], None] | None,
     ) -> dict:
-        raw = _strip_code_fence(
+        raw = strip_code_fence(
             _collect_stream(
                 "grade",
                 self.provider.grade_resume_stream(

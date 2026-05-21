@@ -1,4 +1,4 @@
-from .formatting import TOOL_EVENT_PREFIX
+from .formatting import TOOL_EVENT_PREFIX, strip_code_fence
 from .prompts import (
     _seed_prompts,
     default_prompt,
@@ -31,6 +31,7 @@ from .settings import (
 
 __all__ = [
     "TOOL_EVENT_PREFIX",
+    "strip_code_fence",
     "OpenRouterProvider",
     "get_provider",
     "load_prompt",
