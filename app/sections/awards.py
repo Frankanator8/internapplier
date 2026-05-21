@@ -1,5 +1,8 @@
 from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout
-from .base import CardPage, BulletsWidget, ChipsWidget, make_field, make_line_edit
+from .base import (
+    CardPage, BulletsWidget, ChipsWidget, make_field, make_line_edit,
+    add_remove_footer, attach_fields,
+)
 
 
 class AwardsPage(CardPage):
@@ -45,30 +48,10 @@ class AwardsPage(CardPage):
         )
         vbox.addWidget(skills)
 
-        footer = QHBoxLayout()
-        footer.addStretch()
-        footer.addWidget(self._make_remove_btn(card))
-        vbox.addLayout(footer)
+        add_remove_footer(vbox, lambda: self._remove_card(card))
 
-        card.setProperty("_title", title)
-        card.setProperty("_issuer", issuer)
-        card.setProperty("_date", date)
-        card.setProperty("_bullets", bullets)
-        card.setProperty("_skills", skills)
-
+        attach_fields(card, {
+            "title": title, "issuer": issuer, "date": date,
+            "bullets": bullets, "skills": skills,
+        })
         self._cards_layout.addWidget(card)
-
-    def get_data(self) -> list[dict]:
-        result = []
-        for i in range(self._cards_layout.count()):
-            card = self._cards_layout.itemAt(i).widget()
-            if card is None:
-                continue
-            result.append({
-                "title": card.property("_title").text(),
-                "issuer": card.property("_issuer").text(),
-                "date": card.property("_date").text(),
-                "bullets": card.property("_bullets").get_bullets(),
-                "skills": card.property("_skills").get_items(),
-            })
-        return result

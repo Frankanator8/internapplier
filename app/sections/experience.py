@@ -4,8 +4,10 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 
 from .base import (
-    BulletsWidget, ChipsWidget, CardPage,
+    BulletsWidget, ChipsWidget,
     make_field, make_line_edit, _primary_btn, _label,
+    make_card_frame, add_remove_footer, attach_fields, read_fields,
+    iter_cards, clear_layout,
 )
 
 
@@ -67,14 +69,6 @@ class ExperiencePage(QWidget):
             container_layout.addLayout(cards_layout)
             self._group_layouts[key] = cards_layout
 
-    def _make_card(self) -> QFrame:
-        card = QFrame()
-        card.setObjectName("card")
-        return card
-
-    def _make_remove_btn(self, card: QFrame):
-        return CardPage._make_remove_btn(self, card)
-
     def _remove_card(self, card: QFrame):
         category = card.property("_category") or "relevant"
         layout = self._group_layouts.get(category) or self._group_layouts["relevant"]
@@ -87,7 +81,7 @@ class ExperiencePage(QWidget):
         if category not in self._group_layouts:
             category = "relevant"
 
-        card = self._make_card()
+        card = make_card_frame()
         vbox = QVBoxLayout(card)
         vbox.setContentsMargins(20, 18, 20, 16)
         vbox.setSpacing(12)
@@ -132,43 +126,29 @@ class ExperiencePage(QWidget):
         )
         vbox.addWidget(skills)
 
-        footer = QHBoxLayout()
-        footer.addStretch()
-        footer.addWidget(self._make_remove_btn(card))
-        vbox.addLayout(footer)
+        add_remove_footer(vbox, lambda: self._remove_card(card))
 
-        card.setProperty("_company", company)
-        card.setProperty("_title", title)
-        card.setProperty("_start", start)
-        card.setProperty("_end", end)
-        card.setProperty("_bullets", bullets)
-        card.setProperty("_skills", skills)
+        attach_fields(card, {
+            "company": company,
+            "title": title,
+            "start": start,
+            "end": end,
+            "bullets": bullets,
+            "skills": skills,
+        })
         card.setProperty("_category", category)
 
         self._group_layouts[category].addWidget(card)
 
     def clear(self):
         for layout in self._group_layouts.values():
-            while layout.count():
-                item = layout.takeAt(0)
-                w = item.widget()
-                if w is not None:
-                    w.deleteLater()
+            clear_layout(layout)
 
     def get_data(self) -> list[dict]:
         result = []
         for key, layout in self._group_layouts.items():
-            for i in range(layout.count()):
-                card = layout.itemAt(i).widget()
-                if card is None:
-                    continue
-                result.append({
-                    "company": card.property("_company").text(),
-                    "title": card.property("_title").text(),
-                    "start": card.property("_start").text(),
-                    "end": card.property("_end").text(),
-                    "bullets": card.property("_bullets").get_bullets(),
-                    "skills": card.property("_skills").get_items(),
-                    "category": key,
-                })
+            for card in iter_cards(layout):
+                entry = read_fields(card)
+                entry["category"] = key
+                result.append(entry)
         return result

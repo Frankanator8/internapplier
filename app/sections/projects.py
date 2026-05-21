@@ -1,5 +1,8 @@
 from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout
-from .base import CardPage, BulletsWidget, ChipsWidget, make_field, make_line_edit
+from .base import (
+    CardPage, BulletsWidget, ChipsWidget, make_field, make_line_edit,
+    add_remove_footer, attach_fields,
+)
 
 
 class ProjectsPage(CardPage):
@@ -38,10 +41,7 @@ class ProjectsPage(CardPage):
 
         bullets = BulletsWidget(
             data.get("bullets", []),
-            get_context=lambda: {
-                "type": "project",
-                "name": name.text(),
-            },
+            get_context=lambda: {"type": "project", "name": name.text()},
         )
         vbox.addWidget(bullets)
 
@@ -52,32 +52,10 @@ class ProjectsPage(CardPage):
         )
         vbox.addWidget(skills)
 
-        footer = QHBoxLayout()
-        footer.addStretch()
-        footer.addWidget(self._make_remove_btn(card))
-        vbox.addLayout(footer)
+        add_remove_footer(vbox, lambda: self._remove_card(card))
 
-        card.setProperty("_name", name)
-        card.setProperty("_url", url)
-        card.setProperty("_start", start)
-        card.setProperty("_end", end)
-        card.setProperty("_bullets", bullets)
-        card.setProperty("_skills", skills)
-
+        attach_fields(card, {
+            "name": name, "url": url, "start": start, "end": end,
+            "bullets": bullets, "skills": skills,
+        })
         self._cards_layout.addWidget(card)
-
-    def get_data(self) -> list[dict]:
-        result = []
-        for i in range(self._cards_layout.count()):
-            card = self._cards_layout.itemAt(i).widget()
-            if card is None:
-                continue
-            result.append({
-                "name": card.property("_name").text(),
-                "url": card.property("_url").text(),
-                "start": card.property("_start").text(),
-                "end": card.property("_end").text(),
-                "bullets": card.property("_bullets").get_bullets(),
-                "skills": card.property("_skills").get_items(),
-            })
-        return result

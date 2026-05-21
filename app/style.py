@@ -234,13 +234,6 @@ QLabel#analyze-bullet-text {
     font-size: 13px;
     color: #1d1d1d;
 }
-QLabel#analyze-result-title {
-    font-size: 11px;
-    font-weight: 600;
-    color: #555555;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
 QTextBrowser#analyze-browser {
     background: #fafafa;
     border: 1px solid #e0e0e0;

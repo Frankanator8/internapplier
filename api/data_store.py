@@ -24,6 +24,9 @@ _DEFAULT_TEMPLATE: list[dict] = [
     {"question": "Tell me about yourself", "answer": ""},
 ]
 
+_cache: dict | None = None
+_cache_mtime: float | None = None
+
 
 def _migrate_application_links(data: dict) -> bool:
     apps = data.get("applications")
@@ -43,23 +46,73 @@ def _migrate_application_links(data: dict) -> bool:
     return changed
 
 
+def _migrate_research_cache(data: dict) -> bool:
+    cache = data.get("research_cache")
+    if not isinstance(cache, dict):
+        cache = {}
+        data["research_cache"] = cache
+    if cache:
+        if "research" in data:
+            del data["research"]
+            return True
+        return False
+    old = data.get("research") or {}
+    changed = False
+    if isinstance(old, dict) and old.get("company_name") and old.get("result"):
+        cache[old["company_name"]] = {
+            "url": old.get("url", ""),
+            "result": old["result"],
+        }
+        changed = True
+    if "research" in data:
+        del data["research"]
+        changed = True
+    return changed
+
+
+def _empty_data() -> dict:
+    return {k: (list(v) if isinstance(v, list) else dict(v)) for k, v in _EMPTY.items()}
+
+
+def invalidate() -> None:
+    global _cache, _cache_mtime
+    _cache = None
+    _cache_mtime = None
+
+
 def load() -> dict:
+    global _cache, _cache_mtime
     _APP_DIR.mkdir(parents=True, exist_ok=True)
     if not _DATA_FILE.exists():
-        return {k: list(v) for k, v in _EMPTY.items()}
+        invalidate()
+        return _empty_data()
+    mtime = _DATA_FILE.stat().st_mtime
+    if _cache is not None and _cache_mtime == mtime:
+        return _cache
     with open(_DATA_FILE, "r", encoding="utf-8") as f:
         data = json.load(f)
+    changed = False
     if _migrate_application_links(data):
+        changed = True
+    if _migrate_research_cache(data):
+        changed = True
+    if changed:
         save(data)
-    return data
+        return _cache  # type: ignore[return-value]
+    _cache = data
+    _cache_mtime = mtime
+    return _cache
 
 
 def save(data: dict) -> None:
+    global _cache, _cache_mtime
     _APP_DIR.mkdir(parents=True, exist_ok=True)
     tmp = _DATA_FILE.with_suffix(".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
     os.replace(tmp, _DATA_FILE)
+    _cache = data
+    _cache_mtime = _DATA_FILE.stat().st_mtime
 
 
 def load_interview_template() -> list[dict]:

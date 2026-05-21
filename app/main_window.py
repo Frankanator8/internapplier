@@ -187,18 +187,7 @@ class MainWindow(QMainWindow):
         self._hobbies_page.load(data.get("hobbies", []))
         for entry in data.get("applications", []):
             self._applications_page.add_entry(entry)
-        research_cache = data.get("research_cache") or {}
-        if not research_cache:
-            # Migrate from old single-entry format
-            old = data.get("research") or {}
-            if old.get("company_name") and old.get("result"):
-                research_cache = {
-                    old["company_name"]: {
-                        "url": old.get("url", ""),
-                        "result": old["result"],
-                    }
-                }
-        self._applier_page.load_research_data(research_cache)
+        self._applier_page.load_research_data(data.get("research_cache") or {})
         self._interviews_page.load_questions(
             data.get("interview_questions") if "interview_questions" in data else None
         )

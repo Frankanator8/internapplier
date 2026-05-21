@@ -13,6 +13,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineSettings
 
+from api import data_store
+
 from .base import _label, _primary_btn, _secondary_btn
 
 logger = logging.getLogger(__name__)
@@ -927,7 +929,6 @@ class ApplierPage(QWidget):
     def _refresh_app_picker(self):
         if not hasattr(self, "_gen_app_picker"):
             return
-        from api import data_store
         picker = self._gen_app_picker
         picker.blockSignals(True)
         picker.clear()

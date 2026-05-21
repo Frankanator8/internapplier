@@ -1,5 +1,8 @@
 from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout
-from .base import CardPage, BulletsWidget, CoursesWidget, make_field, make_line_edit
+from .base import (
+    CardPage, BulletsWidget, CoursesWidget, make_field, make_line_edit,
+    add_remove_footer, attach_fields,
+)
 
 
 class EducationPage(CardPage):
@@ -54,34 +57,11 @@ class EducationPage(CardPage):
         )
         vbox.addWidget(courses)
 
-        footer = QHBoxLayout()
-        footer.addStretch()
-        footer.addWidget(self._make_remove_btn(card))
-        vbox.addLayout(footer)
+        add_remove_footer(vbox, lambda: self._remove_card(card))
 
-        card.setProperty("_school", school)
-        card.setProperty("_degree", degree)
-        card.setProperty("_start", start)
-        card.setProperty("_end", end)
-        card.setProperty("_gpa", gpa)
-        card.setProperty("_bullets", bullets)
-        card.setProperty("_courses", courses)
-
+        attach_fields(card, {
+            "school": school, "degree": degree,
+            "start": start, "end": end, "gpa": gpa,
+            "bullets": bullets, "courses": courses,
+        })
         self._cards_layout.addWidget(card)
-
-    def get_data(self) -> list[dict]:
-        result = []
-        for i in range(self._cards_layout.count()):
-            card = self._cards_layout.itemAt(i).widget()
-            if card is None:
-                continue
-            result.append({
-                "school": card.property("_school").text(),
-                "degree": card.property("_degree").text(),
-                "start": card.property("_start").text(),
-                "end": card.property("_end").text(),
-                "gpa": card.property("_gpa").text(),
-                "bullets": card.property("_bullets").get_bullets(),
-                "courses": card.property("_courses").get_courses(),
-            })
-        return result

@@ -534,6 +534,62 @@ class ChipsWidget(QWidget):
         return list(self._items)
 
 
+def make_card_frame() -> QFrame:
+    card = QFrame()
+    card.setObjectName("card")
+    return card
+
+
+def make_remove_btn(on_remove: Callable[[], None]) -> QPushButton:
+    btn = _danger_btn("Remove Entry")
+    btn.clicked.connect(on_remove)
+    return btn
+
+
+def add_remove_footer(vbox: QVBoxLayout, on_remove: Callable[[], None]) -> None:
+    footer = QHBoxLayout()
+    footer.addStretch()
+    footer.addWidget(make_remove_btn(on_remove))
+    vbox.addLayout(footer)
+
+
+def iter_cards(layout: QVBoxLayout):
+    for i in range(layout.count()):
+        w = layout.itemAt(i).widget()
+        if w is not None:
+            yield w
+
+
+def attach_fields(card: QFrame, fields: dict) -> None:
+    """Stash widget refs on the card under `_fields` for later read_fields()."""
+    card.setProperty("_fields", fields)
+
+
+def read_fields(card: QFrame) -> dict:
+    fields = card.property("_fields") or {}
+    out: dict = {}
+    for k, w in fields.items():
+        if isinstance(w, QLineEdit):
+            out[k] = w.text()
+        elif hasattr(w, "get_bullets"):
+            out[k] = w.get_bullets()
+        elif hasattr(w, "get_courses"):
+            out[k] = w.get_courses()
+        elif hasattr(w, "get_items"):
+            out[k] = w.get_items()
+        else:
+            out[k] = w
+    return out
+
+
+def clear_layout(layout: QVBoxLayout) -> None:
+    while layout.count():
+        item = layout.takeAt(0)
+        w = item.widget()
+        if w is not None:
+            w.deleteLater()
+
+
 class CardPage(QWidget):
     section_title: str = "Section"
     add_label: str = ""
@@ -546,7 +602,6 @@ class CardPage(QWidget):
         outer.setContentsMargins(28, 24, 28, 16)
         outer.setSpacing(14)
 
-        # Header row: title + add button
         header_row = QHBoxLayout()
         title = _label(self.section_title, "section-title")
         header_row.addWidget(title)
@@ -557,7 +612,6 @@ class CardPage(QWidget):
         header_row.addWidget(add_btn)
         outer.addLayout(header_row)
 
-        # Scroll area for cards
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -572,31 +626,23 @@ class CardPage(QWidget):
         scroll.setWidget(self._container)
 
     def _make_card(self) -> QFrame:
-        card = QFrame()
-        card.setObjectName("card")
-        return card
+        return make_card_frame()
 
     def _make_remove_btn(self, card: QFrame) -> QPushButton:
-        btn = _danger_btn("Remove Entry")
-        btn.clicked.connect(lambda: self._remove_card(card))
-        return btn
+        return make_remove_btn(lambda: self._remove_card(card))
 
     def _remove_card(self, card: QFrame):
         self._cards_layout.removeWidget(card)
         card.deleteLater()
 
     def clear(self):
-        while self._cards_layout.count():
-            item = self._cards_layout.takeAt(0)
-            w = item.widget()
-            if w is not None:
-                w.deleteLater()
+        clear_layout(self._cards_layout)
 
     def add_entry(self, data: dict | None = None):
         raise NotImplementedError
 
     def get_data(self) -> list[dict]:
-        raise NotImplementedError
+        return [read_fields(c) for c in iter_cards(self._cards_layout)]
 
 
 def make_field(label_text: str, line_edit: QLineEdit) -> QVBoxLayout:
