@@ -4,7 +4,17 @@ import logging
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from api.ai_provider.errors import parse_provider_error
 from api.research_cache import lookup as _research_from_cache
+
+
+def _friendly(exc: BaseException) -> str:
+    try:
+        from api.ai_provider import get_provider
+        api_key = getattr(get_provider(), "api_key", None)
+    except Exception:
+        api_key = None
+    return str(parse_provider_error(exc, api_key=api_key))
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +49,7 @@ class _ResearchWorker(QObject):
             )
         except Exception as exc:
             logger.exception("_ResearchWorker.run — failed")
-            self.error.emit(str(exc))
+            self.error.emit(_friendly(exc))
 
 
 class _GenerateResumeWorker(QObject):
@@ -105,7 +115,7 @@ class _GenerateResumeWorker(QObject):
             })
         except Exception as exc:
             logger.exception("_GenerateResumeWorker.run — failed")
-            self.error.emit(str(exc))
+            self.error.emit(_friendly(exc))
 
 
 class _QuestionWorker(QObject):
@@ -141,4 +151,4 @@ class _QuestionWorker(QObject):
             self.finished.emit()
         except Exception as exc:
             logger.exception("_QuestionWorker.run — failed")
-            self.error.emit(str(exc))
+            self.error.emit(_friendly(exc))

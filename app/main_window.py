@@ -15,6 +15,7 @@ from .sections.awards import AwardsPage
 from .sections.skills import SkillsPage
 from .sections.hobbies import HobbiesPage
 from .sections.applications import ApplicationsPage
+from .sections.applications.heatmap import ApplicationsHeatmap
 from .sections.applier import ApplierPage
 from .sections.interviews import InterviewsPage
 from .sections.settings import SettingsPage
@@ -33,7 +34,7 @@ _SIDEBAR_ITEMS = [
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("InternApplier — Resume Builder")
+        self.setWindowTitle("I*ternship - Job Application Assistant")
 
         # ── Toolbar ──────────────────────────────────────────────
         toolbar = QToolBar("Main Toolbar")
@@ -41,7 +42,7 @@ class MainWindow(QMainWindow):
         toolbar.setFloatable(False)
         self.addToolBar(toolbar)
 
-        app_label = QLabel("  InternApplier")
+        app_label = QLabel("  I*ternship")
         app_label.setStyleSheet(
             "font-size: 15px; font-weight: bold; color: #0a66c2; padding: 0 8px;"
         )
@@ -50,6 +51,9 @@ class MainWindow(QMainWindow):
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(spacer)
+
+        self._heatmap = ApplicationsHeatmap()
+        toolbar.addWidget(self._heatmap)
 
         import_action = QAction("📥  Import from LinkedIn", self)
         import_action.setShortcut("Ctrl+I")
@@ -192,6 +196,13 @@ class MainWindow(QMainWindow):
             data.get("interview_questions") if "interview_questions" in data else None
         )
         self._interviews_page.load_template(data_store.load_interview_template())
+        self._refresh_heatmap()
+
+    def _refresh_heatmap(self):
+        try:
+            self._heatmap.set_applications(self._applications_page.get_data())
+        except Exception:
+            pass
 
     def _show_import_instructions(self) -> bool:
         """Show a how-to dialog. Returns True if user wants to proceed to file picker."""
@@ -350,6 +361,7 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage(
             f"✓  Refreshed applications ({len(on_disk)} entries).", 3000
         )
+        self._refresh_heatmap()
 
     def _merged_applications(self) -> list[dict]:
         return self._applications_page.get_data()
@@ -371,6 +383,7 @@ class MainWindow(QMainWindow):
         data_store.save(data)
         data_store.save_interview_template(self._interviews_page.get_template_data())
         self.status_bar.showMessage("✓  Saved successfully.", 3000)
+        self._refresh_heatmap()
 
     def closeEvent(self, event):
         try:
@@ -378,4 +391,19 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         self._save()
+        self._shutdown_all_threads()
         event.accept()
+
+    def _shutdown_all_threads(self):
+        from .sections._thread_cleanup import shutdown_threads
+        from .sections.base import BulletsWidget
+        for page in (self._applier_page, self._interviews_page, self._applications_page):
+            try:
+                page.cleanup_threads()
+            except Exception:
+                pass
+        for bw in self.findChildren(BulletsWidget):
+            try:
+                shutdown_threads(bw._threads)
+            except Exception:
+                pass

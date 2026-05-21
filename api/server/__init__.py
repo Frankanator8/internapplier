@@ -8,7 +8,7 @@ from .health import router as health_router
 from .profile import router as profile_router
 
 
-app = FastAPI(title="InternApplier Localhost API", version="0.1.0")
+app = FastAPI(title="I*ternship Localhost API", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,

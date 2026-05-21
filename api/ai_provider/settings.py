@@ -9,7 +9,7 @@ DEFAULT_FAST_MODEL = "google/gemini-2.0-flash-exp:free"
 DEFAULT_POWERFUL_MODEL = "openai/gpt-4o-mini"
 DEFAULT_RESUME_PAGE_CAP = 1
 DEFAULT_RESUME_OUTPUT_DIR = pathlib.Path.home() / "Documents" / "Resumes"
-DEFAULT_MAX_GENERATION_ATTEMPTS = 2
+DEFAULT_MAX_GENERATION_ATTEMPTS = 3
 DEFAULT_AUTO_RESYNC_PROMPTS = False
 
 _settings_cache: dict | None = None

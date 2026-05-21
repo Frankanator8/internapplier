@@ -34,11 +34,78 @@ class LatexCompileError(RuntimeError):
         self.log_excerpt = log_excerpt
 
 
+_SMART_CHAR_MAP = {
+    "‘": "'", "’": "'", "‚": "'", "‛": "'",
+    "“": "``", "”": "''", "„": ",,",
+    "–": "--", "—": "---",
+    "…": "...",
+    " ": " ",
+}
+
+
+def _scrub_smart_chars(latex: str) -> str:
+    """Replace Unicode quotes/dashes pdflatex (default fontenc) chokes on."""
+    out = latex
+    replaced = 0
+    for src, dst in _SMART_CHAR_MAP.items():
+        if src in out:
+            replaced += out.count(src)
+            out = out.replace(src, dst)
+    if replaced:
+        logger.info("compile_latex — scrubbed %d smart char(s) before compile", replaced)
+    return out
+
+
+def _preflight_latex(latex: str) -> None:
+    """Cheap sanity checks before invoking pdflatex.
+
+    Raises LatexCompileError with a precise message when a problem is
+    structurally obvious, so feedback to the next attempt is short and
+    targeted instead of a 1500-char compiler log.
+    """
+    if "\\begin{document}" not in latex:
+        raise LatexCompileError(
+            "Missing \\begin{document} — generated source is incomplete."
+        )
+    if "\\end{document}" not in latex:
+        raise LatexCompileError(
+            "Missing \\end{document} — generated source was truncated."
+        )
+    depth = 0
+    i = 0
+    n = len(latex)
+    while i < n:
+        ch = latex[i]
+        if ch == "%":
+            nl = latex.find("\n", i)
+            i = n if nl < 0 else nl + 1
+            continue
+        if ch == "\\" and i + 1 < n and latex[i + 1] in "{}%&_#$":
+            i += 2
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth < 0:
+                raise LatexCompileError(
+                    f"Unbalanced braces in LaTeX (extra '}}' near char {i})."
+                )
+        i += 1
+    if depth != 0:
+        raise LatexCompileError(
+            f"Unbalanced braces in LaTeX ({depth} '{{' left unclosed)."
+        )
+
+
 def compile_latex(latex: str, workdir: Path | None = None) -> Path:
     if shutil.which("pdflatex") is None:
         raise LatexCompileError(
             "pdflatex not found on PATH; install a TeX distribution (e.g. MacTeX, TeX Live)."
         )
+
+    latex = _scrub_smart_chars(latex)
+    _preflight_latex(latex)
 
     if workdir is None:
         workdir = Path(tempfile.mkdtemp(prefix="resume_"))

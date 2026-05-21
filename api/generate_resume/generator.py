@@ -53,6 +53,39 @@ def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "").strip()).casefold()
 
 
+def _extract_json_object(text: str) -> str | None:
+    """Return the first balanced ``{...}`` substring, or ``None`` if absent.
+
+    Tolerates prose before/after the JSON. Respects string literals and
+    backslash escapes so braces inside strings don't throw off the depth.
+    """
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    return None
+
+
 class ResumeGenerator:
     def __init__(
         self,
@@ -110,6 +143,38 @@ class ResumeGenerator:
             latex, pdf_path, compile_error = self._compile_with_fix(
                 latex, attempt, progress_cb, stream_cb
             )
+            if compile_error is not None:
+                inner_feedback = (
+                    "PREVIOUS DRAFT FAILED TO COMPILE. Fix the LaTeX syntax error "
+                    "below and return the corrected full document. Do not change "
+                    "content; only fix what the compiler is complaining about.\n\n"
+                    f"Compiler output:\n{compile_error}"
+                )
+                if progress_cb:
+                    progress_cb(f"Attempt {attempt}: regenerating to fix compile error…")
+                try:
+                    retry_latex = self._generate_resume_text(
+                        profile_for_attempt, inner_feedback, latex, today, stream_cb
+                    )
+                    retry_pdf, retry_compile_error = self._try_compile(retry_latex)
+                except Exception:
+                    logger.exception(
+                        "generate_latex — within-attempt compile retry raised on attempt %d",
+                        attempt,
+                    )
+                    retry_pdf, retry_compile_error = None, None
+                    retry_latex = None
+                if retry_latex is not None and retry_compile_error is None:
+                    logger.info(
+                        "generate_latex — within-attempt compile retry succeeded on attempt %d",
+                        attempt,
+                    )
+                    latex, pdf_path, compile_error = retry_latex, retry_pdf, None
+                elif retry_latex is not None:
+                    logger.info(
+                        "generate_latex — within-attempt compile retry still failed on attempt %d",
+                        attempt,
+                    )
             fill = pdf_page_fill(pdf_path) if pdf_path is not None else None
 
             page_ok = fill is not None and fill <= page_cap + 1e-6
@@ -118,13 +183,25 @@ class ResumeGenerator:
             grade: dict | None = None
             if progress_cb:
                 progress_cb(f"Attempt {attempt}: grading…")
-            try:
-                grade = self._grade_resume_text(
-                    latex, over_by, today, profile_for_attempt, stream_cb
-                )
-            except Exception:
-                logger.exception("generate_latex — grade_resume failed on attempt %d", attempt)
-                grade = None
+            for grade_try in (1, 2):
+                try:
+                    grade = self._grade_resume_text(
+                        latex, over_by, today, profile_for_attempt, stream_cb
+                    )
+                    break
+                except ValueError:
+                    logger.warning(
+                        "generate_latex — grade parse failed on attempt %d (try %d/2)",
+                        attempt, grade_try,
+                    )
+                    if grade_try == 2:
+                        grade = None
+                except Exception:
+                    logger.exception(
+                        "generate_latex — grade_resume failed on attempt %d", attempt
+                    )
+                    grade = None
+                    break
             if progress_cb and grade is not None:
                 progress_cb(
                     f"Attempt {attempt}: graded {grade['score']:.2f}/10"
@@ -232,6 +309,13 @@ class ResumeGenerator:
             )
         return extracted
 
+    @staticmethod
+    def _try_compile(latex: str) -> tuple[pathlib.Path | None, str | None]:
+        try:
+            return compile_latex(latex), None
+        except LatexCompileError as e:
+            return None, f"{e}\n{e.log_excerpt}".strip()
+
     def _compile_with_fix(
         self,
         latex: str,
@@ -239,10 +323,9 @@ class ResumeGenerator:
         progress_cb: Callable[[str], None] | None,
         stream_cb: Callable[[str, str], None] | None,
     ) -> tuple[str, pathlib.Path | None, str | None]:
-        try:
-            return latex, compile_latex(latex), None
-        except LatexCompileError as e:
-            compile_error = f"{e}\n{e.log_excerpt}".strip()
+        pdf_path, compile_error = self._try_compile(latex)
+        if compile_error is None:
+            return latex, pdf_path, None
         _emit(
             stream_cb,
             "compile-error",
@@ -277,8 +360,23 @@ class ResumeGenerator:
         try:
             obj = json.loads(raw)
         except json.JSONDecodeError:
-            logger.error("_grade_resume_text — JSON parse failed, raw=%r", raw[:500])
-            raise ValueError("AI returned unexpected format — please try again.")
+            extracted = _extract_json_object(raw)
+            if extracted is None:
+                logger.error("_grade_resume_text — JSON parse failed, raw=%r", raw[:500])
+                raise ValueError("AI returned unexpected format — please try again.")
+            try:
+                obj = json.loads(extracted)
+            except json.JSONDecodeError:
+                logger.error(
+                    "_grade_resume_text — balanced extract still unparseable, raw=%r",
+                    raw[:500],
+                )
+                raise ValueError("AI returned unexpected format — please try again.")
+            logger.info(
+                "_grade_resume_text — recovered JSON via balanced extract "
+                "(%d chars of surrounding prose discarded)",
+                len(raw) - len(extracted),
+            )
         required = ("score", "feedback")
         if not isinstance(obj, dict) or not all(k in obj for k in required):
             logger.error(

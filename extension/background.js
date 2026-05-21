@@ -1,5 +1,6 @@
 const API_BASE = "http://127.0.0.1:8765";
 const CACHE_KEY = "autofill_fields";
+const PROFILE_CACHE_KEY = "profile_cache";
 const STATUSES_CACHE_KEY = "statuses_cache";
 const PICKED_KEY = "picked";
 
@@ -33,6 +34,41 @@ async function getFields({ forceRefresh = false } = {}) {
     if (stored[CACHE_KEY]) return stored[CACHE_KEY];
   }
   return fetchFields();
+}
+
+async function fetchProfile() {
+  const res = await fetch(`${API_BASE}/profile`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`API ${res.status}`);
+  const data = await res.json();
+  await browser.storage.local.set({ [PROFILE_CACHE_KEY]: data });
+  return data;
+}
+
+async function getProfile({ forceRefresh = false } = {}) {
+  if (!forceRefresh) {
+    const stored = await browser.storage.local.get(PROFILE_CACHE_KEY);
+    if (stored[PROFILE_CACHE_KEY]) return stored[PROFILE_CACHE_KEY];
+  }
+  return fetchProfile();
+}
+
+async function answerQuestion(question, applicationIndex) {
+  try {
+    const res = await fetch(`${API_BASE}/answer/question`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        question: question || "",
+        application_index: (applicationIndex == null ? null : applicationIndex),
+      }),
+    });
+    let body = null;
+    try { body = await res.json(); } catch (_) {}
+    if (!res.ok) return { ok: false, status: res.status, error: (body && body.detail) || `HTTP ${res.status}` };
+    return { ok: true, answer: (body && body.answer) || "" };
+  } catch (e) {
+    return { ok: false, status: 0, error: String(e && e.message || e) };
+  }
 }
 
 async function checkHealth() {
@@ -119,6 +155,12 @@ browser.runtime.onMessage.addListener((msg, _sender) => {
   if (msg && msg.type === "GET_FIELDS") {
     return getFields({ forceRefresh: !!msg.forceRefresh });
   }
+  if (msg && msg.type === "GET_PROFILE") {
+    return getProfile({ forceRefresh: !!msg.forceRefresh });
+  }
+  if (msg && msg.type === "ANSWER_QUESTION") {
+    return answerQuestion(msg.question, msg.application_index);
+  }
   if (msg && msg.type === "HEALTH") {
     return checkHealth();
   }
@@ -190,3 +232,4 @@ if (browser.browserAction && browser.browserAction.onClicked) {
 // Warm the caches when the extension starts.
 fetchFields().catch(() => {});
 fetchStatuses().catch(() => {});
+fetchProfile().catch(() => {});

@@ -828,6 +828,11 @@ class InterviewChatPage(QWidget):
 
         QTimer.singleShot(0, self._kick_off_opening_turn)
 
+    def cleanup_threads(self) -> None:
+        from .._thread_cleanup import shutdown_threads
+        shutdown_threads(self._threads)
+        self._workers.clear()
+
     def flush_active_chat(self) -> None:
         if not any(t.get("role") == "user" for t in self._history):
             return

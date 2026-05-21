@@ -8,4 +8,4 @@ STATUS_OPTIONS = [
     "Rejected",
 ]
 
-DEFAULT_STATUS = "Applied"
+DEFAULT_STATUS = "Added"

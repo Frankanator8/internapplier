@@ -4,7 +4,12 @@ const nameEl = document.getElementById("name");
 const loadTarget = document.getElementById("load-target");
 const loadBtn = document.getElementById("load-btn");
 const createBtn = document.getElementById("create-btn");
+const askBtn = document.getElementById("ask-btn");
 const resultEl = document.getElementById("result");
+const profileSection = document.getElementById("profile-section");
+const profileTree = document.getElementById("profile-tree");
+const answersSection = document.getElementById("answers-section");
+const answersList = document.getElementById("answers-list");
 
 const mainView = document.getElementById("main-view");
 const formView = document.getElementById("form-view");
@@ -32,7 +37,7 @@ const FIELD_TO_INPUT = {
   description: fDescription,
 };
 
-let defaultStatus = "Applied";
+let defaultStatus = "Added";
 
 function todayISO() {
   const d = new Date();
@@ -118,6 +123,7 @@ async function populateLoadDropdown() {
     opt.textContent = "(no applications)";
     loadTarget.appendChild(opt);
     loadBtn.disabled = true;
+    askBtn.disabled = true;
     return;
   }
 
@@ -134,6 +140,7 @@ async function populateLoadDropdown() {
   if (best < 0) best = pickBestMatch(apps, meta);
   if (best >= 0) loadTarget.value = String(best);
   loadBtn.disabled = false;
+  askBtn.disabled = selectedApplicationIndex() == null;
 }
 
 async function refreshStatus() {
@@ -158,15 +165,22 @@ async function refreshStatus() {
       nameEl.textContent = "";
     }
     await populateLoadDropdown();
+    renderProfilePanel().catch(() => {});
   } else {
     dot.classList.add("err");
     statusText.textContent = "Server unreachable";
     loadBtn.disabled = true;
     createBtn.disabled = true;
+    askBtn.disabled = true;
     loadTarget.innerHTML = "";
     nameEl.textContent = "";
+    profileSection.classList.add("hidden");
   }
 }
+
+loadTarget.addEventListener("change", () => {
+  askBtn.disabled = selectedApplicationIndex() == null;
+});
 
 loadBtn.addEventListener("click", async () => {
   const idxStr = loadTarget.value;
@@ -341,8 +355,254 @@ saveBtn.addEventListener("click", async () => {
   el.addEventListener("change", saveDraft);
 });
 
+function makeChip(value, label) {
+  const text = String(value == null ? "" : value);
+  if (!text.trim()) return null;
+  const chip = document.createElement("span");
+  chip.className = "chip";
+  chip.setAttribute("draggable", "true");
+  const preview = text.length > 60 ? text.slice(0, 57) + "…" : text;
+  if (label) {
+    const lbl = document.createElement("span");
+    lbl.className = "chip-label";
+    lbl.textContent = label + ":";
+    chip.appendChild(lbl);
+  }
+  chip.appendChild(document.createTextNode(preview));
+  chip.title = text;
+  chip.addEventListener("dragstart", (e) => {
+    e.dataTransfer.setData("text/plain", text);
+    e.dataTransfer.effectAllowed = "copy";
+  });
+  return chip;
+}
+
+function appendChipRow(container, fieldName, value) {
+  if (value == null || String(value).trim() === "") return;
+  const chip = makeChip(value);
+  if (!chip) return;
+  const row = document.createElement("div");
+  row.className = "chip-row";
+  const name = document.createElement("span");
+  name.className = "field-name";
+  name.textContent = fieldName;
+  row.appendChild(name);
+  row.appendChild(chip);
+  container.appendChild(row);
+}
+
+function makeTreeNode(title, openByDefault) {
+  const d = document.createElement("details");
+  d.className = "tree";
+  if (openByDefault) d.open = true;
+  const s = document.createElement("summary");
+  s.textContent = title;
+  d.appendChild(s);
+  const body = document.createElement("div");
+  body.className = "tree-body";
+  d.appendChild(body);
+  return { details: d, body };
+}
+
+function renderDict(container, obj) {
+  if (!obj || typeof obj !== "object") return;
+  for (const [k, v] of Object.entries(obj)) {
+    if (v == null) continue;
+    if (typeof v === "object") {
+      if (Array.isArray(v)) {
+        if (!v.length) continue;
+        const node = makeTreeNode(k, false);
+        for (let i = 0; i < v.length; i++) {
+          const item = v[i];
+          if (item && typeof item === "object" && !Array.isArray(item)) {
+            const inner = makeTreeNode(`#${i + 1}`, false);
+            renderDict(inner.body, item);
+            node.body.appendChild(inner.details);
+          } else if (Array.isArray(item)) {
+            const inner = makeTreeNode(`#${i + 1}`, false);
+            for (let j = 0; j < item.length; j++) appendChipRow(inner.body, String(j + 1), item[j]);
+            node.body.appendChild(inner.details);
+          } else {
+            appendChipRow(node.body, String(i + 1), item);
+          }
+        }
+        container.appendChild(node.details);
+      } else {
+        const node = makeTreeNode(k, false);
+        renderDict(node.body, v);
+        container.appendChild(node.details);
+      }
+    } else {
+      appendChipRow(container, k, v);
+    }
+  }
+}
+
+async function renderProfilePanel() {
+  profileTree.innerHTML = "";
+  let profile = null;
+  try {
+    profile = await browser.runtime.sendMessage({ type: "GET_PROFILE" });
+  } catch (_) {}
+  if (!profile || typeof profile !== "object") {
+    profileSection.classList.add("hidden");
+    return;
+  }
+  const order = ["general_info", "experience", "projects", "skills", "applications"];
+  const seen = new Set();
+  for (const key of order) {
+    if (!(key in profile)) continue;
+    seen.add(key);
+    const v = profile[key];
+    if (v == null) continue;
+    if (typeof v === "object") {
+      const node = makeTreeNode(key, key === "general_info");
+      if (Array.isArray(v)) {
+        if (!v.length) continue;
+        for (let i = 0; i < v.length; i++) {
+          const item = v[i];
+          const title = (item && (item.company || item.role || item.name || item.title)) || `#${i + 1}`;
+          if (item && typeof item === "object" && !Array.isArray(item)) {
+            const inner = makeTreeNode(String(title), false);
+            renderDict(inner.body, item);
+            node.body.appendChild(inner.details);
+          } else {
+            appendChipRow(node.body, String(i + 1), item);
+          }
+        }
+      } else {
+        renderDict(node.body, v);
+      }
+      profileTree.appendChild(node.details);
+    } else {
+      appendChipRow(profileTree, key, v);
+    }
+  }
+  for (const [k, v] of Object.entries(profile)) {
+    if (seen.has(k)) continue;
+    if (v == null) continue;
+    if (typeof v === "object") {
+      const node = makeTreeNode(k, false);
+      renderDict(node.body, v);
+      profileTree.appendChild(node.details);
+    } else {
+      appendChipRow(profileTree, k, v);
+    }
+  }
+  profileSection.classList.remove("hidden");
+}
+
+function selectedApplicationIndex() {
+  const v = loadTarget.value;
+  if (v === "" || v == null) return null;
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+let _answerCounter = 0;
+
+function renderAnswerCard(question) {
+  answersSection.classList.remove("hidden");
+  const id = `answer-${++_answerCounter}`;
+  const card = document.createElement("div");
+  card.className = "answer-card";
+  card.id = id;
+  const q = document.createElement("div");
+  q.className = "question";
+  q.textContent = question.length > 200 ? question.slice(0, 197) + "…" : question;
+  q.title = question;
+  card.appendChild(q);
+  const body = document.createElement("div");
+  body.className = "spinner";
+  body.textContent = "Thinking…";
+  card.appendChild(body);
+  answersList.insertBefore(card, answersList.firstChild);
+  return { card, body };
+}
+
+function finalizeAnswerCard(card, body, answer) {
+  body.className = "answer-text";
+  body.textContent = answer;
+  body.setAttribute("draggable", "true");
+  body.addEventListener("dragstart", (e) => {
+    e.dataTransfer.setData("text/plain", answer);
+    e.dataTransfer.effectAllowed = "copy";
+  });
+  const actions = document.createElement("div");
+  actions.className = "answer-actions";
+  const copyBtn = document.createElement("button");
+  copyBtn.className = "secondary";
+  copyBtn.textContent = "Copy";
+  copyBtn.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(answer);
+      copyBtn.textContent = "Copied!";
+      setTimeout(() => { copyBtn.textContent = "Copy"; }, 1200);
+    } catch (_) {}
+  });
+  const dismissBtn = document.createElement("button");
+  dismissBtn.className = "secondary";
+  dismissBtn.textContent = "×";
+  dismissBtn.title = "Dismiss";
+  dismissBtn.style.flex = "0";
+  dismissBtn.addEventListener("click", () => {
+    card.remove();
+    if (!answersList.children.length) answersSection.classList.add("hidden");
+  });
+  actions.appendChild(copyBtn);
+  actions.appendChild(dismissBtn);
+  card.appendChild(actions);
+}
+
+function failAnswerCard(card, body, error) {
+  body.className = "answer-text";
+  body.style.color = "#b91c1c";
+  body.textContent = `Failed: ${error || "unknown error"}`;
+}
+
+async function askQuestion(question) {
+  const trimmed = (question || "").replace(/\s+/g, " ").trim();
+  if (!trimmed) {
+    resultEl.textContent = "No question text picked.";
+    return;
+  }
+  const { card, body } = renderAnswerCard(trimmed);
+  const appIdx = selectedApplicationIndex();
+  try {
+    const reply = await browser.runtime.sendMessage({
+      type: "ANSWER_QUESTION",
+      question: trimmed,
+      application_index: appIdx,
+    });
+    if (reply && reply.ok && reply.answer) {
+      finalizeAnswerCard(card, body, reply.answer);
+      resultEl.textContent = "Answer ready — copied to clipboard.";
+      try { await navigator.clipboard.writeText(reply.answer); } catch (_) {}
+    } else {
+      failAnswerCard(card, body, (reply && reply.error) || "no answer");
+      resultEl.textContent = "AI answer failed.";
+    }
+  } catch (e) {
+    failAnswerCard(card, body, e.message);
+  }
+}
+
+askBtn.addEventListener("click", async () => {
+  resultEl.textContent = "Click a question on the page (Esc to cancel)…";
+  try {
+    await browser.runtime.sendMessage({ type: "START_PICKER", field: "question" });
+  } catch (e) {
+    resultEl.textContent = `Error: ${e.message}`;
+  }
+});
+
 browser.runtime.onMessage.addListener((msg) => {
   if (msg && msg.type === "PICKED" && msg.picked) {
+    if (msg.picked.field === "question") {
+      browser.storage.local.remove(PICKED_KEY).catch(() => {});
+      askQuestion(msg.picked.value);
+      return;
+    }
     applyPicked(msg.picked);
     browser.storage.local.remove(PICKED_KEY).catch(() => {});
   }

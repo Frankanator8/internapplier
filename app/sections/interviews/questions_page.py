@@ -85,6 +85,11 @@ class InterviewQuestionsPage(QWidget):
         bottom_row.addStretch()
         outer.addLayout(bottom_row)
 
+    def cleanup_threads(self) -> None:
+        from .._thread_cleanup import shutdown_threads
+        shutdown_threads(self._threads)
+        self._workers.clear()
+
     def _add_blank(self):
         self.add_entry({"question": "", "answer": ""})
 

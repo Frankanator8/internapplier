@@ -58,3 +58,6 @@ class ApplicationsPage(QWidget):
 
     def clear(self):
         self._tracker_page.clear()
+
+    def cleanup_threads(self) -> None:
+        self._tracker_page.cleanup_threads()

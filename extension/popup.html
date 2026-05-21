@@ -70,6 +70,111 @@
       .pick-btn:hover { background: #eff6ff; }
       .form-actions { display: flex; gap: 8px; }
       .form-actions button { flex: 1; }
+      .section {
+        margin-top: 14px;
+        padding-top: 10px;
+        border-top: 1px solid #e5e7eb;
+      }
+      .section-title {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: #6b7280;
+        margin-bottom: 8px;
+      }
+      details.tree {
+        font-size: 12px;
+        margin: 2px 0;
+        padding-left: 4px;
+      }
+      details.tree > summary {
+        cursor: pointer;
+        padding: 2px 0;
+        color: #374151;
+        user-select: none;
+      }
+      details.tree > summary:hover { color: #2563eb; }
+      .tree-body {
+        padding: 4px 0 4px 12px;
+        border-left: 1px solid #e5e7eb;
+        margin-left: 4px;
+      }
+      .chip {
+        display: inline-block;
+        max-width: 100%;
+        padding: 3px 8px;
+        margin: 2px 4px 2px 0;
+        background: #eff6ff;
+        color: #1e3a8a;
+        border: 1px solid #bfdbfe;
+        border-radius: 10px;
+        font-size: 11px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        cursor: grab;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        vertical-align: middle;
+      }
+      .chip:active { cursor: grabbing; }
+      .chip-label {
+        display: inline-block;
+        font-family: -apple-system, sans-serif;
+        color: #6b7280;
+        margin-right: 4px;
+      }
+      .chip-row {
+        display: flex;
+        align-items: baseline;
+        margin: 2px 0;
+        gap: 4px;
+      }
+      .chip-row .field-name {
+        font-size: 10px;
+        color: #6b7280;
+        min-width: 70px;
+        flex-shrink: 0;
+      }
+      .answer-card {
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        padding: 8px;
+        margin-bottom: 8px;
+        background: #f9fafb;
+        font-size: 12px;
+      }
+      .answer-card .question {
+        font-weight: 600;
+        color: #374151;
+        margin-bottom: 4px;
+        font-size: 11px;
+      }
+      .answer-card .answer-text {
+        color: #1f2937;
+        white-space: pre-wrap;
+        cursor: grab;
+        padding: 4px;
+        background: #ffffff;
+        border: 1px dashed #d1d5db;
+        border-radius: 4px;
+        max-height: 200px;
+        overflow-y: auto;
+      }
+      .answer-card .answer-text:active { cursor: grabbing; }
+      .answer-card .answer-actions {
+        display: flex;
+        gap: 6px;
+        margin-top: 6px;
+      }
+      .answer-card .answer-actions button {
+        width: auto;
+        padding: 3px 8px;
+        font-size: 11px;
+      }
+      .answer-card .spinner {
+        color: #6b7280;
+        font-style: italic;
+      }
     </style>
   </head>
   <body>
@@ -85,10 +190,21 @@
           <label class="field" for="load-target">Application</label>
           <select id="load-target"></select>
         </div>
-        <button id="load-btn" disabled>Load Application</button>
+        <button id="load-btn" disabled>Autofill Application</button>
         <button id="create-btn" class="secondary" disabled>Make New Application</button>
+        <button id="ask-btn" class="secondary" disabled>Ask AI about a question on page</button>
       </div>
       <div id="result" class="result"></div>
+
+      <div id="answers-section" class="section hidden">
+        <div class="section-title">AI Answers</div>
+        <div id="answers-list"></div>
+      </div>
+
+      <div id="profile-section" class="section hidden">
+        <div class="section-title">Profile — drag fields into the page</div>
+        <div id="profile-tree"></div>
+      </div>
     </div>
 
     <div id="form-view" class="hidden">

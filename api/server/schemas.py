@@ -32,3 +32,8 @@ class ApplicationEntry(BaseModel):
 
 class AttachLinkBody(BaseModel):
     url: str
+
+
+class AnswerQuestionBody(BaseModel):
+    question: str
+    application_index: int | None = None

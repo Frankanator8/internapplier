@@ -164,6 +164,11 @@ class ApplierPage(
         if self._save_fn:
             self._save_fn()
 
+    def cleanup_threads(self) -> None:
+        from .._thread_cleanup import shutdown_threads
+        shutdown_threads(self._threads)
+        self._workers.clear()
+
     def _on_applier_section_changed(self, idx: int):
         if idx == 0:
             self._refresh_app_picker()

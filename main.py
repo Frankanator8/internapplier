@@ -61,7 +61,7 @@ def main():
         ai_provider.resync_all_prompts()
     _start_api_server()
     app = QApplication(sys.argv)
-    app.setApplicationName("InternApplier")
+    app.setApplicationName("I*ternship")
     app.setStyleSheet(GLOBAL_STYLESHEET)
     window = MainWindow()
     window.show()

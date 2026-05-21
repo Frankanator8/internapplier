@@ -112,3 +112,9 @@ class InterviewsPage(QWidget):
     def flush_active_chat(self) -> None:
         if self._chat_page is not None:
             self._chat_page.flush_active_chat()
+
+    def cleanup_threads(self) -> None:
+        if self._chat_page is not None:
+            self._chat_page.cleanup_threads()
+        if self._questions_page is not None:
+            self._questions_page.cleanup_threads()

@@ -84,6 +84,10 @@ class TrackerPage(QWidget):
 
         outer.addWidget(self._table)
 
+    def cleanup_threads(self) -> None:
+        from .._thread_cleanup import shutdown_threads
+        shutdown_threads(self._prep_threads)
+
     def _on_add_clicked(self):
         dlg = _EntryDialog(self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
