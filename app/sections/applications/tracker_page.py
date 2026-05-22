@@ -7,8 +7,8 @@ from typing import Callable
 from PyQt6.QtCore import Qt, QThread
 from PyQt6.QtWidgets import (
     QAbstractItemView, QComboBox, QDialog, QHBoxLayout, QHeaderView, QLabel,
-    QMessageBox, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout,
-    QWidget,
+    QLineEdit, QMessageBox, QPushButton, QTableWidget, QTableWidgetItem,
+    QVBoxLayout, QWidget,
 )
 
 from ..base import _label, _primary_btn, _secondary_btn
@@ -47,6 +47,11 @@ class TrackerPage(QWidget):
         header_row = QHBoxLayout()
         header_row.addWidget(_label("Application Tracker", "section-title"))
         header_row.addStretch()
+        self._search_edit = QLineEdit()
+        self._search_edit.setPlaceholderText("Search applications…")
+        self._search_edit.setFixedWidth(240)
+        self._search_edit.textChanged.connect(self._apply_filter)
+        header_row.addWidget(self._search_edit)
         self._prep_status = QLabel("")
         self._prep_status.setStyleSheet("color: #555; font-size: 12px;")
         header_row.addWidget(self._prep_status)
@@ -101,6 +106,27 @@ class TrackerPage(QWidget):
         self._rows.append(entry)
 
         self._refresh_row(row)
+        self._apply_filter(self._search_edit.text())
+
+    def _apply_filter(self, text: str):
+        query = (text or "").strip().lower()
+        for r, entry in enumerate(self._rows):
+            if not query:
+                self._table.setRowHidden(r, False)
+                continue
+            haystack_parts = [
+                entry.get("company", ""),
+                entry.get("role", ""),
+                entry.get("date", ""),
+                entry.get("status", ""),
+                entry.get("notes", ""),
+                entry.get("description", ""),
+            ]
+            links = entry.get("links")
+            if isinstance(links, list):
+                haystack_parts.extend(str(l) for l in links)
+            haystack = " ".join(p for p in haystack_parts if p).lower()
+            self._table.setRowHidden(r, query not in haystack)
 
     def _refresh_row(self, row: int):
         entry = self._rows[row]
@@ -166,6 +192,7 @@ class TrackerPage(QWidget):
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._rows[row] = {**self._rows[row], **dlg.get_data()}
             self._refresh_row(row)
+            self._apply_filter(self._search_edit.text())
 
     def _remove_row(self, btn: QPushButton):
         for r in range(self._table.rowCount()):

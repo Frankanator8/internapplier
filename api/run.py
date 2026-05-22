@@ -1,11 +1,10 @@
 import uvicorn
 
-from .ai_provider import get_server_port
-from .constants import SERVER_HOST
+from .constants import DEFAULT_SERVER_PORT, SERVER_HOST
 
 
 def main() -> None:
-    uvicorn.run("api.server:app", host=SERVER_HOST, port=get_server_port(), reload=False)
+    uvicorn.run("api.server:app", host=SERVER_HOST, port=DEFAULT_SERVER_PORT, reload=False)
 
 
 if __name__ == "__main__":

@@ -59,6 +59,11 @@ class InterviewQuestionsPage(QWidget):
         header_row = QHBoxLayout()
         header_row.addWidget(_label("Interview Questions", "section-title"))
         header_row.addStretch()
+        self._search_edit = QLineEdit()
+        self._search_edit.setPlaceholderText("Search questions…")
+        self._search_edit.setFixedWidth(240)
+        self._search_edit.textChanged.connect(self._apply_filter)
+        header_row.addWidget(self._search_edit)
         top_add_btn = _primary_btn("+ Add Question")
         top_add_btn.clicked.connect(self._add_blank)
         header_row.addWidget(top_add_btn)
@@ -174,6 +179,23 @@ class InterviewQuestionsPage(QWidget):
         remove_btn.clicked.connect(lambda: self._remove_card(card))
 
         self._cards_layout.addWidget(card)
+        self._apply_filter(self._search_edit.text())
+
+    def _apply_filter(self, text: str):
+        query = (text or "").strip().lower()
+        for i in range(self._cards_layout.count()):
+            card = self._cards_layout.itemAt(i).widget()
+            if card is None:
+                continue
+            if not query:
+                card.setVisible(True)
+                continue
+            question_edit: QLineEdit = card.property("_question")
+            answer_edit: QTextEdit = card.property("_answer")
+            question = question_edit.text() if question_edit else ""
+            answer = answer_edit.toPlainText() if answer_edit else ""
+            haystack = f"{question}\n{answer}".lower()
+            card.setVisible(query in haystack)
 
     def _grade(self, card: QFrame, grade_btn: QPushButton):
         question_edit: QLineEdit = card.property("_question")

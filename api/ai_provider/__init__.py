@@ -19,7 +19,6 @@ from .settings import (
     DEFAULT_RESUME_PAGE_CAP,
     DEFAULT_RESUME_SCORE_THRESHOLD,
     DEFAULT_SCRAPER_CANDIDATE_PATHS,
-    DEFAULT_SERVER_PORT,
     _load_model_config,
     _load_settings,
     get_auto_resync_prompts,
@@ -29,7 +28,6 @@ from .settings import (
     get_resume_score_threshold,
     get_resume_template,
     get_scraper_candidate_paths,
-    get_server_port,
     save_auto_resync_prompts,
     save_max_generation_attempts,
     save_model_config,
@@ -38,7 +36,6 @@ from .settings import (
     save_resume_score_threshold,
     save_resume_template,
     save_scraper_candidate_paths,
-    save_server_port,
 )
 
 __all__ = [
@@ -60,7 +57,6 @@ __all__ = [
     "DEFAULT_RESUME_OUTPUT_DIR",
     "DEFAULT_MAX_GENERATION_ATTEMPTS",
     "DEFAULT_AUTO_RESYNC_PROMPTS",
-    "DEFAULT_SERVER_PORT",
     "DEFAULT_RESUME_SCORE_THRESHOLD",
     "DEFAULT_SCRAPER_CANDIDATE_PATHS",
     "_load_model_config",
@@ -76,8 +72,6 @@ __all__ = [
     "save_max_generation_attempts",
     "get_auto_resync_prompts",
     "save_auto_resync_prompts",
-    "get_server_port",
-    "save_server_port",
     "get_resume_score_threshold",
     "save_resume_score_threshold",
     "get_scraper_candidate_paths",

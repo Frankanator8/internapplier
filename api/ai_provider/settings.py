@@ -12,7 +12,6 @@ from ..constants import (
     DEFAULT_RESUME_PAGE_CAP,
     DEFAULT_RESUME_SCORE_THRESHOLD,
     DEFAULT_SCRAPER_CANDIDATE_PATHS,
-    DEFAULT_SERVER_PORT,
     MODELS_FILE,
     SETTINGS_FILE,
 )
@@ -93,15 +92,6 @@ def get_max_generation_attempts() -> int:
 
 def save_max_generation_attempts(n: int) -> None:
     _set("max_generation_attempts", int(n))
-
-
-def get_server_port() -> int:
-    n = _get("server_port", DEFAULT_SERVER_PORT, int)
-    return n if n >= 1 else DEFAULT_SERVER_PORT
-
-
-def save_server_port(port: int) -> None:
-    _set("server_port", int(port))
 
 
 def get_resume_score_threshold() -> float:
