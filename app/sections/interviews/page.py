@@ -35,9 +35,9 @@ class InterviewsPage(QWidget):
         self._sidebar.setFixedWidth(200)
 
         for label in (
-            "💬  Interview Practice",
             "❓  Interview Questions",
             "🎯  Job-specific Interview",
+            "💬  Interview Practice",
             "📋  Past Feedback",
         ):
             item = QListWidgetItem(label)
@@ -64,12 +64,12 @@ class InterviewsPage(QWidget):
         self._past_feedback_page = PastFeedbackPage()
 
         self._stack = QStackedWidget()
-        self._stack.addWidget(self._chat_page)
         self._stack.addWidget(self._questions_page)
         if self._job_page is not None:
             self._stack.addWidget(self._job_page)
         else:
             self._stack.addWidget(self._build_blank_page("Job-specific Interview"))
+        self._stack.addWidget(self._chat_page)
         self._stack.addWidget(self._past_feedback_page)
 
         self._sidebar.currentRowChanged.connect(self._stack.setCurrentIndex)
