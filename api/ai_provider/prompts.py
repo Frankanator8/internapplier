@@ -12,23 +12,55 @@ def _iter_source_files():
         yield from PROMPTS_DIR.glob(f"*{ext}")
 
 
+def _prune_orphans(valid_names: set[str]) -> None:
+    for ext in _PROMPT_EXTS:
+        for path in APP_PROMPTS_DIR.glob(f"*{ext}"):
+            if path.name not in valid_names:
+                path.unlink()
+
+
 def _seed_prompts() -> None:
     APP_PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
+    source_names: set[str] = set()
     for src in _iter_source_files():
+        source_names.add(src.name)
         dst = APP_PROMPTS_DIR / src.name
         if not dst.exists():
             dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+    _prune_orphans(source_names)
 
 
 def resync_all_prompts() -> None:
     APP_PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
+    source_names: set[str] = set()
     for src in _iter_source_files():
+        source_names.add(src.name)
         dst = APP_PROMPTS_DIR / src.name
         dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+    _prune_orphans(source_names)
 
 
 def _read_seeded(name: str) -> str:
     return (APP_PROMPTS_DIR / name).read_text(encoding="utf-8")
+
+
+def load_prompt_raw(name: str) -> str:
+    return _read_seeded(name)
+
+
+def list_prompt_files() -> list[str]:
+    names: list[str] = [p.name for p in _iter_source_files()]
+
+    def sort_key(name: str) -> tuple[int, str]:
+        if name.endswith(".schema.json"):
+            group = 1
+        elif name.endswith(".tool.json"):
+            group = 2
+        else:
+            group = 0
+        return (group, name.lower())
+
+    return sorted(set(names), key=sort_key)
 
 
 def load_prompt(name: str) -> str:

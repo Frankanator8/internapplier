@@ -31,16 +31,16 @@ class SettingsPage(
         self._sidebar.setObjectName("sidebar")
         self._sidebar.setFixedWidth(200)
 
-        for label in ("🤖  AI Model", "📄  Resume", "📝  System Prompts", "⚙️  General"):
+        for label in ("⚙️  General", "🤖  AI Model", "📄  Resume", "📝  System Prompts"):
             item = QListWidgetItem(label)
             item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             self._sidebar.addItem(item)
 
         self._stack = QStackedWidget()
+        self._stack.addWidget(self._build_general_page())
         self._stack.addWidget(self._build_ai_model_page())
         self._stack.addWidget(self._build_resume_page())
         self._stack.addWidget(self._build_prompts_page())
-        self._stack.addWidget(self._build_general_page())
 
         self._sidebar.currentRowChanged.connect(self._stack.setCurrentIndex)
         self._sidebar.setCurrentRow(0)
@@ -48,7 +48,7 @@ class SettingsPage(
         outer.addWidget(self._sidebar)
         outer.addWidget(self._stack, 1)
 
-    def _wrap_scroll(self, card: QFrame) -> QWidget:
+    def _wrap_scroll(self, card: QWidget) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
