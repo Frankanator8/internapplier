@@ -25,6 +25,12 @@ class AiModelMixin:
 
         config = ai_provider._load_model_config()
 
+        self._basic_edit = QLineEdit()
+        self._basic_edit.setText(config.get("basic", ai_provider.DEFAULT_BASIC_MODEL))
+        self._basic_edit.setPlaceholderText(ai_provider.DEFAULT_BASIC_MODEL)
+        self._resize_edit(self._basic_edit, self._basic_edit.text())
+        self._basic_edit.textChanged.connect(lambda t: self._resize_edit(self._basic_edit, t))
+
         self._fast_edit = QLineEdit()
         self._fast_edit.setText(config.get("fast", ai_provider.DEFAULT_FAST_MODEL))
         self._fast_edit.setPlaceholderText(ai_provider.DEFAULT_FAST_MODEL)
@@ -37,23 +43,35 @@ class AiModelMixin:
         self._resize_edit(self._powerful_edit, self._powerful_edit.text())
         self._powerful_edit.textChanged.connect(lambda t: self._resize_edit(self._powerful_edit, t))
 
+        def _sep() -> QFrame:
+            s = QFrame()
+            s.setFrameShape(QFrame.Shape.HLine)
+            s.setStyleSheet("color: #e0e0e0;")
+            return s
+
+        card_layout.addWidget(self._build_model_section(
+            section_label="Basic model",
+            line_edit=self._basic_edit,
+            capabilities=["Streaming", "Text generation"],
+            used_for=["Bullet analysis", "Answer questions", "Interview chat", "Interview notes"],
+        ))
+
+        card_layout.addWidget(_sep())
+
         card_layout.addWidget(self._build_model_section(
             section_label="Fast model",
             line_edit=self._fast_edit,
-            capabilities=["Streaming", "Text generation", "JSON output"],
-            used_for=["Bullet analysis", "Company research", "Answer questions"],
+            capabilities=["Streaming", "JSON output"],
+            used_for=["Company research", "Interview grading"],
         ))
 
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color: #e0e0e0;")
-        card_layout.addWidget(sep)
+        card_layout.addWidget(_sep())
 
         card_layout.addWidget(self._build_model_section(
             section_label="Powerful model",
             line_edit=self._powerful_edit,
             capabilities=["Streaming", "Tool / function calling", "Agentic loop (4 rounds)"],
-            used_for=["Resume generation", "Resume grading", "LaTeX repair"],
+            used_for=["Resume generation", "Resume grading"],
         ))
 
         btn_row = QHBoxLayout()
@@ -129,14 +147,15 @@ class AiModelMixin:
         return chip
 
     def _save_model_config(self):
+        basic = self._basic_edit.text().strip()
         fast = self._fast_edit.text().strip()
         powerful = self._powerful_edit.text().strip()
-        if not fast or not powerful:
+        if not basic or not fast or not powerful:
             self._inline_status.setStyleSheet("font-size: 12px; color: #b00;")
-            self._inline_status.setText("Both models are required.")
+            self._inline_status.setText("All three models are required.")
             return
 
-        ai_provider.save_model_config(fast, powerful)
+        ai_provider.save_model_config(basic, fast, powerful)
 
         self._inline_status.setStyleSheet("font-size: 12px; color: #057642;")
         self._inline_status.setText("✓  Saved")

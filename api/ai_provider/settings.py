@@ -5,6 +5,7 @@ from typing import Any, Callable
 from ..constants import (
     APP_DIR,
     DEFAULT_AUTO_RESYNC_PROMPTS,
+    DEFAULT_BASIC_MODEL,
     DEFAULT_FAST_MODEL,
     DEFAULT_MAX_GENERATION_ATTEMPTS,
     DEFAULT_POWERFUL_MODEL,
@@ -126,12 +127,17 @@ def _load_model_config() -> dict[str, str]:
     if _model_config_cache is not None:
         return _model_config_cache
 
-    defaults = {"fast": DEFAULT_FAST_MODEL, "powerful": DEFAULT_POWERFUL_MODEL}
+    defaults = {
+        "basic": DEFAULT_BASIC_MODEL,
+        "fast": DEFAULT_FAST_MODEL,
+        "powerful": DEFAULT_POWERFUL_MODEL,
+    }
 
     APP_DIR.mkdir(parents=True, exist_ok=True)
     _seed_prompts()
     if not MODELS_FILE.exists():
         with open(MODELS_FILE, "w", encoding="utf-8") as f:
+            f.write(f"basic={DEFAULT_BASIC_MODEL}\n")
             f.write(f"fast={DEFAULT_FAST_MODEL}\n")
             f.write(f"powerful={DEFAULT_POWERFUL_MODEL}\n")
         _model_config_cache = defaults
@@ -153,12 +159,14 @@ def _load_model_config() -> dict[str, str]:
     return _model_config_cache
 
 
-def save_model_config(fast: str, powerful: str) -> None:
+def save_model_config(basic: str, fast: str, powerful: str) -> None:
     global _model_config_cache
     APP_DIR.mkdir(parents=True, exist_ok=True)
+    basic = basic.strip()
     fast = fast.strip()
     powerful = powerful.strip()
     with open(MODELS_FILE, "w", encoding="utf-8") as f:
+        f.write(f"basic={basic}\n")
         f.write(f"fast={fast}\n")
         f.write(f"powerful={powerful}\n")
-    _model_config_cache = {"fast": fast, "powerful": powerful}
+    _model_config_cache = {"basic": basic, "fast": fast, "powerful": powerful}

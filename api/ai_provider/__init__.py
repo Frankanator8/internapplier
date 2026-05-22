@@ -12,6 +12,7 @@ from .prompts import (
 from .provider import OpenRouterProvider, get_provider
 from .settings import (
     DEFAULT_AUTO_RESYNC_PROMPTS,
+    DEFAULT_BASIC_MODEL,
     DEFAULT_FAST_MODEL,
     DEFAULT_MAX_GENERATION_ATTEMPTS,
     DEFAULT_POWERFUL_MODEL,
@@ -51,6 +52,7 @@ __all__ = [
     "save_prompt",
     "resync_all_prompts",
     "_seed_prompts",
+    "DEFAULT_BASIC_MODEL",
     "DEFAULT_FAST_MODEL",
     "DEFAULT_POWERFUL_MODEL",
     "DEFAULT_RESUME_PAGE_CAP",

@@ -1,8 +1,6 @@
 test everything!
 write READMEs
-fix ordering issue in system prompts/json schemas
-ask claude to make sure it is actually using the saved settings values and not defaults
-Add a new tier of AI models "Basic" that doesn't even require structured output. Also update the page to be accurate
-Search functions in Application Tracker and Interview Questions
 Ability to "Link" similar Interview Questions
 Resume generation doesn't do company research
+Dark mode
+Dummy web app page

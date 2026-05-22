@@ -13,7 +13,7 @@ from .formatting import (
     _format_tool_event,
     _profile_json,
 )
-from .prompts import load_prompt
+from .prompts import load_prompt, load_schema
 from .settings import _load_model_config, get_resume_template
 
 logger = logging.getLogger(__name__)
@@ -25,18 +25,14 @@ class OpenRouterProvider:
     def __init__(
         self,
         api_key: str | None = None,
-        model: str | None = None,
-        tier: str = "fast",
     ):
         self.api_key = api_key or os.environ.get("OPENROUTER_API_KEY", "")
-        if model:
-            self.model = model
-        else:
-            config = _load_model_config()
-            self.model = config.get(tier) or config["fast"]
-
         key_hint = f"...{self.api_key[-6:]}" if len(self.api_key) >= 6 else ("(set)" if self.api_key else "(MISSING)")
-        logger.debug("OpenRouterProvider init — tier=%s model=%s api_key=%s", tier, self.model, key_hint)
+        logger.debug("OpenRouterProvider init — api_key=%s", key_hint)
+
+    def _model_for(self, tier: str) -> str:
+        config = _load_model_config()
+        return config.get(tier) or config["fast"]
 
     def analyze_bullet_stream(self, bullet: str, context: dict) -> Iterator[str]:
         logger.info("analyze_bullet_stream — bullet=%r context=%s", bullet[:120], context)
@@ -54,6 +50,7 @@ class OpenRouterProvider:
                 {"role": "system", "content": load_prompt("analyze_bullet.txt")},
                 {"role": "user", "content": user_message},
             ],
+            tier="basic",
             log_label="analyze_bullet_stream",
             timeout=(10.0, 60.0),
         )
@@ -62,11 +59,13 @@ class OpenRouterProvider:
         self,
         messages: list[dict],
         *,
+        tier: str,
         log_label: str,
         timeout: tuple[float, float] = (10.0, 30.0),
         tools: list[dict] | None = None,
         max_tool_rounds: int = 4,
         tool_overrides: dict | None = None,
+        response_format: dict | None = None,
     ) -> Iterator[str]:
         """SSE-stream chat completions, yielding incremental content chunks.
 
@@ -88,8 +87,9 @@ class OpenRouterProvider:
 
         from ..generate_resume.agent_tools import TOOL_HANDLERS
 
-        logger.debug("%s — POST %s model=%s stream=True timeout=%s tools=%s",
-                     log_label, self.BASE_URL, self.model, timeout,
+        model = self._model_for(tier)
+        logger.debug("%s — POST %s tier=%s model=%s stream=True timeout=%s tools=%s",
+                     log_label, self.BASE_URL, tier, model, timeout,
                      [t["function"]["name"] for t in tools] if tools else None)
 
         messages = list(messages)
@@ -97,7 +97,7 @@ class OpenRouterProvider:
 
         while True:
             payload_json: dict = {
-                "model": self.model,
+                "model": model,
                 "stream": True,
                 "messages": messages,
             }
@@ -106,6 +106,8 @@ class OpenRouterProvider:
                 payload_json["tool_choice"] = (
                     "none" if rounds_used >= max_tool_rounds else "auto"
                 )
+            if response_format:
+                payload_json["response_format"] = response_format
 
             accumulated_content: list[str] = []
             tool_calls_acc: dict[int, dict] = {}
@@ -294,6 +296,7 @@ class OpenRouterProvider:
                 {"role": "system", "content": load_prompt("grade_resume.txt")},
                 {"role": "user", "content": user_message},
             ],
+            tier="powerful",
             log_label="grade_resume",
             tools=[OPENAI_TOOL_SCHEMAS["page_length"]],
         )
@@ -354,6 +357,7 @@ class OpenRouterProvider:
         )
         yield from self._stream_chat_completion(
             messages=messages,
+            tier="powerful",
             log_label="generate_resume",
             tools=[OPENAI_TOOL_SCHEMAS["page_length"]],
         )
@@ -394,6 +398,7 @@ class OpenRouterProvider:
                 {"role": "system", "content": load_prompt("answer_question.txt")},
                 {"role": "user", "content": "\n\n".join(sections)},
             ],
+            tier="basic",
             log_label="answer_question",
         )
 
@@ -436,7 +441,16 @@ class OpenRouterProvider:
                 {"role": "system", "content": load_prompt("grade_interview.txt")},
                 {"role": "user", "content": "\n\n".join(sections)},
             ],
+            tier="fast",
             log_label="grade_interview_response",
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "grade_interview_output",
+                    "strict": True,
+                    "schema": load_schema("grade_interview.schema.json"),
+                },
+            },
         )
 
     def chat_interview_stream(
@@ -479,6 +493,7 @@ class OpenRouterProvider:
 
         yield from self._stream_chat_completion(
             messages=messages,
+            tier="basic",
             log_label="chat_interview",
         )
 
@@ -525,6 +540,7 @@ class OpenRouterProvider:
                 {"role": "system", "content": load_prompt("interview_chat_notes.txt")},
                 {"role": "user", "content": "\n\n".join(sections)},
             ],
+            tier="basic",
             log_label="interview_chat_notes",
         )
 
@@ -543,7 +559,8 @@ class OpenRouterProvider:
             "Return ONLY the JSON object described in the system prompt, no markdown."
         )
 
-        logger.debug("research_company — POST %s model=%s timeout=60", self.BASE_URL, self.model)
+        model = self._model_for("fast")
+        logger.debug("research_company — POST %s tier=fast model=%s timeout=60", self.BASE_URL, model)
         t0 = time.perf_counter()
         try:
             response = requests.post(
@@ -553,7 +570,7 @@ class OpenRouterProvider:
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": self.model,
+                    "model": model,
                     "messages": [
                         {
                             "role": "system",
@@ -561,6 +578,14 @@ class OpenRouterProvider:
                         },
                         {"role": "user", "content": user_message},
                     ],
+                    "response_format": {
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": "research_company_output",
+                            "strict": True,
+                            "schema": load_schema("research_company.schema.json"),
+                        },
+                    },
                 },
                 timeout=60,
             )
@@ -600,5 +625,5 @@ class OpenRouterProvider:
         return result
 
 
-def get_provider(tier: str = "fast") -> OpenRouterProvider:
-    return OpenRouterProvider(tier=tier)
+def get_provider() -> OpenRouterProvider:
+    return OpenRouterProvider()

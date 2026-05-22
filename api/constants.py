@@ -55,6 +55,7 @@ SCRAPER_MAX_PAGES = 5
 SCRAPER_MAX_TOTAL_CHARS = 15000
 
 # --- AI provider defaults ---
+DEFAULT_BASIC_MODEL = "google/gemini-2.0-flash-exp:free"
 DEFAULT_FAST_MODEL = "google/gemini-2.0-flash-exp:free"
 DEFAULT_POWERFUL_MODEL = "openai/gpt-4o-mini"
 DEFAULT_RESUME_PAGE_CAP = 1

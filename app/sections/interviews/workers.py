@@ -36,7 +36,7 @@ class _GradeWorker(QObject):
             self._question[:80], len(self._response), self._company_name,
         )
         try:
-            for chunk in get_provider(tier="fast").grade_interview_response_stream(
+            for chunk in get_provider().grade_interview_response_stream(
                 question=self._question,
                 response=self._response,
                 profile=self._profile,
@@ -78,7 +78,7 @@ class _ChatReplyWorker(QObject):
             len(self._history), self._company_name,
         )
         try:
-            for chunk in get_provider(tier="fast").chat_interview_stream(
+            for chunk in get_provider().chat_interview_stream(
                 history=self._history,
                 profile=self._profile,
                 company_name=self._company_name,
@@ -121,7 +121,7 @@ class _FeedbackWorker(QObject):
             self._question[:80], len(self._response),
         )
         try:
-            for chunk in get_provider(tier="fast").grade_interview_response_stream(
+            for chunk in get_provider().grade_interview_response_stream(
                 question=self._question,
                 response=self._response,
                 profile=self._profile,
@@ -165,7 +165,7 @@ class _NotesWorker(QObject):
             len(self._history), len(self._prior_notes or ""),
         )
         try:
-            for chunk in get_provider(tier="fast").summarize_interview_notes_stream(
+            for chunk in get_provider().summarize_interview_notes_stream(
                 history=self._history,
                 prior_notes=self._prior_notes,
                 profile=self._profile,

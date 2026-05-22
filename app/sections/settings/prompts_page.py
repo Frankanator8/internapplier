@@ -30,8 +30,12 @@ class PromptsMixin:
         self._prompt_statuses: dict[str, QLabel] = {}
 
         all_files = ai_provider.list_prompt_files()
+        schema_stems = {
+            f[: -len(".schema.json")] for f in all_files if f.endswith(".schema.json")
+        }
         txt_files = sorted(
-            (f for f in all_files if f.endswith(".txt")), key=_prompt_label
+            (f for f in all_files if f.endswith(".txt")),
+            key=lambda f: (f[: -len(".txt")] not in schema_stems, _prompt_label(f)),
         )
         schema_files = sorted(
             (f for f in all_files if not f.endswith(".txt")), key=_prompt_label

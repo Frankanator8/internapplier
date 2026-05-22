@@ -96,7 +96,7 @@ class ResumeGenerator:
         self.profile = profile or {}
         self.job_description = job_description or ""
         self.company_research = company_research or {}
-        self.provider: OpenRouterProvider = provider or get_provider("powerful")
+        self.provider: OpenRouterProvider = provider or get_provider()
 
     # ---------- public API ----------
 
