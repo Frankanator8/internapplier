@@ -35,7 +35,7 @@ import uvicorn
 from PyQt6.QtWidgets import QApplication
 from api import ai_provider
 from app.main_window import MainWindow
-from app.style import GLOBAL_STYLESHEET
+from app.theme import apply_theme, install_system_listener
 
 
 def _start_api_server() -> None:
@@ -62,7 +62,8 @@ def main():
     _start_api_server()
     app = QApplication(sys.argv)
     app.setApplicationName("I*ternship")
-    app.setStyleSheet(GLOBAL_STYLESHEET)
+    apply_theme(app, ai_provider.get_theme_preference())
+    install_system_listener(app)
     window = MainWindow()
     window.show()
     sys.exit(app.exec())

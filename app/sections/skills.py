@@ -47,7 +47,7 @@ class SkillsPage(QWidget):
         row_layout.setSpacing(8)
 
         label = QLabel(text)
-        label.setStyleSheet("font-size: 13px; color: #1d1d1d;")
+        label.setStyleSheet("font-size: 13px;")
         remove_btn = _icon_btn("✕")
 
         row_layout.addWidget(label)

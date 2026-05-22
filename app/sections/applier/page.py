@@ -112,7 +112,7 @@ class ApplierPage(
         row_layout.setContentsMargins(12, 10, 12, 10)
         lbl = QLabel(text)
         lbl.setWordWrap(True)
-        lbl.setStyleSheet("color: #1d1d1d; font-size: 13px;")
+        lbl.setStyleSheet("font-size: 13px;")
         row_layout.addWidget(lbl)
         return frame
 

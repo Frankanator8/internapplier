@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from bisect import bisect_right
 from datetime import date, timedelta
 
 from PyQt6.QtCore import QRect, Qt
 from PyQt6.QtGui import QColor, QPainter
 from PyQt6.QtWidgets import QWidget
+
+from api import ai_provider
 
 
 _COLUMNS = 7
@@ -21,39 +24,28 @@ _PALETTE = [
 ]
 
 
-def _bucket_day(count: int) -> int:
+def _bucket(count: int, edges: list[int]) -> int:
     if count <= 0:
         return 0
-    if count == 1:
-        return 1
-    if count == 2:
-        return 2
-    if count == 3:
-        return 3
-    return 4
-
-
-def _bucket_week(count: int) -> int:
-    if count <= 0:
-        return 0
-    if count <= 2:
-        return 1
-    if count <= 5:
-        return 2
-    if count <= 9:
-        return 3
-    return 4
+    return min(bisect_right(edges, count), 4)
 
 
 class ApplicationsHeatmap(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._counts: dict[date, int] = {}
+        self._day_edges = ai_provider.get_heatmap_day_thresholds()
+        self._week_edges = ai_provider.get_heatmap_week_thresholds()
         width = _COLUMNS * _CELL + (_COLUMNS - 1) * _GAP
         height = _ROWS * _CELL + (_ROWS - 1) * _GAP
         self.setFixedSize(width, height)
         self.setMouseTracking(True)
         self.setToolTip("Applications — last 7 weeks (top) and last 7 days (bottom)")
+
+    def reload_thresholds(self) -> None:
+        self._day_edges = ai_provider.get_heatmap_day_thresholds()
+        self._week_edges = ai_provider.get_heatmap_week_thresholds()
+        self.update()
 
     def set_applications(self, apps: list[dict]) -> None:
         counts: dict[date, int] = {}
@@ -101,12 +93,12 @@ class ApplicationsHeatmap(QWidget):
         for col in range(_COLUMNS):
             start, end = self._week_range_for_col(col)
             week_count = self._week_count(start, end)
-            painter.setBrush(_PALETTE[_bucket_week(week_count)])
+            painter.setBrush(_PALETTE[_bucket(week_count, self._week_edges)])
             painter.drawRect(self._cell_rect(col, 0))
 
             day = self._day_for_col(col)
             day_count = self._counts.get(day, 0)
-            painter.setBrush(_PALETTE[_bucket_day(day_count)])
+            painter.setBrush(_PALETTE[_bucket(day_count, self._day_edges)])
             painter.drawRect(self._cell_rect(col, 1))
         painter.end()
 

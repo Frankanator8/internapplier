@@ -151,7 +151,10 @@ class MainWindow(QMainWindow):
         self._tabs.addTab(self._interviews_page, "🎤  Interviews")
 
         # ── Tab 4: Settings ───────────────────────────────────────
-        self._settings_page = SettingsPage(status_bar=self.status_bar)
+        self._settings_page = SettingsPage(
+            status_bar=self.status_bar,
+            on_heatmap_thresholds_changed=self._heatmap.reload_thresholds,
+        )
         self._tabs.addTab(self._settings_page, "⚙️  Settings")
 
         self._load()

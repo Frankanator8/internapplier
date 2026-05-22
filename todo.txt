@@ -2,5 +2,4 @@ test everything!
 write READMEs
 Ability to "Link" similar Interview Questions
 Resume generation doesn't do company research
-Dark mode
-Dummy web app page
+Token counter

@@ -19,9 +19,10 @@ class SettingsPage(
     GeneralMixin,
     QWidget,
 ):
-    def __init__(self, status_bar: QStatusBar | None = None):
+    def __init__(self, status_bar: QStatusBar | None = None, on_heatmap_thresholds_changed=None):
         super().__init__()
         self._status_bar = status_bar
+        self._on_heatmap_thresholds_changed = on_heatmap_thresholds_changed
 
         outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)

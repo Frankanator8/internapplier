@@ -476,17 +476,7 @@ class InterviewChatPage(QWidget):
     # ── Transcript bubbles ───────────────────────────────────────
     def _add_bubble(self, role: str, text: str) -> QLabel:
         card = QFrame()
-        card.setObjectName("card")
-        if role == "user":
-            card.setStyleSheet(
-                "QFrame#card { background: #eef3fb; border: 1px solid #cfd8e3;"
-                " border-radius: 8px; }"
-            )
-        else:
-            card.setStyleSheet(
-                "QFrame#card { background: #ffffff; border: 1px solid #e0e0e0;"
-                " border-radius: 8px; }"
-            )
+        card.setObjectName("chat-bubble-user" if role == "user" else "chat-bubble-ai")
         v = QVBoxLayout(card)
         v.setContentsMargins(12, 8, 12, 10)
         v.setSpacing(4)
@@ -523,10 +513,6 @@ class InterviewChatPage(QWidget):
 
         card = QFrame()
         card.setObjectName("card")
-        card.setStyleSheet(
-            "QFrame#card { background: #fff; border: 1px solid #e0e0e0;"
-            " border-radius: 8px; }"
-        )
         v = QVBoxLayout(card)
         v.setContentsMargins(10, 8, 10, 10)
         v.setSpacing(4)
