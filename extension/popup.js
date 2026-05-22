@@ -42,6 +42,39 @@ const API_BASE = "http://127.0.0.1:8765";
 const PICKED_KEY = "picked";
 const DRAFT_KEY = "application_draft";
 
+const systemDarkMQ = window.matchMedia("(prefers-color-scheme: dark)");
+let themePreference = "system";
+
+function applyThemeFromPreference() {
+  const effective =
+    themePreference === "dark" ||
+    (themePreference === "system" && systemDarkMQ.matches);
+  document.body.classList.toggle("dark", effective);
+}
+
+function applyTheme(pref) {
+  themePreference = pref === "light" || pref === "dark" ? pref : "system";
+  applyThemeFromPreference();
+}
+
+systemDarkMQ.addEventListener("change", () => {
+  if (themePreference === "system") applyThemeFromPreference();
+});
+
+async function loadTheme() {
+  try {
+    const res = await fetch(`${API_BASE}/theme`, { cache: "no-store" });
+    if (res.ok) {
+      const data = await res.json();
+      applyTheme(data && data.preference);
+      return;
+    }
+  } catch (_) {}
+  applyTheme("system");
+}
+
+applyTheme("system");
+
 const FIELD_TO_INPUT = {
   company: fCompany,
   role: fRole,
@@ -838,6 +871,7 @@ browser.runtime.onMessage.addListener((msg) => {
 });
 
 (async function init() {
+  await loadTheme();
   await loadStatuses();
   await refreshStatus();
   const stored = await browser.storage.local.get([DRAFT_KEY, PICKED_KEY]);

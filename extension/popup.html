@@ -229,6 +229,71 @@
         flex-shrink: 0;
         align-self: center;
       }
+
+      /* ── Dark mode ─────────────────────────────────────────── */
+      body.dark { background: #1b1f23; color: #e6e6e6; }
+      body.dark .name { color: #a8b3c0; }
+      body.dark .dot { background: #6b7280; }
+      body.dark button { background: #0a66c2; color: #ffffff; }
+      body.dark button:hover { background: #3380d4; }
+      body.dark button:disabled { background: #3a4148; color: #6b7280; }
+      body.dark button.secondary {
+        background: #242a31;
+        color: #e6e6e6;
+        border: 1px solid #3a4148;
+      }
+      body.dark button.secondary:hover { background: #2d343c; }
+      body.dark .result { color: #a8b3c0; }
+      body.dark label.field { color: #a8b3c0; }
+      body.dark .row input,
+      body.dark .row select,
+      body.dark .row textarea {
+        background: #242a31;
+        color: #e6e6e6;
+        border: 1px solid #3a4148;
+      }
+      body.dark .pick-btn {
+        background: #242a31;
+        color: #70b5f9;
+        border: 1px solid #70b5f9;
+      }
+      body.dark .pick-btn:hover { background: #1d2a3a; }
+      body.dark .section { border-top: 1px solid #3a4148; }
+      body.dark .section-title { color: #a8b3c0; }
+      body.dark details.tree > summary { color: #e6e6e6; }
+      body.dark details.tree > summary:hover { color: #70b5f9; }
+      body.dark .tree-body { border-left: 1px solid #3a4148; }
+      body.dark .chip {
+        background: #1d2a3a;
+        color: #cfe0f5;
+        border: 1px solid #274a6b;
+      }
+      body.dark .chip-label { color: #a8b3c0; }
+      body.dark .chip-row .field-name { color: #a8b3c0; }
+      body.dark .answer-card {
+        background: #242a31;
+        border: 1px solid #3a4148;
+      }
+      body.dark .answer-card .question { color: #e6e6e6; }
+      body.dark .answer-card .answer-text {
+        background: #1b1f23;
+        color: #e6e6e6;
+        border: 1px dashed #3a4148;
+      }
+      body.dark .answer-card .spinner { color: #a8b3c0; }
+      body.dark #scan-list {
+        background: #242a31;
+        border: 1px solid #3a4148;
+      }
+      body.dark .scan-summary { color: #e6e6e6; }
+      body.dark .scan-row { border-bottom: 1px solid #2d343c; }
+      body.dark .scan-row .scan-title { color: #e6e6e6; }
+      body.dark .scan-row .scan-sub { color: #a8b3c0; }
+      body.dark .scan-row .badge {
+        background: #3a2e15;
+        color: #f5d28a;
+        border: 1px solid #5c4a1f;
+      }
     </style>
   </head>
   <body>
