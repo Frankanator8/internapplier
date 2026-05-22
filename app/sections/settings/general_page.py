@@ -10,7 +10,7 @@ from api import ai_provider
 
 from app.theme import apply_theme
 
-from ..base import _label, _primary_btn
+from ..base import _label, _primary_btn, _set_status
 
 _THEME_OPTIONS = [("System", "system"), ("Light", "light"), ("Dark", "dark")]
 
@@ -25,7 +25,7 @@ class GeneralMixin:
         layout.setSpacing(16)
 
         title = QLabel("General")
-        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #0a66c2;")
+        title.setObjectName("card-title")
         layout.addWidget(title)
 
         layout.addWidget(_label("Appearance"))
@@ -47,7 +47,7 @@ class GeneralMixin:
             "Choose Light, Dark, or follow your system setting."
         )
         theme_hint.setWordWrap(True)
-        theme_hint.setStyleSheet("font-size: 12px; color: #666;")
+        theme_hint.setObjectName("hint")
         layout.addWidget(theme_hint)
 
         layout.addWidget(_label("Scraper paths (one per line)"))
@@ -63,11 +63,11 @@ class GeneralMixin:
             "Relative URL paths the company researcher crawls to gather context."
         )
         paths_hint.setWordWrap(True)
-        paths_hint.setStyleSheet("font-size: 12px; color: #666;")
+        paths_hint.setObjectName("hint")
         layout.addWidget(paths_hint)
 
         heatmap_title = QLabel("Heatmap thresholds")
-        heatmap_title.setStyleSheet("font-size: 14px; font-weight: bold; margin-top: 12px;")
+        heatmap_title.setStyleSheet("font-size: 14px; font-weight: bold; margin-top: 12px;")  # structural-only, no color
         layout.addWidget(heatmap_title)
 
         heatmap_hint = QLabel(
@@ -75,7 +75,7 @@ class GeneralMixin:
             "Values must be strictly ascending."
         )
         heatmap_hint.setWordWrap(True)
-        heatmap_hint.setStyleSheet("font-size: 12px; color: #666;")
+        heatmap_hint.setObjectName("hint")
         layout.addWidget(heatmap_hint)
 
         day_values = ai_provider.get_heatmap_day_thresholds()
@@ -107,7 +107,7 @@ class GeneralMixin:
         save_btn = _primary_btn("Save", width=100)
         save_btn.clicked.connect(self._save_general)
         self._general_status = QLabel("")
-        self._general_status.setStyleSheet("font-size: 12px; color: #057642;")
+        self._general_status.setObjectName("status-ok")
         btn_row.addWidget(save_btn)
         btn_row.addWidget(self._general_status)
         btn_row.addStretch()
@@ -129,7 +129,7 @@ class GeneralMixin:
         week_vals = [s.value() for s in self._heatmap_week_spins]
         for vals, name in ((day_vals, "Daily"), (week_vals, "Weekly")):
             if not all(vals[i] < vals[i + 1] for i in range(len(vals) - 1)):
-                self._general_status.setStyleSheet("font-size: 12px; color: #b00020;")
+                _set_status(self._general_status, "error")
                 self._general_status.setText(f"✗  {name} cutoffs must be strictly ascending.")
                 return
 
@@ -149,7 +149,7 @@ class GeneralMixin:
             except Exception:
                 pass
 
-        self._general_status.setStyleSheet("font-size: 12px; color: #057642;")
+        _set_status(self._general_status, "ok")
         self._general_status.setText("✓  Saved")
         QTimer.singleShot(3000, lambda: self._general_status.setText(""))
         if self._status_bar:

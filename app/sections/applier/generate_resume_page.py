@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
 
 from api import data_store
 
-from ..base import _label, _primary_btn, _secondary_btn
+from ..base import _label, _primary_btn, _secondary_btn, _set_status
 from .workers import _GenerateResumeWorker
 
 logger = logging.getLogger(__name__)
@@ -67,7 +67,7 @@ class GenerateResumeMixin:
 
         self._gen_status = QLabel("")
         self._gen_status.setWordWrap(True)
-        self._gen_status.setStyleSheet("color: #555; font-size: 12px;")
+        self._gen_status.setObjectName("status-neutral")
         left_layout.addWidget(self._gen_status)
 
         splitter.addWidget(left)
@@ -130,7 +130,7 @@ class GenerateResumeMixin:
     def _generate_resume(self):
         jd = self._gen_jd_input.toPlainText().strip()
         if not jd:
-            self._gen_status.setStyleSheet("color: #cc3300; font-size: 12px;")
+            _set_status(self._gen_status, "error")
             self._gen_status.setText("Paste a job description first.")
             return
 
@@ -145,7 +145,7 @@ class GenerateResumeMixin:
         self._gen_results_scroll.setVisible(False)
         self._gen_btn.setEnabled(False)
         self._gen_btn.setText("Generating…")
-        self._gen_status.setStyleSheet("color: #555; font-size: 12px;")
+        _set_status(self._gen_status, "neutral")
         self._gen_status.setText("Starting…")
 
         worker = _GenerateResumeWorker(profile, jd, name, url, self._research_cache)
@@ -170,12 +170,12 @@ class GenerateResumeMixin:
         def on_error(msg: str):
             self._gen_btn.setEnabled(True)
             self._gen_btn.setText("📄  Generate Resume")
-            self._gen_status.setStyleSheet("color: #cc3300; font-size: 12px;")
+            _set_status(self._gen_status, "error")
             self._gen_status.setText(f"Error: {msg}")
             thread.quit()
 
         def on_progress(msg: str):
-            self._gen_status.setStyleSheet("color: #555; font-size: 12px;")
+            _set_status(self._gen_status, "neutral")
             self._gen_status.setText(msg)
 
         worker.finished.connect(on_finished)

@@ -82,7 +82,7 @@ class ApplierPage(
 
         if not summary and not values and not projects:
             empty = QLabel("No information could be extracted from the site.")
-            empty.setStyleSheet("color: #777; font-size: 13px;")
+            empty.setObjectName("muted")
             layout.addWidget(empty)
             return
 

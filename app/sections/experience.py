@@ -47,18 +47,10 @@ class ExperiencePage(QWidget):
         for key, title, add_label in self._GROUPS:
             header_row = QHBoxLayout()
             subtitle = QLabel(title)
-            subtitle.setStyleSheet(
-                "font-size: 14px; font-weight: 600; color: #0a66c2;"
-            )
+            subtitle.setObjectName("group-subtitle")
             header_row.addWidget(subtitle)
             header_row.addStretch()
             add_btn = _primary_btn(add_label)
-            add_btn.setStyleSheet(
-                "QPushButton { background: #0a66c2; color: white; border: none;"
-                " border-radius: 16px; padding: 7px 18px; font-weight: bold; font-size: 13px; }"
-                "QPushButton:hover { background: #004182; }"
-                "QPushButton:pressed { background: #003272; }"
-            )
             add_btn.clicked.connect(lambda _checked=False, k=key: self.add_entry(category=k))
             header_row.addWidget(add_btn)
             container_layout.addLayout(header_row)

@@ -4,49 +4,107 @@
     <meta charset="utf-8">
     <title>InternApplier Autofill</title>
     <style>
+      :root {
+        --bg:                #ffffff;
+        --text:              #1f2937;
+        --text-muted:        #374151;
+        --text-faint:        #6b7280;
+        --border:            #d1d5db;
+        --border-soft:       #e5e7eb;
+        --border-row:        #f3f4f6;
+        --accent:            #2563eb;
+        --accent-hover:      #1d4ed8;
+        --accent-soft-bg:    #eff6ff;
+        --button-bg:         #2563eb;
+        --button-disabled:   #9ca3af;
+        --dot:               #9ca3af;
+        --dot-ok:            #10b981;
+        --dot-err:           #ef4444;
+        --secondary-bg:      #ffffff;
+        --secondary-hover:   #f3f4f6;
+        --input-bg:          #ffffff;
+        --card-bg:           #f9fafb;
+        --card-text:         #1f2937;
+        --chip-bg:           #eff6ff;
+        --chip-text:         #1e3a8a;
+        --chip-border:       #bfdbfe;
+        --badge-bg:          #fef3c7;
+        --badge-text:        #92400e;
+        --badge-border:      #fde68a;
+      }
+      body.dark {
+        --bg:                #1b1f23;
+        --text:              #e6e6e6;
+        --text-muted:        #e6e6e6;
+        --text-faint:        #a8b3c0;
+        --border:            #3a4148;
+        --border-soft:       #3a4148;
+        --border-row:        #2d343c;
+        --accent:            #0a66c2;
+        --accent-hover:      #3380d4;
+        --accent-soft-bg:    #1d2a3a;
+        --button-bg:         #0a66c2;
+        --button-disabled:   #3a4148;
+        --dot:               #6b7280;
+        --dot-ok:            #10b981;
+        --dot-err:           #ef4444;
+        --secondary-bg:      #242a31;
+        --secondary-hover:   #2d343c;
+        --input-bg:          #242a31;
+        --card-bg:           #242a31;
+        --card-text:         #e6e6e6;
+        --chip-bg:           #1d2a3a;
+        --chip-text:         #cfe0f5;
+        --chip-border:       #274a6b;
+        --badge-bg:          #3a2e15;
+        --badge-text:        #f5d28a;
+        --badge-border:      #5c4a1f;
+      }
       body {
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         min-width: 280px;
         margin: 0;
         padding: 14px 16px;
-        background: #ffffff;
-        color: #1f2937;
+        background: var(--bg);
+        color: var(--text);
       }
       h1 { font-size: 14px; margin: 0 0 10px; }
       .status { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-bottom: 8px; }
-      .dot { width: 8px; height: 8px; border-radius: 50%; background: #9ca3af; }
-      .dot.ok { background: #10b981; }
-      .dot.err { background: #ef4444; }
-      .name { font-size: 13px; margin-bottom: 12px; color: #374151; }
+      .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dot); }
+      .dot.ok { background: var(--dot-ok); }
+      .dot.err { background: var(--dot-err); }
+      .name { font-size: 13px; margin-bottom: 12px; color: var(--text-muted); }
       button {
         width: 100%;
         padding: 8px 10px;
         font-size: 13px;
-        background: #2563eb;
+        background: var(--button-bg);
         color: white;
         border: none;
         border-radius: 6px;
         cursor: pointer;
       }
-      button:hover { background: #1d4ed8; }
-      button:disabled { background: #9ca3af; cursor: not-allowed; }
+      button:hover { background: var(--accent-hover); }
+      button:disabled { background: var(--button-disabled); cursor: not-allowed; }
       button.secondary {
-        background: #ffffff;
-        color: #374151;
-        border: 1px solid #d1d5db;
+        background: var(--secondary-bg);
+        color: var(--text-muted);
+        border: 1px solid var(--border);
       }
-      button.secondary:hover { background: #f3f4f6; }
+      button.secondary:hover { background: var(--secondary-hover); }
       .stack > * + * { margin-top: 8px; }
-      .result { font-size: 12px; margin-top: 8px; color: #6b7280; min-height: 1em; }
+      .result { font-size: 12px; margin-top: 8px; color: var(--text-faint); min-height: 1em; }
       .hidden { display: none; }
-      label.field { display: block; font-size: 11px; color: #6b7280; margin-bottom: 2px; }
+      label.field { display: block; font-size: 11px; color: var(--text-faint); margin-bottom: 2px; }
       .row { margin-bottom: 8px; }
       .row input, .row select, .row textarea {
         width: 100%;
         box-sizing: border-box;
         font-size: 12px;
         padding: 6px 8px;
-        border: 1px solid #d1d5db;
+        background: var(--input-bg);
+        color: var(--text);
+        border: 1px solid var(--border);
         border-radius: 4px;
         font-family: inherit;
       }
@@ -61,25 +119,25 @@
         width: auto;
         padding: 2px 8px;
         font-size: 11px;
-        background: #ffffff;
-        color: #2563eb;
-        border: 1px solid #2563eb;
+        background: var(--secondary-bg);
+        color: var(--accent);
+        border: 1px solid var(--accent);
         border-radius: 4px;
         cursor: pointer;
       }
-      .pick-btn:hover { background: #eff6ff; }
+      .pick-btn:hover { background: var(--accent-soft-bg); }
       .form-actions { display: flex; gap: 8px; }
       .form-actions button { flex: 1; }
       .section {
         margin-top: 14px;
         padding-top: 10px;
-        border-top: 1px solid #e5e7eb;
+        border-top: 1px solid var(--border-soft);
       }
       .section-title {
         font-size: 11px;
         text-transform: uppercase;
         letter-spacing: 0.04em;
-        color: #6b7280;
+        color: var(--text-faint);
         margin-bottom: 8px;
       }
       details.tree {
@@ -90,13 +148,13 @@
       details.tree > summary {
         cursor: pointer;
         padding: 2px 0;
-        color: #374151;
+        color: var(--text-muted);
         user-select: none;
       }
-      details.tree > summary:hover { color: #2563eb; }
+      details.tree > summary:hover { color: var(--accent); }
       .tree-body {
         padding: 4px 0 4px 12px;
-        border-left: 1px solid #e5e7eb;
+        border-left: 1px solid var(--border-soft);
         margin-left: 4px;
       }
       .chip {
@@ -104,9 +162,9 @@
         max-width: 100%;
         padding: 3px 8px;
         margin: 2px 4px 2px 0;
-        background: #eff6ff;
-        color: #1e3a8a;
-        border: 1px solid #bfdbfe;
+        background: var(--chip-bg);
+        color: var(--chip-text);
+        border: 1px solid var(--chip-border);
         border-radius: 10px;
         font-size: 11px;
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -120,7 +178,7 @@
       .chip-label {
         display: inline-block;
         font-family: -apple-system, sans-serif;
-        color: #6b7280;
+        color: var(--text-faint);
         margin-right: 4px;
       }
       .chip-row {
@@ -131,31 +189,31 @@
       }
       .chip-row .field-name {
         font-size: 10px;
-        color: #6b7280;
+        color: var(--text-faint);
         min-width: 70px;
         flex-shrink: 0;
       }
       .answer-card {
-        border: 1px solid #d1d5db;
+        border: 1px solid var(--border);
         border-radius: 6px;
         padding: 8px;
         margin-bottom: 8px;
-        background: #f9fafb;
+        background: var(--card-bg);
         font-size: 12px;
       }
       .answer-card .question {
         font-weight: 600;
-        color: #374151;
+        color: var(--text-muted);
         margin-bottom: 4px;
         font-size: 11px;
       }
       .answer-card .answer-text {
-        color: #1f2937;
+        color: var(--card-text);
         white-space: pre-wrap;
         cursor: grab;
         padding: 4px;
-        background: #ffffff;
-        border: 1px dashed #d1d5db;
+        background: var(--input-bg);
+        border: 1px dashed var(--border);
         border-radius: 4px;
         max-height: 200px;
         overflow-y: auto;
@@ -172,7 +230,7 @@
         font-size: 11px;
       }
       .answer-card .spinner {
-        color: #6b7280;
+        color: var(--text-faint);
         font-style: italic;
       }
       .scan-toolbar {
@@ -186,11 +244,12 @@
         padding: 3px 8px;
         font-size: 11px;
       }
-      .scan-summary { font-size: 12px; color: #374151; flex: 1; }
+      .scan-summary { font-size: 12px; color: var(--text-muted); flex: 1; }
       #scan-list {
         max-height: 360px;
         overflow-y: auto;
-        border: 1px solid #e5e7eb;
+        background: var(--card-bg);
+        border: 1px solid var(--border-soft);
         border-radius: 4px;
         padding: 4px;
       }
@@ -200,99 +259,34 @@
         gap: 6px;
         padding: 4px 4px;
         font-size: 12px;
-        border-bottom: 1px solid #f3f4f6;
+        border-bottom: 1px solid var(--border-row);
       }
       .scan-row:last-child { border-bottom: none; }
       .scan-row.dup { opacity: 0.55; }
       .scan-row input[type=checkbox] { margin-top: 3px; flex-shrink: 0; }
       .scan-row .scan-main { flex: 1; min-width: 0; }
       .scan-row .scan-title {
-        color: #1f2937;
+        color: var(--text);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
       }
       .scan-row .scan-sub {
         font-size: 10px;
-        color: #6b7280;
+        color: var(--text-faint);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
       }
       .scan-row .badge {
         font-size: 10px;
-        background: #fef3c7;
-        color: #92400e;
-        border: 1px solid #fde68a;
+        background: var(--badge-bg);
+        color: var(--badge-text);
+        border: 1px solid var(--badge-border);
         border-radius: 8px;
         padding: 1px 6px;
         flex-shrink: 0;
         align-self: center;
-      }
-
-      /* ── Dark mode ─────────────────────────────────────────── */
-      body.dark { background: #1b1f23; color: #e6e6e6; }
-      body.dark .name { color: #a8b3c0; }
-      body.dark .dot { background: #6b7280; }
-      body.dark button { background: #0a66c2; color: #ffffff; }
-      body.dark button:hover { background: #3380d4; }
-      body.dark button:disabled { background: #3a4148; color: #6b7280; }
-      body.dark button.secondary {
-        background: #242a31;
-        color: #e6e6e6;
-        border: 1px solid #3a4148;
-      }
-      body.dark button.secondary:hover { background: #2d343c; }
-      body.dark .result { color: #a8b3c0; }
-      body.dark label.field { color: #a8b3c0; }
-      body.dark .row input,
-      body.dark .row select,
-      body.dark .row textarea {
-        background: #242a31;
-        color: #e6e6e6;
-        border: 1px solid #3a4148;
-      }
-      body.dark .pick-btn {
-        background: #242a31;
-        color: #70b5f9;
-        border: 1px solid #70b5f9;
-      }
-      body.dark .pick-btn:hover { background: #1d2a3a; }
-      body.dark .section { border-top: 1px solid #3a4148; }
-      body.dark .section-title { color: #a8b3c0; }
-      body.dark details.tree > summary { color: #e6e6e6; }
-      body.dark details.tree > summary:hover { color: #70b5f9; }
-      body.dark .tree-body { border-left: 1px solid #3a4148; }
-      body.dark .chip {
-        background: #1d2a3a;
-        color: #cfe0f5;
-        border: 1px solid #274a6b;
-      }
-      body.dark .chip-label { color: #a8b3c0; }
-      body.dark .chip-row .field-name { color: #a8b3c0; }
-      body.dark .answer-card {
-        background: #242a31;
-        border: 1px solid #3a4148;
-      }
-      body.dark .answer-card .question { color: #e6e6e6; }
-      body.dark .answer-card .answer-text {
-        background: #1b1f23;
-        color: #e6e6e6;
-        border: 1px dashed #3a4148;
-      }
-      body.dark .answer-card .spinner { color: #a8b3c0; }
-      body.dark #scan-list {
-        background: #242a31;
-        border: 1px solid #3a4148;
-      }
-      body.dark .scan-summary { color: #e6e6e6; }
-      body.dark .scan-row { border-bottom: 1px solid #2d343c; }
-      body.dark .scan-row .scan-title { color: #e6e6e6; }
-      body.dark .scan-row .scan-sub { color: #a8b3c0; }
-      body.dark .scan-row .badge {
-        background: #3a2e15;
-        color: #f5d28a;
-        border: 1px solid #5c4a1f;
       }
     </style>
   </head>

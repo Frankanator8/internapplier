@@ -55,7 +55,7 @@ class LibraryMixin:
         header_row = QHBoxLayout()
         header_row.setSpacing(8)
         self._library_header = QLabel("")
-        self._library_header.setStyleSheet("color: #1d1d1d; font-size: 14px; font-weight: 600;")
+        self._library_header.setStyleSheet("font-size: 14px; font-weight: 600;")  # color from default QLabel rule
         header_row.addWidget(self._library_header, 1)
         self._library_open_btn = _secondary_btn("Open Externally", 140)
         self._library_open_btn.clicked.connect(self._open_library_item_external)
@@ -68,7 +68,7 @@ class LibraryMixin:
             "No resume selected.\nGenerated PDFs will appear here."
         )
         self._library_empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._library_empty_label.setStyleSheet("color: #888; font-size: 13px;")
+        self._library_empty_label.setObjectName("muted")
         self._library_preview_stack.addWidget(self._library_empty_label)
 
         self._library_pdf_view = QWebEngineView()

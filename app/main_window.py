@@ -43,9 +43,8 @@ class MainWindow(QMainWindow):
         self.addToolBar(toolbar)
 
         app_label = QLabel("  I*ternship")
-        app_label.setStyleSheet(
-            "font-size: 15px; font-weight: bold; color: #0a66c2; padding: 0 8px;"
-        )
+        app_label.setObjectName("app-brand")
+        app_label.setStyleSheet("padding: 0 8px;")
         toolbar.addWidget(app_label)
 
         spacer = QWidget()

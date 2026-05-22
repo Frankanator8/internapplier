@@ -85,7 +85,7 @@ class InterviewsPage(QWidget):
         layout.setSpacing(14)
         layout.addWidget(_label(title, "section-title"))
         coming = QLabel("Coming soon.")
-        coming.setStyleSheet("color: #666;")
+        coming.setObjectName("hint")
         layout.addWidget(coming)
         layout.addStretch()
         return page

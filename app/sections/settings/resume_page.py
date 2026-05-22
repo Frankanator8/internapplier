@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
 
 from api import ai_provider
 
-from ..base import _label, _primary_btn, _secondary_btn
+from ..base import _label, _primary_btn, _secondary_btn, _set_status
 
 
 class ResumeMixin:
@@ -26,7 +26,7 @@ class ResumeMixin:
         rc_layout.setSpacing(16)
 
         resume_title = QLabel("Resume")
-        resume_title.setStyleSheet("font-size: 16px; font-weight: bold; color: #0a66c2;")
+        resume_title.setObjectName("card-title")
         rc_layout.addWidget(resume_title)
 
         resume_hint = QLabel(
@@ -34,7 +34,7 @@ class ResumeMixin:
             "generating tailored resumes. Leave empty to fall back to the built-in style."
         )
         resume_hint.setWordWrap(True)
-        resume_hint.setStyleSheet("font-size: 12px; color: #666;")
+        resume_hint.setObjectName("hint")
         rc_layout.addWidget(resume_hint)
 
         page_cap_row = QHBoxLayout()
@@ -90,7 +90,7 @@ class ResumeMixin:
             "Default: ~/Documents/Resumes/. Folder is created automatically."
         )
         output_dir_hint.setWordWrap(True)
-        output_dir_hint.setStyleSheet("font-size: 12px; color: #666;")
+        output_dir_hint.setObjectName("hint")
         rc_layout.addWidget(output_dir_hint)
 
         self._resume_template_edit = QPlainTextEdit()
@@ -108,7 +108,7 @@ class ResumeMixin:
         rt_save_btn = _primary_btn("Save", width=100)
         rt_save_btn.clicked.connect(self._save_resume_template)
         self._resume_template_status = QLabel("")
-        self._resume_template_status.setStyleSheet("font-size: 12px; color: #057642;")
+        self._resume_template_status.setObjectName("status-ok")
         rt_btn_row.addWidget(rt_save_btn)
         rt_btn_row.addWidget(self._resume_template_status)
         rt_btn_row.addStretch()
@@ -128,7 +128,7 @@ class ResumeMixin:
         ai_provider.save_max_generation_attempts(self._max_iters_spin.value())
         ai_provider.save_resume_score_threshold(self._score_threshold_spin.value())
         ai_provider.save_resume_output_dir(self._output_dir_edit.text())
-        self._resume_template_status.setStyleSheet("font-size: 12px; color: #057642;")
+        _set_status(self._resume_template_status, "ok")
         self._resume_template_status.setText("✓  Saved")
         QTimer.singleShot(3000, lambda: self._resume_template_status.setText(""))
         if self._status_bar:

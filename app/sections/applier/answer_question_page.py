@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
 
 from api.research_cache import lookup as _research_from_cache
 
-from ..base import _label, _primary_btn, _secondary_btn
+from ..base import _label, _primary_btn, _secondary_btn, _set_status
 from .workers import _QuestionWorker
 
 
@@ -50,7 +50,7 @@ class AnswerQuestionMixin:
 
         self._answer_status = QLabel("")
         self._answer_status.setWordWrap(True)
-        self._answer_status.setStyleSheet("color: #555; font-size: 12px;")
+        self._answer_status.setObjectName("status-neutral")
         left_layout.addWidget(self._answer_status)
 
         splitter.addWidget(left)
@@ -87,7 +87,7 @@ class AnswerQuestionMixin:
     def _answer_question(self):
         question = self._answer_question_input.toPlainText().strip()
         if not question:
-            self._answer_status.setStyleSheet("color: #cc3300; font-size: 12px;")
+            _set_status(self._answer_status, "error")
             self._answer_status.setText("Type a question first.")
             return
 
@@ -98,7 +98,7 @@ class AnswerQuestionMixin:
         self._answer_output.clear()
         self._answer_btn.setEnabled(False)
         self._answer_btn.setText("Answering…")
-        self._answer_status.setStyleSheet("color: #555; font-size: 12px;")
+        _set_status(self._answer_status, "neutral")
         if company and _research_from_cache(self._research_cache, company):
             self._answer_status.setText(f"Using cached research for {company!r}…")
         elif company:
@@ -121,7 +121,7 @@ class AnswerQuestionMixin:
         def on_error(msg: str):
             self._answer_btn.setEnabled(True)
             self._answer_btn.setText("❓  Answer Question")
-            self._answer_status.setStyleSheet("color: #cc3300; font-size: 12px;")
+            _set_status(self._answer_status, "error")
             self._answer_status.setText(f"Error: {msg}")
             thread.quit()
 

@@ -20,6 +20,14 @@ def _label(text: str, obj_name: str = "field-label") -> QLabel:
     return lbl
 
 
+def _set_status(label: QLabel, state: str) -> None:
+    """Restyle a status label by swapping objectName. state: 'ok' | 'error' | 'neutral'."""
+    label.setObjectName(f"status-{state}")
+    s = label.style()
+    s.unpolish(label)
+    s.polish(label)
+
+
 def _primary_btn(text: str, width: int | None = None) -> QPushButton:
     btn = QPushButton(text)
     btn.setObjectName("primary")
@@ -499,11 +507,6 @@ class ChipsWidget(QWidget):
 
         chip = QFrame()
         chip.setObjectName("chip")
-        chip.setStyleSheet(
-            "QFrame#chip { background: #eef3fb; border: 1px solid #cfd8e3;"
-            " border-radius: 11px; }"
-            "QLabel { color: #1d1d1d; font-size: 12px; }"
-        )
         chip_layout = QHBoxLayout(chip)
         chip_layout.setContentsMargins(8, 2, 4, 2)
         chip_layout.setSpacing(4)
@@ -511,7 +514,6 @@ class ChipsWidget(QWidget):
         remove = QPushButton("✕")
         remove.setObjectName("icon-btn")
         remove.setFixedSize(18, 18)
-        remove.setStyleSheet("border: none; background: transparent; color: #6b7280;")
         chip_layout.addWidget(lbl)
         chip_layout.addWidget(remove)
 

@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
 
 from api import ai_provider
 
-from ..base import _primary_btn, _secondary_btn
+from ..base import _primary_btn, _secondary_btn, _set_status
 
 
 def _prompt_label(filename: str) -> str:
@@ -61,7 +61,7 @@ class PromptsMixin:
         layout.setSpacing(12)
 
         title = QLabel("Auto Reload")
-        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #0a66c2;")
+        title.setObjectName("card-title")
         layout.addWidget(title)
 
         hint = QLabel(
@@ -69,7 +69,7 @@ class PromptsMixin:
             "Changes take effect on the next use."
         )
         hint.setWordWrap(True)
-        hint.setStyleSheet("font-size: 12px; color: #666;")
+        hint.setObjectName("hint")
         layout.addWidget(hint)
 
         self._auto_resync_checkbox = QCheckBox("Auto resync all prompts to default on app load")
@@ -88,7 +88,7 @@ class PromptsMixin:
         layout.setSpacing(16)
 
         title = QLabel(title_text)
-        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #0a66c2;")
+        title.setObjectName("card-title")
         layout.addWidget(title)
 
         tab_bar = QTabBar()
@@ -121,7 +121,7 @@ class PromptsMixin:
             save_btn = _primary_btn("Save", width=100)
             sync_btn = _secondary_btn("Sync with Default", width=160)
             status_lbl = QLabel("")
-            status_lbl.setStyleSheet("font-size: 12px; color: #057642;")
+            status_lbl.setObjectName("status-ok")
 
             save_btn.clicked.connect(
                 lambda checked, fn=filename, ed=editor, sl=status_lbl: self._save_prompt(fn, ed, sl)
@@ -164,7 +164,7 @@ class PromptsMixin:
         default = ai_provider.default_prompt(filename)
         editor.setPlainText(default)
         ai_provider.save_prompt(filename, default)
-        status_lbl.setStyleSheet("font-size: 12px; color: #057642;")
+        _set_status(status_lbl, "ok")
         status_lbl.setText("✓  Synced with default")
         QTimer.singleShot(3000, lambda: status_lbl.setText(""))
         if self._status_bar:
@@ -172,7 +172,7 @@ class PromptsMixin:
 
     def _save_prompt(self, filename: str, editor: QPlainTextEdit, status_lbl: QLabel) -> None:
         ai_provider.save_prompt(filename, editor.toPlainText())
-        status_lbl.setStyleSheet("font-size: 12px; color: #057642;")
+        _set_status(status_lbl, "ok")
         status_lbl.setText("✓  Saved")
         QTimer.singleShot(3000, lambda: status_lbl.setText(""))
         if self._status_bar:

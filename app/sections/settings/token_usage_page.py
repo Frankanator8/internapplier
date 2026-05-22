@@ -29,7 +29,7 @@ class TokenUsageMixin:
         card_layout.setSpacing(18)
 
         title = QLabel("Token Usage")
-        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #0a66c2;")
+        title.setObjectName("card-title")
         card_layout.addWidget(title)
 
         hint = QLabel(

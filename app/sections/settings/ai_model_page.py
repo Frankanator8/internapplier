@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
 
 from api import ai_provider
 
-from ..base import _label, _primary_btn
+from ..base import _label, _primary_btn, _set_status
 
 
 class AiModelMixin:
@@ -20,7 +20,7 @@ class AiModelMixin:
         card_layout.setSpacing(20)
 
         title = QLabel("AI Model Settings")
-        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #0a66c2;")
+        title.setObjectName("card-title")
         card_layout.addWidget(title)
 
         config = ai_provider._load_model_config()
@@ -46,7 +46,7 @@ class AiModelMixin:
         def _sep() -> QFrame:
             s = QFrame()
             s.setFrameShape(QFrame.Shape.HLine)
-            s.setStyleSheet("color: #e0e0e0;")
+            s.setObjectName("hline")
             return s
 
         card_layout.addWidget(self._build_model_section(
@@ -79,7 +79,7 @@ class AiModelMixin:
         save_btn = _primary_btn("Save", width=100)
         save_btn.clicked.connect(self._save_model_config)
         self._inline_status = QLabel("")
-        self._inline_status.setStyleSheet("font-size: 12px; color: #057642;")
+        self._inline_status.setObjectName("status-ok")
         btn_row.addWidget(save_btn)
         btn_row.addWidget(self._inline_status)
         btn_row.addStretch()
@@ -111,7 +111,7 @@ class AiModelMixin:
         cap_row = QHBoxLayout()
         cap_row.setSpacing(6)
         req_label = QLabel("Required:")
-        req_label.setStyleSheet("font-size: 11px; color: #555555; font-weight: 600;")
+        req_label.setObjectName("field-sublabel")
         cap_row.addWidget(req_label)
         for cap in capabilities:
             cap_row.addWidget(self._make_capability_chip(cap))
@@ -121,10 +121,10 @@ class AiModelMixin:
         used_row = QHBoxLayout()
         used_row.setSpacing(6)
         used_label = QLabel("Used for:")
-        used_label.setStyleSheet("font-size: 11px; color: #555555; font-weight: 600;")
+        used_label.setObjectName("field-sublabel")
         used_row.addWidget(used_label)
         used_val = QLabel(", ".join(used_for))
-        used_val.setStyleSheet("font-size: 12px; color: #666;")
+        used_val.setObjectName("hint")
         used_row.addWidget(used_val)
         used_row.addStretch()
         layout.addLayout(used_row)
@@ -134,11 +134,7 @@ class AiModelMixin:
     @staticmethod
     def _make_capability_chip(text: str) -> QFrame:
         chip = QFrame()
-        chip.setStyleSheet(
-            "QFrame { background: #e8f0fb; border: none; border-radius: 10px; }"
-            "QLabel { color: #0a66c2; font-size: 11px; font-weight: 600;"
-            " background: transparent; }"
-        )
+        chip.setObjectName("capability-chip")
         layout = QHBoxLayout(chip)
         layout.setContentsMargins(8, 3, 8, 3)
         layout.setSpacing(0)
@@ -151,13 +147,13 @@ class AiModelMixin:
         fast = self._fast_edit.text().strip()
         powerful = self._powerful_edit.text().strip()
         if not basic or not fast or not powerful:
-            self._inline_status.setStyleSheet("font-size: 12px; color: #b00;")
+            _set_status(self._inline_status, "error")
             self._inline_status.setText("All three models are required.")
             return
 
         ai_provider.save_model_config(basic, fast, powerful)
 
-        self._inline_status.setStyleSheet("font-size: 12px; color: #057642;")
+        _set_status(self._inline_status, "ok")
         self._inline_status.setText("✓  Saved")
         QTimer.singleShot(3000, lambda: self._inline_status.setText(""))
 

@@ -145,7 +145,8 @@ class InterviewChatPage(QWidget):
             "Per-answer feedback will appear here after you send a reply."
         )
         self._cards_empty_label.setWordWrap(True)
-        self._cards_empty_label.setStyleSheet("color: #888; padding: 8px 4px;")
+        self._cards_empty_label.setObjectName("muted")
+        self._cards_empty_label.setStyleSheet("padding: 8px 4px;")
         self._cards_layout_v.addWidget(self._cards_empty_label)
         self._cards_scroll.setWidget(cards_host)
         self._side_tabs.addTab(self._cards_scroll, "Per-Answer")
@@ -234,7 +235,8 @@ class InterviewChatPage(QWidget):
             self._video_widget = None
         label = QLabel(text)
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        label.setStyleSheet("color: #bbb; font-size: 12px;")
+        label.setObjectName("muted")
+        label.setStyleSheet("font-size: 12px;")
         label.setWordWrap(True)
         self._camera_layout.addWidget(label)
         self._camera_placeholder = label
@@ -482,7 +484,8 @@ class InterviewChatPage(QWidget):
         v.setSpacing(4)
 
         who = QLabel("You" if role == "user" else "Interviewer")
-        who.setStyleSheet("color: #666; font-size: 11px; font-weight: 600;")
+        who.setObjectName("muted")
+        who.setStyleSheet("font-size: 11px; font-weight: 600;")
         v.addWidget(who)
 
         body = QLabel(text)
@@ -519,11 +522,12 @@ class InterviewChatPage(QWidget):
 
         q_label = QLabel(question or "Opening exchange")
         q_label.setWordWrap(True)
-        q_label.setStyleSheet("color: #555; font-size: 11px; font-weight: 600;")
+        q_label.setObjectName("field-sublabel")
         v.addWidget(q_label)
 
         title = QLabel("GENERATING…")
-        title.setStyleSheet("color: #888; font-size: 10px; font-weight: 700;")
+        title.setObjectName("muted")
+        title.setStyleSheet("font-size: 10px; font-weight: 700;")
         v.addWidget(title)
 
         body = QLabel("")
@@ -807,7 +811,8 @@ class InterviewChatPage(QWidget):
             "Per-answer feedback will appear here after you send a reply."
         )
         self._cards_empty_label.setWordWrap(True)
-        self._cards_empty_label.setStyleSheet("color: #888; padding: 8px 4px;")
+        self._cards_empty_label.setObjectName("muted")
+        self._cards_empty_label.setStyleSheet("padding: 8px 4px;")
         self._cards_layout_v.addWidget(self._cards_empty_label)
 
         self._notes_view.setMarkdown("")

@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import QApplication
 
 from api import ai_provider
 
-from .style import DARK_STYLESHEET, LIGHT_STYLESHEET
+from .style import build_stylesheet
 
 
 def current_effective_theme(mode: str) -> str:
@@ -25,8 +25,7 @@ def current_effective_theme(mode: str) -> str:
 
 def apply_theme(app: QApplication, mode: str) -> None:
     effective = current_effective_theme(mode)
-    sheet = DARK_STYLESHEET if effective == "dark" else LIGHT_STYLESHEET
-    app.setStyleSheet(sheet)
+    app.setStyleSheet(build_stylesheet(effective))
 
 
 def install_system_listener(app: QApplication) -> None:

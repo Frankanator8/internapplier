@@ -53,7 +53,7 @@ class TrackerPage(QWidget):
         self._search_edit.textChanged.connect(self._apply_filter)
         header_row.addWidget(self._search_edit)
         self._prep_status = QLabel("")
-        self._prep_status.setStyleSheet("color: #555; font-size: 12px;")
+        self._prep_status.setObjectName("status-neutral")
         header_row.addWidget(self._prep_status)
         self._prep_btn = _secondary_btn("⚙  Prep All Materials", 170)
         self._prep_btn.clicked.connect(self._on_prep_all_clicked)

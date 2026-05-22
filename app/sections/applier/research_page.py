@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QSplitter, QVBoxLayout, QWidget,
 )
 
-from ..base import _label, _primary_btn, _secondary_btn
+from ..base import _label, _primary_btn, _secondary_btn, _set_status
 from .workers import _ResearchWorker
 
 
@@ -69,7 +69,7 @@ class ResearchMixin:
 
         self._research_status = QLabel("")
         self._research_status.setWordWrap(True)
-        self._research_status.setStyleSheet("color: #555; font-size: 12px;")
+        self._research_status.setObjectName("status-neutral")
         right_layout.addWidget(self._research_status)
 
         scroll = QScrollArea()
@@ -94,13 +94,13 @@ class ResearchMixin:
         url = self._research_url_input.text().strip()
         if not name or not url:
             self._research_status.setText("Enter both a company name and a website URL.")
-            self._research_status.setStyleSheet("color: #cc3300; font-size: 12px;")
+            _set_status(self._research_status, "error")
             return
 
         self._clear_research_results()
         self._research_btn.setEnabled(False)
         self._research_btn.setText("Researching…")
-        self._research_status.setStyleSheet("color: #555; font-size: 12px;")
+        _set_status(self._research_status, "neutral")
         self._research_status.setText("Starting…")
 
         worker = _ResearchWorker(name, url)
@@ -122,12 +122,12 @@ class ResearchMixin:
         def on_error(msg: str):
             self._research_btn.setEnabled(True)
             self._research_btn.setText("🔍  Research Company")
-            self._research_status.setStyleSheet("color: #cc3300; font-size: 12px;")
+            _set_status(self._research_status, "error")
             self._research_status.setText(f"Error: {msg}")
             thread.quit()
 
         def on_research_progress(msg: str):
-            self._research_status.setStyleSheet("color: #555; font-size: 12px;")
+            _set_status(self._research_status, "neutral")
             self._research_status.setText(msg)
 
         worker.finished.connect(on_finished)
