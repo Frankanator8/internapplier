@@ -15,6 +15,7 @@ from .formatting import (
 )
 from .prompts import load_prompt, load_schema
 from .settings import _load_model_config, get_resume_template
+from ..token_usage import record_usage
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,7 @@ class OpenRouterProvider:
                 "model": model,
                 "stream": True,
                 "messages": messages,
+                "usage": {"include": True},
             }
             if tools:
                 payload_json["tools"] = tools
@@ -112,6 +114,7 @@ class OpenRouterProvider:
             accumulated_content: list[str] = []
             tool_calls_acc: dict[int, dict] = {}
             finish_reason: str | None = None
+            final_usage: dict | None = None
             t0 = time.perf_counter()
             chunk_count = 0
             try:
@@ -140,6 +143,8 @@ class OpenRouterProvider:
                             logger.debug("%s — skipping non-JSON line: %r",
                                          log_label, payload[:120])
                             continue
+                        if isinstance(data.get("usage"), dict):
+                            final_usage = data["usage"]
                         choices = data.get("choices") or []
                         if not choices:
                             continue
@@ -171,6 +176,22 @@ class OpenRouterProvider:
                     log_label, elapsed, chunk_count, finish_reason,
                     len(tool_calls_acc),
                 )
+                if final_usage:
+                    prompt_t = final_usage.get("prompt_tokens", 0)
+                    completion_t = final_usage.get("completion_tokens", 0)
+                    logger.info(
+                        "%s — usage tier=%s prompt=%s completion=%s",
+                        log_label, tier, prompt_t, completion_t,
+                    )
+                    try:
+                        record_usage(tier, prompt_t, completion_t)
+                    except Exception:
+                        logger.exception("%s — record_usage failed", log_label)
+                else:
+                    logger.warning(
+                        "%s — no usage block received from provider (model=%s)",
+                        log_label, model,
+                    )
             except Exception:
                 logger.exception("%s — stream failed", log_label)
                 raise
@@ -597,7 +618,22 @@ class OpenRouterProvider:
             logger.exception("research_company — request failed")
             raise
 
-        raw = response.json()["choices"][0]["message"]["content"].strip()
+        response_json = response.json()
+        usage = response_json.get("usage") if isinstance(response_json, dict) else None
+        if isinstance(usage, dict):
+            prompt_t = usage.get("prompt_tokens", 0)
+            completion_t = usage.get("completion_tokens", 0)
+            logger.info(
+                "research_company — usage tier=fast prompt=%s completion=%s",
+                prompt_t, completion_t,
+            )
+            try:
+                record_usage("fast", prompt_t, completion_t)
+            except Exception:
+                logger.exception("research_company — record_usage failed")
+        else:
+            logger.warning("research_company — no usage block in response (model=%s)", model)
+        raw = response_json["choices"][0]["message"]["content"].strip()
 
         if raw.startswith("```"):
             raw = raw.split("```")[1]

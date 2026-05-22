@@ -1,5 +1,6 @@
-test everything!
+test resume generation pipeline
 write READMEs
 Ability to "Link" similar Interview Questions
 Resume generation doesn't do company research
-Token counter
+Humanize AI responses
+Resume generation speedup

@@ -8,6 +8,7 @@ INTERVIEW_TEMPLATE_FILE = APP_DIR / "interview_template.json"
 INTERVIEW_FEEDBACK_FILE = APP_DIR / "interview_feedback.json"
 MODELS_FILE = APP_DIR / "models.txt"
 SETTINGS_FILE = APP_DIR / "settings.json"
+TOKEN_USAGE_FILE = APP_DIR / "token_usage.json"
 APP_PROMPTS_DIR = APP_DIR / "prompts"
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 

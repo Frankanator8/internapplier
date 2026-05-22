@@ -10,6 +10,7 @@ from .ai_model_page import AiModelMixin
 from .general_page import GeneralMixin
 from .prompts_page import PromptsMixin
 from .resume_page import ResumeMixin
+from .token_usage_page import TokenUsageMixin
 
 
 class SettingsPage(
@@ -17,6 +18,7 @@ class SettingsPage(
     ResumeMixin,
     PromptsMixin,
     GeneralMixin,
+    TokenUsageMixin,
     QWidget,
 ):
     def __init__(self, status_bar: QStatusBar | None = None, on_heatmap_thresholds_changed=None):
@@ -32,7 +34,7 @@ class SettingsPage(
         self._sidebar.setObjectName("sidebar")
         self._sidebar.setFixedWidth(200)
 
-        for label in ("⚙️  General", "🤖  AI Model", "📄  Resume", "📝  System Prompts"):
+        for label in ("⚙️  General", "🤖  AI Model", "📄  Resume", "📝  System Prompts", "📊  Token Usage"):
             item = QListWidgetItem(label)
             item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             self._sidebar.addItem(item)
@@ -42,12 +44,18 @@ class SettingsPage(
         self._stack.addWidget(self._build_ai_model_page())
         self._stack.addWidget(self._build_resume_page())
         self._stack.addWidget(self._build_prompts_page())
+        self._stack.addWidget(self._build_token_usage_page())
 
         self._sidebar.currentRowChanged.connect(self._stack.setCurrentIndex)
+        self._sidebar.currentRowChanged.connect(self._on_settings_row_changed)
         self._sidebar.setCurrentRow(0)
 
         outer.addWidget(self._sidebar)
         outer.addWidget(self._stack, 1)
+
+    def _on_settings_row_changed(self, row: int) -> None:
+        if row == 4:
+            self._refresh_token_usage()
 
     def _wrap_scroll(self, card: QWidget) -> QWidget:
         page = QWidget()
