@@ -4,10 +4,9 @@ import time
 
 import requests
 
-logger = logging.getLogger(__name__)
+from ..constants import OPENROUTER_KEY_INFO_TIMEOUT, OPENROUTER_KEY_INFO_URL
 
-_KEY_INFO_URL = "https://openrouter.ai/api/v1/auth/key"
-_KEY_INFO_TIMEOUT = 3.0
+logger = logging.getLogger(__name__)
 
 _STATUS_MESSAGES = {
     400: "Bad request sent to the AI provider",
@@ -43,9 +42,9 @@ def _fetch_key_info(api_key: str | None) -> dict | None:
         return None
     try:
         r = requests.get(
-            _KEY_INFO_URL,
+            OPENROUTER_KEY_INFO_URL,
             headers={"Authorization": f"Bearer {api_key}"},
-            timeout=_KEY_INFO_TIMEOUT,
+            timeout=OPENROUTER_KEY_INFO_TIMEOUT,
         )
         if r.status_code != 200:
             return None

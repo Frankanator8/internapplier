@@ -2,15 +2,21 @@ import json
 import pathlib
 from typing import Any, Callable
 
-from .paths import _APP_DIR, _MODELS_FILE, _SETTINGS_FILE
+from ..constants import (
+    APP_DIR,
+    DEFAULT_AUTO_RESYNC_PROMPTS,
+    DEFAULT_FAST_MODEL,
+    DEFAULT_MAX_GENERATION_ATTEMPTS,
+    DEFAULT_POWERFUL_MODEL,
+    DEFAULT_RESUME_OUTPUT_DIR,
+    DEFAULT_RESUME_PAGE_CAP,
+    DEFAULT_RESUME_SCORE_THRESHOLD,
+    DEFAULT_SCRAPER_CANDIDATE_PATHS,
+    DEFAULT_SERVER_PORT,
+    MODELS_FILE,
+    SETTINGS_FILE,
+)
 from .prompts import _seed_prompts
-
-DEFAULT_FAST_MODEL = "google/gemini-2.0-flash-exp:free"
-DEFAULT_POWERFUL_MODEL = "openai/gpt-4o-mini"
-DEFAULT_RESUME_PAGE_CAP = 1
-DEFAULT_RESUME_OUTPUT_DIR = pathlib.Path.home() / "Documents" / "Resumes"
-DEFAULT_MAX_GENERATION_ATTEMPTS = 3
-DEFAULT_AUTO_RESYNC_PROMPTS = False
 
 _settings_cache: dict | None = None
 _model_config_cache: dict[str, str] | None = None
@@ -20,11 +26,11 @@ def _load_settings() -> dict:
     global _settings_cache
     if _settings_cache is not None:
         return _settings_cache
-    if not _SETTINGS_FILE.exists():
+    if not SETTINGS_FILE.exists():
         _settings_cache = {}
         return _settings_cache
     try:
-        with open(_SETTINGS_FILE, "r", encoding="utf-8") as f:
+        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         _settings_cache = data if isinstance(data, dict) else {}
     except (json.JSONDecodeError, OSError):
@@ -44,10 +50,10 @@ def _get(key: str, default: Any, coerce: Callable[[Any], Any] | None = None) -> 
 
 def _set(key: str, value: Any) -> None:
     global _settings_cache
-    _APP_DIR.mkdir(parents=True, exist_ok=True)
+    APP_DIR.mkdir(parents=True, exist_ok=True)
     current = dict(_load_settings())
     current[key] = value
-    with open(_SETTINGS_FILE, "w", encoding="utf-8") as f:
+    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
         json.dump(current, f, indent=2)
     _settings_cache = current
 
@@ -89,6 +95,34 @@ def save_max_generation_attempts(n: int) -> None:
     _set("max_generation_attempts", int(n))
 
 
+def get_server_port() -> int:
+    n = _get("server_port", DEFAULT_SERVER_PORT, int)
+    return n if n >= 1 else DEFAULT_SERVER_PORT
+
+
+def save_server_port(port: int) -> None:
+    _set("server_port", int(port))
+
+
+def get_resume_score_threshold() -> float:
+    return _get("resume_score_threshold", DEFAULT_RESUME_SCORE_THRESHOLD, float)
+
+
+def save_resume_score_threshold(value: float) -> None:
+    _set("resume_score_threshold", float(value))
+
+
+def get_scraper_candidate_paths() -> list[str]:
+    val = _load_settings().get("scraper_candidate_paths")
+    if isinstance(val, list) and all(isinstance(p, str) for p in val):
+        return val
+    return DEFAULT_SCRAPER_CANDIDATE_PATHS
+
+
+def save_scraper_candidate_paths(paths: list[str]) -> None:
+    _set("scraper_candidate_paths", [str(p) for p in paths])
+
+
 def get_auto_resync_prompts() -> bool:
     return bool(_get("auto_resync_prompts", DEFAULT_AUTO_RESYNC_PROMPTS))
 
@@ -104,17 +138,17 @@ def _load_model_config() -> dict[str, str]:
 
     defaults = {"fast": DEFAULT_FAST_MODEL, "powerful": DEFAULT_POWERFUL_MODEL}
 
-    _APP_DIR.mkdir(parents=True, exist_ok=True)
+    APP_DIR.mkdir(parents=True, exist_ok=True)
     _seed_prompts()
-    if not _MODELS_FILE.exists():
-        with open(_MODELS_FILE, "w", encoding="utf-8") as f:
+    if not MODELS_FILE.exists():
+        with open(MODELS_FILE, "w", encoding="utf-8") as f:
             f.write(f"fast={DEFAULT_FAST_MODEL}\n")
             f.write(f"powerful={DEFAULT_POWERFUL_MODEL}\n")
         _model_config_cache = defaults
         return _model_config_cache
 
     config = dict(defaults)
-    with open(_MODELS_FILE, "r", encoding="utf-8") as f:
+    with open(MODELS_FILE, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
@@ -131,10 +165,10 @@ def _load_model_config() -> dict[str, str]:
 
 def save_model_config(fast: str, powerful: str) -> None:
     global _model_config_cache
-    _APP_DIR.mkdir(parents=True, exist_ok=True)
+    APP_DIR.mkdir(parents=True, exist_ok=True)
     fast = fast.strip()
     powerful = powerful.strip()
-    with open(_MODELS_FILE, "w", encoding="utf-8") as f:
+    with open(MODELS_FILE, "w", encoding="utf-8") as f:
         f.write(f"fast={fast}\n")
         f.write(f"powerful={powerful}\n")
     _model_config_cache = {"fast": fast, "powerful": powerful}

@@ -1,0 +1,17 @@
+{
+  "type": "function",
+  "function": {
+    "name": "page_length",
+    "description": "Compile a complete LaTeX document and measure its rendered length, returning {ok, fill, page_cap}. `fill` is a decimal where 1.0 == exactly one page; 1.25 == 25% into a second page; 0.8 == 80% of one page. Use this to decide whether to add, tighten, or drop content. Must be a complete document.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "latex": {
+          "type": "string",
+          "description": "Complete LaTeX source starting with \\documentclass."
+        }
+      },
+      "required": ["latex"]
+    }
+  }
+}

@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
+from ..ai_provider import load_schema
+from ..constants import AGENT_MAX_LOG_EXCERPT
 from .compile import (
     LatexCompileError,
     compile_latex,
@@ -10,8 +12,6 @@ from .compile import (
 )
 
 logger = logging.getLogger(__name__)
-
-_MAX_LOG_EXCERPT = 1500
 
 _MINIMAL_PREAMBLE = r"""\documentclass[11pt]{article}
 \usepackage[margin=0.75in]{geometry}
@@ -29,7 +29,7 @@ def _wrap_if_snippet(latex: str) -> str:
     return _MINIMAL_PREAMBLE + latex + _MINIMAL_POSTAMBLE
 
 
-def _truncate(text: str, limit: int = _MAX_LOG_EXCERPT) -> str:
+def _truncate(text: str, limit: int = AGENT_MAX_LOG_EXCERPT) -> str:
     if not text:
         return ""
     if len(text) <= limit:
@@ -65,27 +65,5 @@ TOOL_HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
 
 
 OPENAI_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
-    "page_length": {
-        "type": "function",
-        "function": {
-            "name": "page_length",
-            "description": (
-                "Compile a complete LaTeX document and measure its rendered "
-                "length, returning {ok, fill, page_cap}. `fill` is a decimal "
-                "where 1.0 == exactly one page; 1.25 == 25% into a second "
-                "page; 0.8 == 80% of one page. Use this to decide whether to "
-                "add, tighten, or drop content. Must be a complete document."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "latex": {
-                        "type": "string",
-                        "description": "Complete LaTeX source starting with \\documentclass.",
-                    }
-                },
-                "required": ["latex"],
-            },
-        },
-    },
+    "page_length": load_schema("page_length.tool.json"),
 }

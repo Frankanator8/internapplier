@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "research_company_output",
+  "description": "Shallow research brief extracted from a company's own website. If a field cannot be inferred from the source content, return an empty array or empty string for it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["core_values", "recent_projects", "summary"],
+  "properties": {
+    "core_values": {
+      "type": "array",
+      "description": "3-6 strings capturing the company's stated values, mission, or culture pillars.",
+      "items": { "type": "string" }
+    },
+    "recent_projects": {
+      "type": "array",
+      "description": "3-6 short strings describing recent products, launches, initiatives, or news mentioned on the site. Each item should include a small description.",
+      "items": { "type": "string" }
+    },
+    "summary": {
+      "type": "string",
+      "description": "2-3 sentence plain-text summary of what the company does and its current focus."
+    }
+  }
+}

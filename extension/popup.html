@@ -175,6 +175,60 @@
         color: #6b7280;
         font-style: italic;
       }
+      .scan-toolbar {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        margin: 6px 0 8px;
+      }
+      .scan-toolbar button {
+        width: auto;
+        padding: 3px 8px;
+        font-size: 11px;
+      }
+      .scan-summary { font-size: 12px; color: #374151; flex: 1; }
+      #scan-list {
+        max-height: 360px;
+        overflow-y: auto;
+        border: 1px solid #e5e7eb;
+        border-radius: 4px;
+        padding: 4px;
+      }
+      .scan-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 6px;
+        padding: 4px 4px;
+        font-size: 12px;
+        border-bottom: 1px solid #f3f4f6;
+      }
+      .scan-row:last-child { border-bottom: none; }
+      .scan-row.dup { opacity: 0.55; }
+      .scan-row input[type=checkbox] { margin-top: 3px; flex-shrink: 0; }
+      .scan-row .scan-main { flex: 1; min-width: 0; }
+      .scan-row .scan-title {
+        color: #1f2937;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .scan-row .scan-sub {
+        font-size: 10px;
+        color: #6b7280;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .scan-row .badge {
+        font-size: 10px;
+        background: #fef3c7;
+        color: #92400e;
+        border: 1px solid #fde68a;
+        border-radius: 8px;
+        padding: 1px 6px;
+        flex-shrink: 0;
+        align-self: center;
+      }
     </style>
   </head>
   <body>
@@ -193,6 +247,7 @@
         <button id="load-btn" disabled>Autofill Application</button>
         <button id="create-btn" class="secondary" disabled>Make New Application</button>
         <button id="ask-btn" class="secondary" disabled>Ask AI about a question on page</button>
+        <button id="scan-btn" class="secondary" disabled>Scan page for jobs</button>
       </div>
       <div id="result" class="result"></div>
 
@@ -205,6 +260,30 @@
         <div class="section-title">Profile — drag fields into the page</div>
         <div id="profile-tree"></div>
       </div>
+    </div>
+
+    <div id="scan-view" class="hidden">
+      <h1>Scan page for jobs</h1>
+      <div class="scan-toolbar">
+        <span id="scan-summary" class="scan-summary">Scanning…</span>
+      </div>
+      <div id="scan-scope" class="scan-toolbar hidden" style="font-size: 11px; color: #6b7280;">
+        <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+          Scoped to: <code id="scan-scope-selector"></code>
+        </span>
+        <button id="scan-scope-clear" class="secondary" type="button">Clear</button>
+      </div>
+      <div class="scan-toolbar">
+        <button id="scan-pick" class="secondary" type="button">Pick a section</button>
+        <button id="scan-select-new" class="secondary" type="button">Select all new</button>
+        <button id="scan-deselect" class="secondary" type="button">Deselect all</button>
+      </div>
+      <div id="scan-list"></div>
+      <div class="form-actions" style="margin-top: 10px;">
+        <button id="scan-back" class="secondary">Back</button>
+        <button id="scan-add">Add Selected</button>
+      </div>
+      <div id="scan-result" class="result"></div>
     </div>
 
     <div id="form-view" class="hidden">

@@ -11,6 +11,20 @@ const profileTree = document.getElementById("profile-tree");
 const answersSection = document.getElementById("answers-section");
 const answersList = document.getElementById("answers-list");
 
+const scanBtn = document.getElementById("scan-btn");
+const scanView = document.getElementById("scan-view");
+const scanSummary = document.getElementById("scan-summary");
+const scanList = document.getElementById("scan-list");
+const scanBack = document.getElementById("scan-back");
+const scanAdd = document.getElementById("scan-add");
+const scanSelectNew = document.getElementById("scan-select-new");
+const scanDeselect = document.getElementById("scan-deselect");
+const scanResult = document.getElementById("scan-result");
+const scanPick = document.getElementById("scan-pick");
+const scanScope = document.getElementById("scan-scope");
+const scanScopeSelector = document.getElementById("scan-scope-selector");
+const scanScopeClear = document.getElementById("scan-scope-clear");
+
 const mainView = document.getElementById("main-view");
 const formView = document.getElementById("form-view");
 const fCompany = document.getElementById("f-company");
@@ -156,6 +170,7 @@ async function refreshStatus() {
     dot.classList.add("ok");
     statusText.textContent = "Connected to localhost:8765";
     createBtn.disabled = false;
+    scanBtn.disabled = false;
     try {
       const res = await fetch(`${API_BASE}/profile/general_info`);
       const info = await res.json();
@@ -172,6 +187,7 @@ async function refreshStatus() {
     loadBtn.disabled = true;
     createBtn.disabled = true;
     askBtn.disabled = true;
+    scanBtn.disabled = true;
     loadTarget.innerHTML = "";
     nameEl.textContent = "";
     profileSection.classList.add("hidden");
@@ -211,13 +227,212 @@ loadBtn.addEventListener("click", async () => {
 
 function showForm() {
   mainView.classList.add("hidden");
+  scanView.classList.add("hidden");
   formView.classList.remove("hidden");
 }
 
 function showMain() {
   formView.classList.add("hidden");
+  scanView.classList.add("hidden");
   mainView.classList.remove("hidden");
 }
+
+function showScan() {
+  formView.classList.add("hidden");
+  mainView.classList.add("hidden");
+  scanView.classList.remove("hidden");
+}
+
+function normText(s) {
+  return (s || "").toString().toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+let _scanState = { jobs: [], duplicates: [], selector: null };
+
+function updateScanScopeIndicator() {
+  if (_scanState.selector) {
+    scanScopeSelector.textContent = _scanState.selector;
+    scanScope.classList.remove("hidden");
+  } else {
+    scanScope.classList.add("hidden");
+  }
+}
+
+async function markDuplicatesAndRender(jobs) {
+  let apps = [];
+  try {
+    const reply = await browser.runtime.sendMessage({ type: "LIST_APPLICATIONS" });
+    if (reply && reply.ok && Array.isArray(reply.body)) apps = reply.body;
+  } catch (_) {}
+  const duplicates = jobs.map((j) => isDuplicate(j, apps));
+  const newCount = duplicates.filter((d) => !d).length;
+  _scanState.jobs = jobs;
+  _scanState.duplicates = duplicates;
+  scanSummary.textContent = `Found ${jobs.length} posting${jobs.length === 1 ? "" : "s"}, ${newCount} new.`;
+  renderScanList();
+}
+
+function isDuplicate(job, apps) {
+  const link = (job.link || "").trim();
+  const company = normText(job.company);
+  const role = normText(job.role);
+  for (const a of apps) {
+    const links = Array.isArray(a.links) ? a.links : [];
+    if (link && links.includes(link)) return true;
+    if (company && role && normText(a.company) === company && normText(a.role) === role) return true;
+  }
+  return false;
+}
+
+function renderScanList() {
+  scanList.innerHTML = "";
+  if (!_scanState.jobs.length) {
+    const empty = document.createElement("div");
+    empty.style.padding = "8px";
+    empty.style.color = "#6b7280";
+    empty.textContent = "No postings detected on this page.";
+    scanList.appendChild(empty);
+    return;
+  }
+  _scanState.jobs.forEach((job, i) => {
+    const dup = _scanState.duplicates[i];
+    const row = document.createElement("label");
+    row.className = "scan-row" + (dup ? " dup" : "");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = !dup;
+    cb.dataset.idx = String(i);
+    const main = document.createElement("div");
+    main.className = "scan-main";
+    const title = document.createElement("div");
+    title.className = "scan-title";
+    const company = job.company || "(no company)";
+    const role = job.role || "(no role)";
+    title.textContent = `${company} — ${role}`;
+    title.title = title.textContent;
+    main.appendChild(title);
+    let subText = "";
+    try { subText = job.link ? new URL(job.link).host : ""; } catch (_) { subText = job.link || ""; }
+    if (job.location) subText = subText ? `${subText} · ${job.location}` : job.location;
+    if (subText) {
+      const sub = document.createElement("div");
+      sub.className = "scan-sub";
+      sub.textContent = subText;
+      sub.title = subText;
+      main.appendChild(sub);
+    }
+    row.appendChild(cb);
+    row.appendChild(main);
+    if (dup) {
+      const badge = document.createElement("span");
+      badge.className = "badge";
+      badge.textContent = "already added";
+      row.appendChild(badge);
+    }
+    scanList.appendChild(row);
+  });
+}
+
+async function runScan(selector) {
+  showScan();
+  scanResult.textContent = "";
+  scanSummary.textContent = selector ? "Scanning section…" : "Scanning page…";
+  scanList.innerHTML = "";
+  _scanState.selector = selector || null;
+  updateScanScopeIndicator();
+  let jobs = [];
+  try {
+    const reply = await browser.runtime.sendMessage({
+      type: "EXTRACT_JOB_LIST",
+      selector: selector || null,
+    });
+    if (reply && reply.ok) jobs = reply.jobs || [];
+    else scanResult.textContent = `Scan error: ${(reply && reply.reason) || "unknown"}`;
+  } catch (e) {
+    scanResult.textContent = `Error: ${e.message}`;
+  }
+  await markDuplicatesAndRender(jobs);
+}
+
+scanBtn.addEventListener("click", () => {
+  runScan().catch((e) => { scanResult.textContent = `Error: ${e.message}`; });
+});
+
+scanBack.addEventListener("click", () => {
+  showMain();
+});
+
+scanPick.addEventListener("click", async () => {
+  scanResult.textContent = "Click an element on the page to scope the scan (Esc to cancel)…";
+  try {
+    await browser.runtime.sendMessage({ type: "START_PICKER", field: "scan_container" });
+  } catch (e) {
+    scanResult.textContent = `Error: ${e.message}`;
+  }
+});
+
+scanScopeClear.addEventListener("click", () => {
+  runScan(null).catch((e) => { scanResult.textContent = `Error: ${e.message}`; });
+});
+
+scanSelectNew.addEventListener("click", () => {
+  scanList.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const idx = parseInt(cb.dataset.idx, 10);
+    cb.checked = !_scanState.duplicates[idx];
+  });
+});
+
+scanDeselect.addEventListener("click", () => {
+  scanList.querySelectorAll("input[type=checkbox]").forEach((cb) => { cb.checked = false; });
+});
+
+scanAdd.addEventListener("click", async () => {
+  const selected = [];
+  scanList.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    if (cb.checked) {
+      const idx = parseInt(cb.dataset.idx, 10);
+      const job = _scanState.jobs[idx];
+      if (!job) return;
+      selected.push({
+        company: job.company || "",
+        role: job.role || "",
+        date: todayISO(),
+        links: job.link ? [job.link] : [],
+        status: defaultStatus,
+        notes: job.location ? `Location: ${job.location}` : "",
+        description: "",
+      });
+    }
+  });
+  if (!selected.length) {
+    scanResult.textContent = "Nothing selected.";
+    return;
+  }
+  scanAdd.disabled = true;
+  scanResult.textContent = `Adding ${selected.length}…`;
+  try {
+    const reply = await browser.runtime.sendMessage({
+      type: "BULK_CREATE_APPLICATIONS",
+      entries: selected,
+    });
+    if (reply && reply.ok) {
+      const added = (reply.body && reply.body.added) || selected.length;
+      scanResult.textContent = `Added ${added} application${added === 1 ? "" : "s"}.`;
+      await populateLoadDropdown();
+      const apps = (await browser.runtime.sendMessage({ type: "LIST_APPLICATIONS" })) || {};
+      const list = (apps.ok && Array.isArray(apps.body)) ? apps.body : [];
+      _scanState.duplicates = _scanState.jobs.map((j) => isDuplicate(j, list));
+      renderScanList();
+    } else {
+      const detail = reply && (reply.error || (reply.body && JSON.stringify(reply.body)) || `HTTP ${reply.status}`);
+      scanResult.textContent = `Add failed: ${detail || "unknown error"}`;
+    }
+  } catch (e) {
+    scanResult.textContent = `Error: ${e.message}`;
+  } finally {
+    scanAdd.disabled = false;
+  }
+});
 
 function readForm() {
   return {
@@ -605,6 +820,20 @@ browser.runtime.onMessage.addListener((msg) => {
     }
     applyPicked(msg.picked);
     browser.storage.local.remove(PICKED_KEY).catch(() => {});
+  }
+  if (msg && msg.type === "SCAN_PICKED" && msg.result) {
+    const r = msg.result;
+    if (!r.ok) {
+      scanResult.textContent = r.cancelled ? "Pick cancelled." : "Pick failed.";
+      return;
+    }
+    _scanState.selector = r.selector || null;
+    updateScanScopeIndicator();
+    const jobs = Array.isArray(r.jobs) ? r.jobs : [];
+    scanResult.textContent = jobs.length
+      ? ""
+      : "No postings found in that section.";
+    markDuplicatesAndRender(jobs).catch(() => {});
   }
 });
 

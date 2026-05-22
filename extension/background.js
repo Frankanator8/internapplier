@@ -136,6 +136,33 @@ async function listApplications() {
   }
 }
 
+async function extractJobList(selector) {
+  const tabId = await activeTabId();
+  if (tabId == null) return { ok: false, reason: "no active tab", jobs: [] };
+  try {
+    const reply = await browser.tabs.sendMessage(tabId, { type: "EXTRACT_JOB_LIST", selector: selector || null });
+    if (reply && reply.ok) return { ok: true, jobs: reply.jobs || [] };
+    return { ok: false, reason: (reply && reply.error) || "extraction failed", jobs: [] };
+  } catch (e) {
+    return { ok: false, reason: String(e && e.message || e), jobs: [] };
+  }
+}
+
+async function bulkCreateApplications(entries) {
+  try {
+    const res = await fetch(`${API_BASE}/applications/bulk`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entries: entries || [] }),
+    });
+    let body = null;
+    try { body = await res.json(); } catch (_) {}
+    return { ok: res.ok, status: res.status, body };
+  } catch (e) {
+    return { ok: false, status: 0, error: String(e && e.message || e) };
+  }
+}
+
 async function attachLink(index, url) {
   try {
     const res = await fetch(`${API_BASE}/applications/${index}/links`, {
@@ -210,6 +237,17 @@ browser.runtime.onMessage.addListener((msg, _sender) => {
   }
   if (msg && msg.type === "ATTACH_LINK") {
     return attachLink(msg.index, msg.url);
+  }
+  if (msg && msg.type === "EXTRACT_JOB_LIST") {
+    return extractJobList(msg.selector);
+  }
+  if (msg && msg.type === "SCAN_PICKER_RESULT") {
+    // Forward to popup so it can render the scoped scan
+    browser.runtime.sendMessage({ type: "SCAN_PICKED", result: msg.result }).catch(() => {});
+    return Promise.resolve({ ok: true });
+  }
+  if (msg && msg.type === "BULK_CREATE_APPLICATIONS") {
+    return bulkCreateApplications(msg.entries);
   }
   if (msg && msg.type === "PICKER_RESULT") {
     if (msg.result && msg.result.ok && msg.result.field) {

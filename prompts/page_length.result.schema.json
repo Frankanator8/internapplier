@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "page_length_tool_result",
+  "description": "Return value of the page_length tool handler.",
+  "type": "object",
+  "required": ["ok", "page_cap"],
+  "properties": {
+    "ok": {
+      "type": "boolean",
+      "description": "True when the LaTeX compiled and the page fill was measured; false when compilation or measurement failed."
+    },
+    "fill": {
+      "type": "number",
+      "description": "Decimal page fill where 1.0 == exactly one page, 0.8 == 80% of one page, 1.25 == 25% into a second page. Present only when ok is true."
+    },
+    "page_cap": {
+      "type": "integer",
+      "description": "User's configured page-count limit."
+    },
+    "log_excerpt": {
+      "type": "string",
+      "description": "Truncated LaTeX compile-log excerpt. Present only when ok is false."
+    }
+  }
+}

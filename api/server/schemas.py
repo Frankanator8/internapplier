@@ -2,21 +2,17 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from ..constants import DEFAULT_STATUS
+from ..constants import ALL_FIELDS, COMBO_FIELDS, DEFAULT_STATUS, LINE_FIELDS
 
-
-LINE_FIELDS = [
-    "first_name", "last_name", "preferred_name", "pronouns",
-    "email", "phone", "address1", "address2", "city", "state",
-    "postal_code", "country", "linkedin", "website", "github",
-    "earliest_start_date", "desired_salary", "date_of_birth",
+__all__ = [
+    "ALL_FIELDS",
+    "COMBO_FIELDS",
+    "LINE_FIELDS",
+    "ApplicationEntry",
+    "AttachLinkBody",
+    "BulkApplicationsBody",
+    "AnswerQuestionBody",
 ]
-COMBO_FIELDS = [
-    "employment_status", "work_authorization", "require_sponsorship",
-    "willing_to_relocate", "gender", "ethnicity", "veteran_status",
-    "disability_status",
-]
-ALL_FIELDS = LINE_FIELDS + COMBO_FIELDS
 
 
 class ApplicationEntry(BaseModel):
@@ -32,6 +28,10 @@ class ApplicationEntry(BaseModel):
 
 class AttachLinkBody(BaseModel):
     url: str
+
+
+class BulkApplicationsBody(BaseModel):
+    entries: list[ApplicationEntry] = Field(default_factory=list)
 
 
 class AnswerQuestionBody(BaseModel):

@@ -1,0 +1,4 @@
+test everything!
+extract schemas of jsons to prompts/
+move all constants to api/constants.py (maybe make some of these settings)
+write READMEs

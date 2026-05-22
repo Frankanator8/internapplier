@@ -15,12 +15,11 @@ from api.ai_provider import (
     get_provider,
     get_resume_output_dir,
     get_resume_page_cap,
+    get_resume_score_threshold,
     strip_code_fence,
 )
 
 from .compile import LatexCompileError, compile_latex, extract_document, pdf_page_fill
-
-SCORE_THRESHOLD = 9.5
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +117,7 @@ class ResumeGenerator:
         today = datetime.date.today().isoformat()
         page_cap = get_resume_page_cap()
         max_attempts = get_max_generation_attempts()
+        score_threshold = get_resume_score_threshold()
 
         omitted_labels: set[str] = set()
         all_drops_log: list[str] = []
@@ -207,7 +207,7 @@ class ResumeGenerator:
                     f"Attempt {attempt}: graded {grade['score']:.2f}/10"
                 )
 
-            score_ok = grade is not None and grade["score"] >= SCORE_THRESHOLD
+            score_ok = grade is not None and grade["score"] >= score_threshold
 
             attempts.append({
                 "latex": latex,

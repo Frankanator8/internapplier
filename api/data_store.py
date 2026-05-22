@@ -1,11 +1,12 @@
 import json
 import os
-import pathlib
 
-_APP_DIR = pathlib.Path.home() / "Library" / "Application Support" / "InternApplier"
-_DATA_FILE = _APP_DIR / "resume.json"
-_TEMPLATE_FILE = _APP_DIR / "interview_template.json"
-_FEEDBACK_FILE = _APP_DIR / "interview_feedback.json"
+from .constants import (
+    APP_DIR,
+    INTERVIEW_FEEDBACK_FILE,
+    INTERVIEW_TEMPLATE_FILE,
+    RESUME_DATA_FILE,
+)
 
 _EMPTY: dict = {
     "general_info": {},
@@ -82,14 +83,14 @@ def invalidate() -> None:
 
 def load() -> dict:
     global _cache, _cache_mtime
-    _APP_DIR.mkdir(parents=True, exist_ok=True)
-    if not _DATA_FILE.exists():
+    APP_DIR.mkdir(parents=True, exist_ok=True)
+    if not RESUME_DATA_FILE.exists():
         invalidate()
         return _empty_data()
-    mtime = _DATA_FILE.stat().st_mtime
+    mtime = RESUME_DATA_FILE.stat().st_mtime
     if _cache is not None and _cache_mtime == mtime:
         return _cache
-    with open(_DATA_FILE, "r", encoding="utf-8") as f:
+    with open(RESUME_DATA_FILE, "r", encoding="utf-8") as f:
         data = json.load(f)
     changed = False
     if _migrate_application_links(data):
@@ -106,37 +107,37 @@ def load() -> dict:
 
 def save(data: dict) -> None:
     global _cache, _cache_mtime
-    _APP_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = _DATA_FILE.with_suffix(".tmp")
+    APP_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = RESUME_DATA_FILE.with_suffix(".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
-    os.replace(tmp, _DATA_FILE)
+    os.replace(tmp, RESUME_DATA_FILE)
     _cache = data
-    _cache_mtime = _DATA_FILE.stat().st_mtime
+    _cache_mtime = RESUME_DATA_FILE.stat().st_mtime
 
 
 def load_interview_template() -> list[dict]:
-    _APP_DIR.mkdir(parents=True, exist_ok=True)
-    if not _TEMPLATE_FILE.exists():
+    APP_DIR.mkdir(parents=True, exist_ok=True)
+    if not INTERVIEW_TEMPLATE_FILE.exists():
         return [dict(x) for x in _DEFAULT_TEMPLATE]
-    with open(_TEMPLATE_FILE, "r", encoding="utf-8") as f:
+    with open(INTERVIEW_TEMPLATE_FILE, "r", encoding="utf-8") as f:
         data = json.load(f)
     return data if isinstance(data, list) else [dict(x) for x in _DEFAULT_TEMPLATE]
 
 
 def save_interview_template(items: list[dict]) -> None:
-    _APP_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = _TEMPLATE_FILE.with_suffix(".tmp")
+    APP_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = INTERVIEW_TEMPLATE_FILE.with_suffix(".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(items, f, indent=2)
-    os.replace(tmp, _TEMPLATE_FILE)
+    os.replace(tmp, INTERVIEW_TEMPLATE_FILE)
 
 
 def load_interview_feedback() -> list[dict]:
-    _APP_DIR.mkdir(parents=True, exist_ok=True)
-    if not _FEEDBACK_FILE.exists():
+    APP_DIR.mkdir(parents=True, exist_ok=True)
+    if not INTERVIEW_FEEDBACK_FILE.exists():
         return []
-    with open(_FEEDBACK_FILE, "r", encoding="utf-8") as f:
+    with open(INTERVIEW_FEEDBACK_FILE, "r", encoding="utf-8") as f:
         data = json.load(f)
     if isinstance(data, dict):
         sessions = data.get("sessions")
@@ -145,11 +146,11 @@ def load_interview_feedback() -> list[dict]:
 
 
 def save_interview_feedback(sessions: list[dict]) -> None:
-    _APP_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = _FEEDBACK_FILE.with_suffix(".tmp")
+    APP_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = INTERVIEW_FEEDBACK_FILE.with_suffix(".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump({"sessions": sessions}, f, indent=2)
-    os.replace(tmp, _FEEDBACK_FILE)
+    os.replace(tmp, INTERVIEW_FEEDBACK_FILE)
 
 
 def append_interview_feedback(session: dict) -> None:

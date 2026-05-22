@@ -216,6 +216,333 @@ function extractPageMeta() {
   };
 }
 
+function cellText(td) {
+  return (td.innerText || td.textContent || "").replace(/\s+/g, " ").trim();
+}
+
+function classifyHeader(text) {
+  const t = normalize(text);
+  if (!t) return null;
+  if (/\bcompany|employer|organization\b/.test(t)) return "company";
+  if (/\brole|position|job\s*title|title\b/.test(t)) return "role";
+  if (/\bapplication|apply|link\b/.test(t)) return "link";
+  if (/\blocation|locations?\b/.test(t)) return "location";
+  return null;
+}
+
+function rowsFromHeaderCells(headerCells, dataRows, getCells) {
+  if (!headerCells.length) return [];
+  const colMap = {};
+  let matched = 0;
+  headerCells.forEach((th, i) => {
+    const kind = classifyHeader(cellText(th));
+    if (kind && colMap[kind] === undefined) {
+      colMap[kind] = i;
+      matched++;
+    }
+  });
+  if (matched < 2) return [];
+  if (colMap.company === undefined && colMap.role === undefined) return [];
+
+  const out = [];
+  let lastCompany = "";
+  for (const tr of dataRows) {
+    const tds = getCells(tr);
+    if (!tds || !tds.length) continue;
+
+    const rawCompany = colMap.company !== undefined && tds[colMap.company] ? cellText(tds[colMap.company]) : "";
+    const role = colMap.role !== undefined && tds[colMap.role] ? cellText(tds[colMap.role]) : "";
+    const location = colMap.location !== undefined && tds[colMap.location] ? cellText(tds[colMap.location]) : "";
+    const linkCell = colMap.link !== undefined ? tds[colMap.link] : null;
+
+    let company = rawCompany;
+    const stripped = company.replace(/^[\s↳⮑→\-•*]+/, "").trim();
+    if (!stripped || /^(↳|⮑|→)/.test(rawCompany)) {
+      company = lastCompany;
+    } else {
+      company = stripped;
+      lastCompany = company;
+    }
+
+    if (linkCell) {
+      const cellHtml = linkCell.innerHTML || "";
+      if (/🔒|closed/i.test(cellHtml) && !linkCell.querySelector("a[href]")) continue;
+    }
+
+    let link = "";
+    if (linkCell) {
+      const a = linkCell.querySelector("a[href]");
+      if (a) link = a.href;
+    }
+    if (!link) {
+      // Fallback: any <a href> in the row
+      for (const td of tds) {
+        if (!td) continue;
+        const a = td.querySelector ? td.querySelector("a[href]") : null;
+        if (a && a.href && !/^(mailto:|javascript:|#)/i.test(a.getAttribute("href") || "")) {
+          link = a.href;
+          break;
+        }
+      }
+    }
+    if (!link) continue;
+    if (!company && !role) continue;
+
+    out.push({ company, role, link, location });
+  }
+  return out;
+}
+
+function extractJobsFromTable(table) {
+  let headerCells = table.querySelectorAll("thead th, thead td");
+  let dataRows = Array.from(table.querySelectorAll("tbody tr"));
+  if (!headerCells.length) {
+    // Fallback: first <tr> is header, rest are data
+    const allRows = Array.from(table.querySelectorAll("tr"));
+    if (allRows.length < 2) return [];
+    headerCells = allRows[0].querySelectorAll("th, td");
+    dataRows = allRows.slice(1);
+  }
+  return rowsFromHeaderCells(headerCells, dataRows, (tr) => Array.from(tr.children));
+}
+
+function extractJobsFromAriaGrid(root) {
+  const results = [];
+  const grids = root.querySelectorAll('[role="table"], [role="grid"], [role="list"]');
+  for (const grid of grids) {
+    let headerCells = Array.from(grid.querySelectorAll('[role="columnheader"]'));
+    let rows = Array.from(grid.querySelectorAll('[role="row"], [role="listitem"]'));
+    // If a header row exists among rows, peel it off
+    if (!headerCells.length && rows.length) {
+      const firstRowHeaders = rows[0].querySelectorAll('[role="columnheader"]');
+      if (firstRowHeaders.length) {
+        headerCells = Array.from(firstRowHeaders);
+        rows = rows.slice(1);
+      }
+    }
+    if (headerCells.length && rows.length) {
+      try {
+        const got = rowsFromHeaderCells(
+          headerCells,
+          rows,
+          (r) => {
+            const cells = r.querySelectorAll('[role="cell"], [role="gridcell"]');
+            return cells.length ? Array.from(cells) : Array.from(r.children);
+          }
+        );
+        for (const g of got) results.push(g);
+      } catch (_) { /* ignore */ }
+    }
+    // Heuristic fallback inside an aria grid/list: use repeating-row inference
+    if (!results.length) {
+      try {
+        const inferred = extractFromRepeatingRows(rows.length ? rows : Array.from(grid.children));
+        for (const g of inferred) results.push(g);
+      } catch (_) {}
+    }
+  }
+  return results;
+}
+
+function pickLocation(text) {
+  if (!text) return "";
+  const m = text.match(/\b[A-Z][a-zA-Z .'-]+,\s*[A-Z]{2,}(?:,\s*[A-Za-z]+)?/);
+  if (m) return m[0].trim();
+  if (/\bremote\b/i.test(text)) {
+    const m2 = text.match(/[^\n,]*\bremote\b[^\n,]*/i);
+    return (m2 ? m2[0] : "Remote").trim();
+  }
+  return "";
+}
+
+function deepText(el, max) {
+  if (!el) return "";
+  const t = (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim();
+  return max ? t.slice(0, max) : t;
+}
+
+function extractFromRepeatingRows(rows) {
+  const out = [];
+  for (const row of rows) {
+    if (!row || row.nodeType !== 1) continue;
+    const text = deepText(row);
+    if (!text) continue;
+    const anchors = Array.from(row.querySelectorAll("a[href]")).filter((a) => {
+      const href = a.getAttribute("href") || "";
+      return href && !/^(mailto:|javascript:|#)/i.test(href);
+    });
+    if (!anchors.length) continue;
+
+    // Role: longest anchor text, or first heading
+    let role = "";
+    const heading = row.querySelector("h1, h2, h3, h4, h5, [role='heading']");
+    if (heading) role = deepText(heading, 200);
+    if (!role) {
+      let best = "";
+      for (const a of anchors) {
+        const t = deepText(a, 200);
+        if (t.length > best.length) best = t;
+      }
+      role = best;
+    }
+
+    // Company: try data attrs / aria-labels, else fall back to other anchor text
+    let company = "";
+    const compEl = row.querySelector(
+      '[data-company], [data-company-name], [class*="company" i], [aria-label*="company" i]'
+    );
+    if (compEl) company = deepText(compEl, 120);
+    if (!company) {
+      for (const a of anchors) {
+        const t = deepText(a, 120);
+        if (t && t !== role) { company = t; break; }
+      }
+    }
+
+    // Location
+    const location = pickLocation(text);
+
+    // Link: first non-trivial anchor
+    const link = anchors[0].href;
+
+    if (!role && !company) continue;
+    out.push({ company, role, link, location });
+  }
+  return out;
+}
+
+function signatureFor(el) {
+  if (!el || el.nodeType !== 1) return "";
+  const classes = Array.from(el.classList || []).slice(0, 4).sort().join(".");
+  return el.tagName + (classes ? "." + classes : "");
+}
+
+function extractJobsFromRepeatingList(root) {
+  const results = [];
+  // Candidate containers: root + descendants with ≥ 4 element children
+  const candidates = [root];
+  const all = root.querySelectorAll ? root.querySelectorAll("*") : [];
+  for (const el of all) {
+    if (el.children && el.children.length >= 4) candidates.push(el);
+  }
+  for (const container of candidates) {
+    const kids = Array.from(container.children || []);
+    if (kids.length < 4) continue;
+    // Group by signature
+    const groups = new Map();
+    for (const k of kids) {
+      const sig = signatureFor(k);
+      if (!sig) continue;
+      if (!groups.has(sig)) groups.set(sig, []);
+      groups.get(sig).push(k);
+    }
+    for (const [, group] of groups) {
+      if (group.length < 4) continue;
+      // Must contain at least one anchor in most rows
+      const withLinks = group.filter((r) => r.querySelector && r.querySelector("a[href]"));
+      if (withLinks.length < Math.max(2, Math.floor(group.length * 0.5))) continue;
+      const rows = extractFromRepeatingRows(group);
+      for (const r of rows) results.push(r);
+    }
+  }
+  return results;
+}
+
+function extractJobList(rootEl) {
+  const root = rootEl || document;
+  const seen = new Set();
+  const results = [];
+  const push = (r) => {
+    const key = (r.link || "") + "|" + normalize(r.company) + "|" + normalize(r.role);
+    if (seen.has(key)) return;
+    seen.add(key);
+    results.push(r);
+  };
+
+  // Strategy A: real <table>
+  const tables = root.querySelectorAll ? root.querySelectorAll("table") : [];
+  for (const table of tables) {
+    try {
+      const rows = extractJobsFromTable(table);
+      for (const r of rows) push(r);
+    } catch (_) {}
+  }
+  if (root !== document && root.tagName === "TABLE") {
+    try {
+      const rows = extractJobsFromTable(root);
+      for (const r of rows) push(r);
+    } catch (_) {}
+  }
+
+  // Strategy B: ARIA grid
+  try {
+    const rows = extractJobsFromAriaGrid(root);
+    for (const r of rows) push(r);
+  } catch (_) {}
+
+  // Strategy C: repeating-sibling lists
+  try {
+    const rows = extractJobsFromRepeatingList(root);
+    for (const r of rows) push(r);
+  } catch (_) {}
+
+  return results;
+}
+
+function extractJobListWithRetry(rootEl, timeoutMs) {
+  const initial = extractJobList(rootEl);
+  if (initial.length > 0 || rootEl) {
+    return Promise.resolve(initial);
+  }
+  // No results and scanning the whole document — wait briefly for SPA content
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (jobs) => {
+      if (done) return;
+      done = true;
+      try { observer.disconnect(); } catch (_) {}
+      clearTimeout(timer);
+      resolve(jobs);
+    };
+    const observer = new MutationObserver(() => {
+      try {
+        const got = extractJobList();
+        if (got.length > 0) finish(got);
+      } catch (_) {}
+    });
+    try {
+      observer.observe(document.body, { childList: true, subtree: true });
+    } catch (_) {
+      finish(initial);
+      return;
+    }
+    const timer = setTimeout(() => finish(extractJobList()), timeoutMs || 1500);
+  });
+}
+
+function bestSelector(el) {
+  if (!el || el.nodeType !== 1) return "";
+  if (el.id) return `#${CSS.escape(el.id)}`;
+  const parts = [];
+  let cur = el;
+  for (let i = 0; i < 4 && cur && cur.nodeType === 1 && cur !== document.body; i++) {
+    let part = cur.tagName.toLowerCase();
+    if (cur.id) { parts.unshift(`#${CSS.escape(cur.id)}`); break; }
+    if (cur.parentElement) {
+      const same = Array.from(cur.parentElement.children).filter(
+        (c) => c.tagName === cur.tagName
+      );
+      if (same.length > 1) {
+        const idx = same.indexOf(cur) + 1;
+        part += `:nth-of-type(${idx})`;
+      }
+    }
+    parts.unshift(part);
+    cur = cur.parentElement;
+  }
+  return parts.join(" > ");
+}
+
 let _pickerState = null;
 
 function stopPicker(result) {
@@ -228,7 +555,10 @@ function stopPicker(result) {
   if (styleEl && styleEl.parentNode) styleEl.parentNode.removeChild(styleEl);
   _pickerState = null;
   try {
-    browser.runtime.sendMessage({ type: "PICKER_RESULT", result });
+    const msgType = result && result.field === "scan_container"
+      ? "SCAN_PICKER_RESULT"
+      : "PICKER_RESULT";
+    browser.runtime.sendMessage({ type: msgType, result });
   } catch (_) { /* popup may be closed */ }
 }
 
@@ -252,6 +582,32 @@ function startPicker(field) {
     e.preventDefault();
     e.stopPropagation();
     const el = e.target;
+    if (state.field === "scan_container") {
+      let jobs = [];
+      try { jobs = extractJobList(el); } catch (_) {}
+      if (jobs.length < 2 && el && el.parentElement) {
+        // Single-row sample: treat siblings with matching signature as the list
+        try {
+          const parent = el.parentElement;
+          const sig = signatureFor(el);
+          const siblings = Array.from(parent.children).filter((c) => signatureFor(c) === sig);
+          if (siblings.length >= 2) {
+            const inferred = extractFromRepeatingRows(siblings);
+            if (inferred.length > jobs.length) jobs = inferred;
+          }
+        } catch (_) {}
+      }
+      if (jobs.length < 1 && el && el.parentElement) {
+        try { jobs = extractJobList(el.parentElement); } catch (_) {}
+      }
+      stopPicker({
+        ok: true,
+        field: "scan_container",
+        jobs,
+        selector: bestSelector(el),
+      });
+      return;
+    }
     let value = el ? (el.innerText || el.textContent || "").trim() : "";
     if (state.field === "link") {
       const a = el && (el.closest ? el.closest("a") : null);
@@ -291,6 +647,16 @@ browser.runtime.onMessage.addListener((msg) => {
   if (msg && msg.type === "START_PICKER") {
     startPicker(msg.field);
     return Promise.resolve({ ok: true });
+  }
+  if (msg && msg.type === "EXTRACT_JOB_LIST") {
+    let root = null;
+    if (msg.selector) {
+      try { root = document.querySelector(msg.selector); } catch (_) {}
+    }
+    return extractJobListWithRetry(root, 1500).then(
+      (jobs) => ({ ok: true, jobs }),
+      (e) => ({ ok: false, error: String(e && e.message || e), jobs: [] })
+    );
   }
 });
 

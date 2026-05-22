@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from .. import data_store
-from .schemas import ApplicationEntry, AttachLinkBody
+from .schemas import ApplicationEntry, AttachLinkBody, BulkApplicationsBody
 
 router = APIRouter()
 
@@ -32,6 +32,19 @@ def create_application(entry: ApplicationEntry) -> dict:
     data["applications"] = apps
     data_store.save(data)
     return {"ok": True, "count": len(apps)}
+
+
+@router.post("/applications/bulk")
+def bulk_create_applications(body: BulkApplicationsBody) -> dict:
+    data = data_store.load()
+    apps = data.get("applications") or []
+    added = 0
+    for entry in body.entries:
+        apps.append(entry.model_dump())
+        added += 1
+    data["applications"] = apps
+    data_store.save(data)
+    return {"ok": True, "added": added, "count": len(apps)}
 
 
 @router.post("/applications/{index}/links")

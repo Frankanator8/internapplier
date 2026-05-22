@@ -3,8 +3,8 @@ from __future__ import annotations
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
-    QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
-    QSpinBox, QVBoxLayout, QWidget,
+    QDoubleSpinBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QPlainTextEdit, QSpinBox, QVBoxLayout, QWidget,
 )
 
 from api import ai_provider
@@ -61,6 +61,20 @@ class ResumeMixin:
         max_iters_row.addStretch()
         rc_layout.addLayout(max_iters_row)
 
+        score_row = QHBoxLayout()
+        score_row.setSpacing(12)
+        score_row.addWidget(_label("Accept score ≥"))
+        self._score_threshold_spin = QDoubleSpinBox()
+        self._score_threshold_spin.setMinimum(0.0)
+        self._score_threshold_spin.setMaximum(10.0)
+        self._score_threshold_spin.setSingleStep(0.1)
+        self._score_threshold_spin.setDecimals(2)
+        self._score_threshold_spin.setValue(ai_provider.get_resume_score_threshold())
+        self._score_threshold_spin.setFixedWidth(80)
+        score_row.addWidget(self._score_threshold_spin)
+        score_row.addStretch()
+        rc_layout.addLayout(score_row)
+
         output_dir_row = QHBoxLayout()
         output_dir_row.setSpacing(12)
         output_dir_row.addWidget(_label("Output folder"))
@@ -112,6 +126,7 @@ class ResumeMixin:
         ai_provider.save_resume_template(self._resume_template_edit.toPlainText())
         ai_provider.save_resume_page_cap(self._page_cap_spin.value())
         ai_provider.save_max_generation_attempts(self._max_iters_spin.value())
+        ai_provider.save_resume_score_threshold(self._score_threshold_spin.value())
         ai_provider.save_resume_output_dir(self._output_dir_edit.text())
         self._resume_template_status.setStyleSheet("font-size: 12px; color: #057642;")
         self._resume_template_status.setText("✓  Saved")

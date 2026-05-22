@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "grade_resume_output",
+  "description": "Output of the grade_resume agent. Exactly these three top-level keys in this order: score, feedback, drops.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["score", "feedback", "drops"],
+  "properties": {
+    "score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 10,
+      "description": "Number 0-10, decimals allowed."
+    },
+    "feedback": {
+      "type": "string",
+      "description": "Actionable feedback string. May be empty (\"\") if there is nothing actionable."
+    },
+    "drops": {
+      "type": "array",
+      "description": "Items to REMOVE on the next attempt, in priority order (weakest first). MUST be [] unless the user message includes <page_status> indicating the draft is over the page cap. Each item is drawn verbatim from the resume as either an entry label ({role} @ {company}, project {name}, award {title} — {issuer}) or a course name from the Courses/Coursework list.",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

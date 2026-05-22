@@ -540,15 +540,7 @@ class OpenRouterProvider:
             f"Company: {company_name}\n\n"
             f"Scraped content from the company's own website:\n{scraped_text}\n\n"
             "From the scraped content above, extract a shallow research brief. "
-            "Return a JSON object with exactly these keys:\n"
-            '  "core_values": array of 3-6 capturing the company\'s '
-            "stated values, mission, or culture pillars.\n"
-            '  "recent_projects": array of 3-6 short strings describing recent '
-            "products, launches, initiatives, or news mentioned on the site. Give a small description of each.\n"
-            '  "summary": a 2-3 sentence plain-text summary of what the company does '
-            "and its current focus.\n"
-            "If a field cannot be inferred from the content, return an empty array "
-            "or empty string for it. Return ONLY the JSON object, no markdown."
+            "Return ONLY the JSON object described in the system prompt, no markdown."
         )
 
         logger.debug("research_company — POST %s model=%s timeout=60", self.BASE_URL, self.model)

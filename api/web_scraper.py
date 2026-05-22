@@ -12,22 +12,15 @@ from playwright.sync_api import (
     sync_playwright,
 )
 
-logger = logging.getLogger(__name__)
-
-
-USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/124.0.0.0 Safari/537.36"
+from .ai_provider import get_scraper_candidate_paths
+from .constants import (
+    SCRAPER_MAX_PAGES,
+    SCRAPER_MAX_TOTAL_CHARS,
+    SCRAPER_USER_AGENT,
 )
 
-CANDIDATE_PATHS = [
-    "/", "/about", "/about-us", "/company", "/values",
-    "/mission", "/careers", "/team", "/news", "/blog",
-]
+logger = logging.getLogger(__name__)
 
-MAX_PAGES = 5
-MAX_TOTAL_CHARS = 15000
 _WS_RE = re.compile(r"\s+")
 
 
@@ -77,6 +70,7 @@ def fetch_company_pages(base_url: str, timeout: int = 15) -> str:
     SiteBlockedError if every page request timed out (likely WAF/anti-bot).
     """
     root, _ = _normalize_base(base_url)
+    candidate_paths = get_scraper_candidate_paths()
 
     chunks: list[str] = []
     total = 0
@@ -92,24 +86,24 @@ def fetch_company_pages(base_url: str, timeout: int = 15) -> str:
             headless=True, args=["--disable-http2"]
         )
         try:
-            context = browser.new_context(user_agent=USER_AGENT)
+            context = browser.new_context(user_agent=SCRAPER_USER_AGENT)
             rp = _load_robots(context, root)
 
-            if not rp.can_fetch(USER_AGENT, root + "/"):
+            if not rp.can_fetch(SCRAPER_USER_AGENT, root + "/"):
                 raise ValueError(
                     f"robots.txt for {root} disallows scraping the homepage — aborting."
                 )
 
             page = context.new_page()
 
-            for path in CANDIDATE_PATHS:
-                if fetched >= MAX_PAGES:
+            for path in candidate_paths:
+                if fetched >= SCRAPER_MAX_PAGES:
                     break
                 url = urljoin(root, path)
                 if url in seen:
                     continue
                 seen.add(url)
-                if not rp.can_fetch(USER_AGENT, url):
+                if not rp.can_fetch(SCRAPER_USER_AGENT, url):
                     continue
 
                 attempted += 1
@@ -157,7 +151,7 @@ def fetch_company_pages(base_url: str, timeout: int = 15) -> str:
                     continue
 
                 header = f"\n\n--- {url} ---\n\n"
-                remaining = MAX_TOTAL_CHARS - total - len(header)
+                remaining = SCRAPER_MAX_TOTAL_CHARS - total - len(header)
                 if remaining <= 0:
                     break
                 snippet = text[:remaining]
