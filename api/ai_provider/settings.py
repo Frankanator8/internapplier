@@ -116,6 +116,15 @@ def save_scraper_candidate_paths(paths: list[str]) -> None:
     _set("scraper_candidate_paths", [str(p) for p in paths])
 
 
+def get_writing_sample() -> str:
+    val = _load_settings().get("writing_sample")
+    return val if isinstance(val, str) else ""
+
+
+def save_writing_sample(text: str) -> None:
+    _set("writing_sample", str(text or ""))
+
+
 def get_theme_preference() -> str:
     val = str(_get("theme_preference", "system"))
     return val if val in ("light", "dark", "system") else "system"

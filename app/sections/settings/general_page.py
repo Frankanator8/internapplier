@@ -50,6 +50,26 @@ class GeneralMixin:
         theme_hint.setObjectName("hint")
         layout.addWidget(theme_hint)
 
+        layout.addWidget(_label("Writing sample"))
+        self._writing_sample_edit = QPlainTextEdit()
+        self._writing_sample_edit.setMinimumHeight(140)
+        self._writing_sample_edit.setPlaceholderText(
+            "Paste a paragraph or two you've actually written (a cover-letter "
+            "excerpt, a personal-statement passage, a project description in "
+            "your own words). The AI mirrors its rhythm and vocabulary when "
+            "drafting answers, so they sound like you."
+        )
+        self._writing_sample_edit.setPlainText(ai_provider.get_writing_sample())
+        layout.addWidget(self._writing_sample_edit)
+
+        writing_hint = QLabel(
+            "Optional. When provided, Answer Question matches this sample's "
+            "register and sentence rhythm. Leave blank to skip."
+        )
+        writing_hint.setWordWrap(True)
+        writing_hint.setObjectName("hint")
+        layout.addWidget(writing_hint)
+
         layout.addWidget(_label("Scraper paths (one per line)"))
         self._scraper_paths_edit = QPlainTextEdit()
         self._scraper_paths_edit.setMinimumHeight(180)
@@ -139,6 +159,7 @@ class GeneralMixin:
             if line.strip()
         ]
         ai_provider.save_scraper_candidate_paths(paths)
+        ai_provider.save_writing_sample(self._writing_sample_edit.toPlainText())
         ai_provider.save_heatmap_day_thresholds(day_vals)
         ai_provider.save_heatmap_week_thresholds(week_vals)
 

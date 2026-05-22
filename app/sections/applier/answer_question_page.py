@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+import logging
+
 from PyQt6.QtCore import Qt, QThread
 from PyQt6.QtGui import QGuiApplication, QTextCursor
 from PyQt6.QtWidgets import (
-    QHBoxLayout, QLabel, QLineEdit, QSplitter, QTextEdit, QVBoxLayout, QWidget,
+    QComboBox, QHBoxLayout, QLabel, QLineEdit, QSplitter, QTextEdit, QVBoxLayout, QWidget,
 )
 
+from api import data_store
 from api.research_cache import lookup as _research_from_cache
 
 from ..base import _label, _primary_btn, _secondary_btn, _set_status
 from .workers import _QuestionWorker
+
+logger = logging.getLogger(__name__)
 
 
 class AnswerQuestionMixin:
@@ -22,6 +27,12 @@ class AnswerQuestionMixin:
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 8, 0, 0)
         left_layout.setSpacing(10)
+
+        left_layout.addWidget(_label("Fill from Application"))
+        self._answer_app_picker = QComboBox()
+        self._answer_app_picker.currentIndexChanged.connect(self._on_fill_answer_from_application)
+        left_layout.addWidget(self._answer_app_picker)
+        self._refresh_answer_app_picker()
 
         left_layout.addWidget(_label("Company (optional)"))
         self._answer_company_input = QLineEdit()
@@ -140,3 +151,38 @@ class AnswerQuestionMixin:
         self._answer_output.insertPlainText(chunk)
         sb = self._answer_output.verticalScrollBar()
         sb.setValue(sb.maximum())
+
+    def _refresh_answer_app_picker(self):
+        if not hasattr(self, "_answer_app_picker"):
+            return
+        picker = self._answer_app_picker
+        picker.blockSignals(True)
+        picker.clear()
+        picker.addItem("— Select an application —", None)
+        try:
+            entries = data_store.load().get("applications") or []
+        except Exception:
+            logger.exception("_refresh_answer_app_picker — failed to load applications")
+            entries = []
+        for entry in entries:
+            company = (entry.get("company") or "").strip()
+            role = (entry.get("role") or "").strip()
+            if company and role:
+                label = f"{company} — {role}"
+            else:
+                label = company or role or "(untitled)"
+            picker.addItem(label, entry)
+        picker.setCurrentIndex(0)
+        picker.blockSignals(False)
+
+    def _on_fill_answer_from_application(self, idx: int):
+        if idx <= 0:
+            return
+        entry = self._answer_app_picker.itemData(idx)
+        if not isinstance(entry, dict):
+            return
+        self._answer_company_input.setText(entry.get("company", "") or "")
+        self._answer_jd_input.setPlainText(entry.get("description", "") or "")
+        self._answer_app_picker.blockSignals(True)
+        self._answer_app_picker.setCurrentIndex(0)
+        self._answer_app_picker.blockSignals(False)

@@ -14,7 +14,7 @@ from .formatting import (
     _profile_json,
 )
 from .prompts import load_prompt, load_schema
-from .settings import _load_model_config, get_resume_template
+from .settings import _load_model_config, get_resume_template, get_writing_sample
 from ..token_usage import record_usage
 
 logger = logging.getLogger(__name__)
@@ -67,6 +67,7 @@ class OpenRouterProvider:
         max_tool_rounds: int = 4,
         tool_overrides: dict | None = None,
         response_format: dict | None = None,
+        sampling: dict | None = None,
     ) -> Iterator[str]:
         """SSE-stream chat completions, yielding incremental content chunks.
 
@@ -110,6 +111,10 @@ class OpenRouterProvider:
                 )
             if response_format:
                 payload_json["response_format"] = response_format
+            if sampling:
+                for k, v in sampling.items():
+                    if v is not None:
+                        payload_json[k] = v
 
             accumulated_content: list[str] = []
             tool_calls_acc: dict[int, dict] = {}
@@ -413,6 +418,9 @@ class OpenRouterProvider:
             )
         if job_description:
             sections.append(f"<job_description>\n{job_description}\n</job_description>")
+        writing_sample = (get_writing_sample() or "").strip()
+        if writing_sample:
+            sections.append(f"<writing_sample>\n{writing_sample}\n</writing_sample>")
 
         yield from self._stream_chat_completion(
             messages=[
@@ -421,6 +429,11 @@ class OpenRouterProvider:
             ],
             tier="basic",
             log_label="answer_question",
+            sampling={
+                "temperature": 0.9,
+                "frequency_penalty": 0.4,
+                "presence_penalty": 0.2,
+            },
         )
 
     def grade_interview_response_stream(

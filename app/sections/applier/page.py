@@ -174,3 +174,5 @@ class ApplierPage(
             self._refresh_app_picker()
         if idx == 2:
             self._refresh_library()
+        if idx == 3:
+            self._refresh_answer_app_picker()

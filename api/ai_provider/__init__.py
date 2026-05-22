@@ -34,6 +34,7 @@ from .settings import (
     get_resume_template,
     get_scraper_candidate_paths,
     get_theme_preference,
+    get_writing_sample,
     save_auto_resync_prompts,
     save_heatmap_day_thresholds,
     save_heatmap_week_thresholds,
@@ -45,6 +46,7 @@ from .settings import (
     save_resume_template,
     save_scraper_candidate_paths,
     save_theme_preference,
+    save_writing_sample,
 )
 
 __all__ = [
@@ -90,6 +92,8 @@ __all__ = [
     "save_scraper_candidate_paths",
     "get_theme_preference",
     "save_theme_preference",
+    "get_writing_sample",
+    "save_writing_sample",
     "get_heatmap_day_thresholds",
     "save_heatmap_day_thresholds",
     "get_heatmap_week_thresholds",
