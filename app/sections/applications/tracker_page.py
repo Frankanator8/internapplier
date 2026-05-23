@@ -278,7 +278,8 @@ class TrackerPage(QWidget):
                 f"Generating for {company or 'application'}… ({remaining} more queued)"
             )
 
-        worker = _GenerateResumeWorker(profile, jd, company, url, cache)
+        role = (entry.get("role") or "").strip()
+        worker = _GenerateResumeWorker(profile, jd, company, url, cache, role)
         thread = QThread(self)
         worker.moveToThread(thread)
         self._prep_threads.append(thread)

@@ -6,6 +6,7 @@ import logging
 import pathlib
 import re
 import shutil
+import uuid
 from typing import Any, Callable
 
 from api.ai_provider import (
@@ -111,6 +112,7 @@ class ResumeGenerator:
         self,
         output_pdf: pathlib.Path | str | None = None,
         company: str | None = None,
+        job_title: str | None = None,
         progress_cb: Callable[[str], None] | None = None,
         stream_cb: Callable[[str, str], None] | None = None,
     ) -> dict:
@@ -245,10 +247,14 @@ class ResumeGenerator:
 
             if page_ok and score_ok:
                 logger.info("generate_latex — passed on attempt %d", attempt)
-                final_pdf = _persist_pdf(pdf_path, output_pdf, company)
+                final_pdf, desired_pdf, collided = _persist_pdf(
+                    pdf_path, output_pdf, company, job_title
+                )
                 return {
                     "latex": latex,
                     "pdf": final_pdf,
+                    "pdf_desired": desired_pdf,
+                    "pdf_collision": collided,
                     "fill": fill,
                     "grade": grade,
                     "attempts": _attempts_summary(attempts),
@@ -283,10 +289,14 @@ class ResumeGenerator:
             best.get("fill"),
             best["grade"]["score"] if best.get("grade") else None,
         )
-        final_pdf = _persist_pdf(best.get("pdf"), output_pdf, company)
+        final_pdf, desired_pdf, collided = _persist_pdf(
+            best.get("pdf"), output_pdf, company, job_title
+        )
         return {
             "latex": best["latex"],
             "pdf": final_pdf,
+            "pdf_desired": desired_pdf,
+            "pdf_collision": collided,
             "fill": best.get("fill"),
             "grade": best.get("grade"),
             "attempts": _attempts_summary(attempts),
@@ -593,23 +603,61 @@ def _attempts_summary(attempts: list[dict]) -> list[dict]:
     return out
 
 
+_FS_UNSAFE_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def _clean_for_filename(s: str) -> str:
+    s = _FS_UNSAFE_RE.sub("", s or "").strip().strip(".")
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+
+def _build_pdf_filename(company: str | None, job_title: str | None) -> str:
+    c = _clean_for_filename(company or "")
+    t = _clean_for_filename(job_title or "")[:15].strip()
+    if c and t:
+        return f"{c} - {t}.pdf"
+    if c:
+        return f"{c}.pdf"
+    if t:
+        return f"{t}.pdf"
+    return "resume.pdf"
+
+
 def _persist_pdf(
     src: pathlib.Path | None,
     dest: pathlib.Path | str | None,
     company: str | None = None,
-) -> pathlib.Path | None:
+    job_title: str | None = None,
+) -> tuple[pathlib.Path | None, pathlib.Path | None, bool]:
+    """Copy ``src`` to the output location.
+
+    Returns ``(written_path, desired_path, had_collision)``. When the
+    preferred filename already exists, the file is written with a short
+    UUID suffix and ``had_collision`` is True so the caller can prompt
+    the user.
+    """
     if src is None or not src.exists():
-        return None
+        return None, None, False
     if dest:
         target = pathlib.Path(dest)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, target)
+        logger.info("generate_latex — PDF written to %s", target)
+        return target, target, False
+
+    out_dir = get_resume_output_dir()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    desired = out_dir / _build_pdf_filename(company, job_title)
+    collided = desired.exists()
+    if collided:
+        suffix = uuid.uuid4().hex[:8]
+        target = out_dir / f"{desired.stem}-{suffix}.pdf"
     else:
-        slug = _slugify(company) if company else ""
-        name = f"{slug}_resume.pdf" if slug else "resume.pdf"
-        target = get_resume_output_dir() / name
-    target.parent.mkdir(parents=True, exist_ok=True)
+        target = desired
     shutil.copyfile(src, target)
     logger.info("generate_latex — PDF written to %s", target)
-    return target
+    return target, desired, collided
 
 
 # ---------- label helpers (canonical drop-label format) ----------

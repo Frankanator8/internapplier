@@ -58,12 +58,13 @@ class _GenerateResumeWorker(QObject):
     progress = pyqtSignal(str)
     stream = pyqtSignal(str, str)  # (stage, chunk)
 
-    def __init__(self, profile: dict, jd: str, company_name: str, url: str, research_cache: dict):
+    def __init__(self, profile: dict, jd: str, company_name: str, url: str, research_cache: dict, job_title: str = ""):
         super().__init__()
         self._profile = profile
         self._jd = jd
         self._company = company_name
         self._url = url
+        self._job_title = job_title
         self._cache = research_cache or {}
 
     def run(self):
@@ -94,11 +95,13 @@ class _GenerateResumeWorker(QObject):
             self.progress.emit("Generating LaTeX (this can take a minute)…")
             latex_result = gen.generate_latex(
                 company=self._company or None,
+                job_title=self._job_title or None,
                 progress_cb=self.progress.emit,
                 stream_cb=self.stream.emit,
             )
 
             pdf_path = latex_result.get("pdf")
+            desired_pdf = latex_result.get("pdf_desired")
             logger.info(
                 "_GenerateResumeWorker.run — success, fill=%s",
                 latex_result.get("fill"),
@@ -108,6 +111,8 @@ class _GenerateResumeWorker(QObject):
                 "new_research": new_research,
                 "latex": latex_result.get("latex", ""),
                 "pdf": str(pdf_path) if pdf_path else "",
+                "pdf_desired": str(desired_pdf) if desired_pdf else "",
+                "pdf_collision": bool(latex_result.get("pdf_collision")),
                 "fill": latex_result.get("fill"),
                 "grade": latex_result.get("grade"),
                 "attempts": latex_result.get("attempts") or [],

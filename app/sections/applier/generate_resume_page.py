@@ -5,8 +5,9 @@ import logging
 from PyQt6.QtCore import Qt, QThread, QUrl
 from PyQt6.QtGui import QDesktopServices, QFont, QGuiApplication, QTextCursor
 from PyQt6.QtWidgets import (
-    QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
-    QScrollArea, QSizePolicy, QSplitter, QTextEdit, QVBoxLayout, QWidget,
+    QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
+    QPlainTextEdit, QScrollArea, QSizePolicy, QSplitter, QTextEdit,
+    QVBoxLayout, QWidget,
 )
 
 from api import data_store
@@ -55,6 +56,14 @@ class GenerateResumeMixin:
         form_row.addLayout(url_col, 2)
 
         left_layout.addLayout(form_row)
+
+        title_col = QVBoxLayout()
+        title_col.setSpacing(4)
+        title_col.addWidget(_label("Job Title (optional)"))
+        self._gen_title_input = QLineEdit()
+        self._gen_title_input.setPlaceholderText("e.g. Software Engineer Intern")
+        title_col.addWidget(self._gen_title_input)
+        left_layout.addLayout(title_col)
 
         left_layout.addWidget(_label("Job Description"))
         self._gen_jd_input = QTextEdit()
@@ -136,6 +145,7 @@ class GenerateResumeMixin:
 
         name = self._gen_name_input.text().strip()
         url = self._gen_url_input.text().strip()
+        job_title = self._gen_title_input.text().strip()
         profile = self._get_profile()
 
         self._clear_generate_results()
@@ -148,7 +158,7 @@ class GenerateResumeMixin:
         _set_status(self._gen_status, "neutral")
         self._gen_status.setText("Starting…")
 
-        worker = _GenerateResumeWorker(profile, jd, name, url, self._research_cache)
+        worker = _GenerateResumeWorker(profile, jd, name, url, self._research_cache, job_title)
         thread = QThread(self)
         worker.moveToThread(thread)
 
@@ -158,6 +168,7 @@ class GenerateResumeMixin:
             self._gen_status.setText("")
             self._gen_stream_view.setVisible(False)
             self._gen_results_scroll.setVisible(True)
+            self._maybe_resolve_pdf_collision(payload)
             self._populate_generate_results(payload)
             if payload.get("new_research") and name:
                 self._research_cache[name] = {"url": url, "result": payload["research"]}
@@ -311,6 +322,43 @@ class GenerateResumeMixin:
         picker.setCurrentIndex(0)
         picker.blockSignals(False)
 
+    def _maybe_resolve_pdf_collision(self, payload: dict) -> None:
+        """If the worker had to rename due to a name conflict, ask the user
+        whether to overwrite the existing file or keep the suffixed copy."""
+        import os
+        import shutil
+
+        if not payload.get("pdf_collision"):
+            return
+        written = payload.get("pdf") or ""
+        desired = payload.get("pdf_desired") or ""
+        if not written or not desired or written == desired:
+            return
+        if not os.path.exists(written) or not os.path.exists(desired):
+            return
+
+        desired_name = os.path.basename(desired)
+        written_name = os.path.basename(written)
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Resume name already exists")
+        box.setText(f"A resume named “{desired_name}” already exists.")
+        box.setInformativeText(
+            f"Overwrite it, or keep both (this one was saved as “{written_name}”)?"
+        )
+        overwrite_btn = box.addButton("Overwrite", QMessageBox.ButtonRole.DestructiveRole)
+        keep_btn = box.addButton("Keep both", QMessageBox.ButtonRole.AcceptRole)
+        box.setDefaultButton(keep_btn)
+        box.exec()
+
+        if box.clickedButton() is overwrite_btn:
+            try:
+                shutil.move(written, desired)
+                payload["pdf"] = desired
+                logger.info("_maybe_resolve_pdf_collision — overwrote %s", desired)
+            except Exception:
+                logger.exception("_maybe_resolve_pdf_collision — overwrite failed")
+
     def _on_fill_from_application(self, idx: int):
         if idx <= 0:
             return
@@ -318,6 +366,7 @@ class GenerateResumeMixin:
         if not isinstance(entry, dict):
             return
         self._gen_name_input.setText(entry.get("company", "") or "")
+        self._gen_title_input.setText(entry.get("role", "") or "")
         self._gen_jd_input.setPlainText(entry.get("description", "") or "")
         self._gen_app_picker.blockSignals(True)
         self._gen_app_picker.setCurrentIndex(0)
