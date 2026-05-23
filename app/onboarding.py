@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import subprocess
+from pathlib import Path
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
@@ -17,6 +19,7 @@ from .sections.base import _label, _primary_btn, _secondary_btn
 logger = logging.getLogger(__name__)
 
 _JAKES_URL = "https://www.overleaf.com/latex/templates/jakes-resume/syzfjbzwjncs"
+_EXTENSION_DIR = Path(__file__).resolve().parent.parent / "extension"
 
 
 class OnboardingDialog(QDialog):
@@ -52,6 +55,7 @@ class OnboardingDialog(QDialog):
         self._stack.addWidget(self._build_resume_template())
         self._stack.addWidget(self._build_writing_sample())
         self._stack.addWidget(self._build_linkedin())
+        self._stack.addWidget(self._build_extension())
         self._stack.addWidget(self._build_done())
 
         nav = QHBoxLayout()
@@ -92,7 +96,8 @@ class OnboardingDialog(QDialog):
             "  • Which AI models to use\n"
             "  • A resume template (LaTeX)\n"
             "  • A writing sample (so generated answers sound like you)\n"
-            "  • An optional LinkedIn data import\n\n"
+            "  • An optional LinkedIn data import\n"
+            "  • The Firefox autofill extension (optional)\n\n"
             "All of this can be edited later in Settings."
         )
         body.setWordWrap(True)
@@ -279,6 +284,46 @@ class OnboardingDialog(QDialog):
         v.addStretch()
         return w
 
+    def _build_extension(self) -> QWidget:
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setSpacing(12)
+
+        title = QLabel("Install the Firefox extension (optional)")
+        title.setObjectName("card-title")
+        v.addWidget(title)
+
+        body = QLabel(
+            "InternApplier ships a Firefox add-on that autofills job application "
+            "forms from your local profile. To load it:\n\n"
+            "  1. Open Firefox and go to about:debugging\n"
+            "  2. Click \"This Firefox\" in the left sidebar\n"
+            "  3. Click \"Load Temporary Add-on…\"\n"
+            "  4. Select the manifest.json file inside the extension folder shown below\n\n"
+            "Note: temporary add-ons are removed when Firefox restarts — you'll "
+            "need to load it again next session. You can skip this and install "
+            "later."
+        )
+        body.setWordWrap(True)
+        v.addWidget(body)
+
+        path_label = QLabel(str(_EXTENSION_DIR))
+        path_label.setObjectName("hint")
+        path_label.setWordWrap(True)
+        path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        v.addWidget(path_label)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(12)
+        reveal_btn = _primary_btn("Reveal extension folder", width=200)
+        reveal_btn.clicked.connect(self._reveal_extension_folder)
+        btn_row.addWidget(reveal_btn)
+        btn_row.addStretch()
+        v.addLayout(btn_row)
+
+        v.addStretch()
+        return w
+
     def _build_done(self) -> QWidget:
         w = QWidget()
         v = QVBoxLayout(w)
@@ -352,6 +397,19 @@ class OnboardingDialog(QDialog):
         summary = linkedin_import.summarize(data)
         self._linkedin_status = summary
         self._linkedin_status_label.setText(f"✓  Imported: {summary}")
+
+    def _reveal_extension_folder(self) -> None:
+        path = _EXTENSION_DIR
+        if not path.exists():
+            QMessageBox.warning(
+                self, "Folder not found",
+                f"Couldn't find the extension folder at:\n\n{path}",
+            )
+            return
+        try:
+            subprocess.run(["open", "-R", str(path / "manifest.json")], check=False)
+        except OSError as e:
+            logger.warning("Failed to reveal extension folder: %s", e)
 
     def _persist_current_step(self) -> None:
         idx = self._stack.currentIndex()
