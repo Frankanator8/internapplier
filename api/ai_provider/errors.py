@@ -123,6 +123,17 @@ def _from_http_error(exc: requests.exceptions.HTTPError, api_key: str | None) ->
     return ProviderError(message)
 
 
+def friendly_error_message(exc: BaseException) -> str:
+    """Translate any exception into a user-facing string, looking up the
+    current API key automatically so callers don't have to."""
+    try:
+        from . import get_provider
+        api_key = getattr(get_provider(), "api_key", None)
+    except Exception:
+        api_key = None
+    return str(parse_provider_error(exc, api_key=api_key))
+
+
 def parse_provider_error(
     exc: BaseException, *, api_key: str | None = None
 ) -> ProviderError:

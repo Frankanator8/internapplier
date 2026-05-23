@@ -181,6 +181,36 @@ async function fetchResume(uuid) {
   }
 }
 
+async function startResumeGeneration(uuid) {
+  if (!uuid) return { ok: false, error: "no uuid" };
+  try {
+    const res = await fetch(
+      `${API_BASE}/applications/by-uuid/${encodeURIComponent(uuid)}/resume/generate`,
+      { method: "POST" }
+    );
+    let body = null;
+    try { body = await res.json(); } catch (_) {}
+    return { ok: res.ok, status: res.status, body };
+  } catch (e) {
+    return { ok: false, status: 0, error: String(e && e.message || e) };
+  }
+}
+
+async function getResumeGenerationStatus(uuid) {
+  if (!uuid) return { ok: false, error: "no uuid" };
+  try {
+    const res = await fetch(
+      `${API_BASE}/applications/by-uuid/${encodeURIComponent(uuid)}/resume/generate/status`,
+      { cache: "no-store" }
+    );
+    let body = null;
+    try { body = await res.json(); } catch (_) {}
+    return { ok: res.ok, status: res.status, body };
+  } catch (e) {
+    return { ok: false, status: 0, error: String(e && e.message || e) };
+  }
+}
+
 async function attachLink(uuid, url) {
   if (!uuid) return { ok: false, error: "no uuid" };
   try {
@@ -259,6 +289,12 @@ browser.runtime.onMessage.addListener((msg, _sender) => {
   }
   if (msg && msg.type === "FETCH_RESUME") {
     return fetchResume(msg.uuid);
+  }
+  if (msg && msg.type === "GENERATE_RESUME") {
+    return startResumeGeneration(msg.uuid);
+  }
+  if (msg && msg.type === "GENERATE_RESUME_STATUS") {
+    return getResumeGenerationStatus(msg.uuid);
   }
   if (msg && msg.type === "EXTRACT_JOB_LIST") {
     return extractJobList(msg.selector);

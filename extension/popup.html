@@ -193,6 +193,13 @@
         min-width: 70px;
         flex-shrink: 0;
       }
+      .chip-button {
+        width: auto;
+        padding: 3px 10px;
+        font-size: 11px;
+        border-radius: 10px;
+      }
+      .chip[hidden], .chip-button[hidden] { display: none; }
       .answer-card {
         border: 1px solid var(--border);
         border-radius: 6px;
@@ -306,10 +313,13 @@
         <div id="resume-chip-row" class="chip-row" hidden>
           <span class="field-name">Resume</span>
           <span id="resume-chip" class="chip" draggable="true"
-                title="Drag onto a resume upload field">
+                title="Drag onto a resume upload field" hidden>
             <span class="chip-label">📄</span>
             <span id="resume-chip-name">Resume.pdf</span>
           </span>
+          <button id="resume-generate-btn" class="secondary chip-button" hidden>
+            Generate Resume
+          </button>
         </div>
         <button id="load-btn" disabled>Autofill Application</button>
         <button id="create-btn" class="secondary" disabled>Make New Application</button>

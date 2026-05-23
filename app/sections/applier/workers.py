@@ -4,17 +4,8 @@ import logging
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from api.ai_provider.errors import parse_provider_error
+from api.ai_provider.errors import friendly_error_message as _friendly
 from api.research_cache import lookup as _research_from_cache
-
-
-def _friendly(exc: BaseException) -> str:
-    try:
-        from api.ai_provider import get_provider
-        api_key = getattr(get_provider(), "api_key", None)
-    except Exception:
-        api_key = None
-    return str(parse_provider_error(exc, api_key=api_key))
 
 logger = logging.getLogger(__name__)
 
@@ -69,65 +60,22 @@ class _GenerateResumeWorker(QObject):
         self._application_uuid = application_uuid
 
     def run(self):
-        from api.ai_provider import get_provider
-        from api.generate_resume import ResumeGenerator
+        from api.resume_pipeline import run_resume_pipeline
         logger.info("_GenerateResumeWorker.run — company=%r jd=%r", self._company, self._jd[:80])
         try:
-            new_research = False
-            research = _research_from_cache(self._cache, self._company)
-            if research is not None:
-                self.progress.emit(f"Using cached research for {self._company!r}…")
-            elif self._company and self._url:
-                from api.web_scraper import fetch_company_pages
-                self.progress.emit(f"Scraping {self._url}…")
-                text = fetch_company_pages(self._url)
-                self.progress.emit(f"Scraped {len(text):,} chars — analyzing…")
-                research = get_provider().research_company(self._company, text)
-                new_research = True
-            else:
-                research = {
-                    "summary": f"{self._company or 'the target company'} is the target company.",
-                    "core_values": [],
-                    "recent_projects": [],
-                }
-
-            gen = ResumeGenerator(self._profile, self._jd, research)
-
-            self.progress.emit("Generating LaTeX (this can take a minute)…")
-            latex_result = gen.generate_latex(
-                company=self._company or None,
-                job_title=self._job_title or None,
+            payload = run_resume_pipeline(
+                profile=self._profile,
+                job_description=self._jd,
+                company=self._company,
+                url=self._url,
+                job_title=self._job_title,
+                application_uuid=self._application_uuid,
+                research_cache=self._cache,
                 progress_cb=self.progress.emit,
                 stream_cb=self.stream.emit,
             )
-
-            pdf_path = latex_result.get("pdf")
-            desired_pdf = latex_result.get("pdf_desired")
-            logger.info(
-                "_GenerateResumeWorker.run — success, fill=%s",
-                latex_result.get("fill"),
-            )
-            if self._application_uuid and pdf_path:
-                try:
-                    from api import data_store
-                    data_store.set_application_resume_pdf(self._application_uuid, str(pdf_path))
-                except Exception:
-                    logger.exception(
-                        "_GenerateResumeWorker.run — failed to link resume pdf to application %s",
-                        self._application_uuid,
-                    )
-            self.finished.emit({
-                "research": research,
-                "new_research": new_research,
-                "latex": latex_result.get("latex", ""),
-                "pdf": str(pdf_path) if pdf_path else "",
-                "pdf_desired": str(desired_pdf) if desired_pdf else "",
-                "pdf_collision": bool(latex_result.get("pdf_collision")),
-                "fill": latex_result.get("fill"),
-                "grade": latex_result.get("grade"),
-                "attempts": latex_result.get("attempts") or [],
-                "chosen_attempt": latex_result.get("chosen_attempt"),
-            })
+            logger.info("_GenerateResumeWorker.run — success, fill=%s", payload.get("fill"))
+            self.finished.emit(payload)
         except Exception as exc:
             logger.exception("_GenerateResumeWorker.run — failed")
             self.error.emit(_friendly(exc))
