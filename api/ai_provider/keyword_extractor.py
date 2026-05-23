@@ -1,12 +1,17 @@
 """Lightweight, fully-local job-description keyword extractor.
 
-Uses KeyBERT (sentence-transformers backbone) to surface the most
-JD-relevant phrases so the resume generator can be fed a compact
-`<jd_signals>` block instead of the full job description. The grader
-still receives the full JD elsewhere.
+Uses purpose-built skill-NER models (JobBERT family, Zhang et al.) to
+tag concrete skill and knowledge spans inside a JD, so the resume
+generator can be fed a compact `<jd_signals>` block of *differentiating*
+phrases rather than the JD-centroid noise that an embedding-based
+keyphrase extractor surfaces (soft-skill bigrams, boilerplate, etc.).
 
-The KeyBERT model is loaded lazily on first use and cached for the
-process lifetime. Per-JD results are LRU-cached.
+Two small DistilBERT-sized models are used:
+  - knowledge: tools, technologies, domains  (e.g. "Kubernetes", "FX trading")
+  - skill:     methodologies, actions        (e.g. "designing APIs", "A/B testing")
+
+Models are loaded lazily on first use and cached for the process
+lifetime. Per-JD results are LRU-cached.
 """
 from __future__ import annotations
 
@@ -17,8 +22,10 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_KEYBERT_MODEL_NAME = "all-MiniLM-L6-v2"
-_keybert_instance: Any = None
+_KNOWLEDGE_MODEL = "jjzha/jobbert_knowledge_extraction"
+_SKILL_MODEL = "jjzha/jobbert_skill_extraction"
+
+_pipelines: dict[str, Any] = {}
 
 _SECTION_HEAD_RE = re.compile(
     r"(?im)^\s*(requirements?|responsibilities|qualifications|"
@@ -27,22 +34,22 @@ _SECTION_HEAD_RE = re.compile(
 )
 
 
-def _get_keybert():
-    global _keybert_instance
-    if _keybert_instance is None:
-        from keybert import KeyBERT
-        logger.info("keyword_extractor — loading KeyBERT model %s", _KEYBERT_MODEL_NAME)
-        _keybert_instance = KeyBERT(model=_KEYBERT_MODEL_NAME)
-    return _keybert_instance
+def _get_pipeline(model_name: str):
+    pipe = _pipelines.get(model_name)
+    if pipe is None:
+        from transformers import pipeline  # type: ignore
+        logger.info("keyword_extractor — loading NER model %s", model_name)
+        pipe = pipeline(
+            "ner",
+            model=model_name,
+            tokenizer=model_name,
+            aggregation_strategy="simple",
+        )
+        _pipelines[model_name] = pipe
+    return pipe
 
 
 def _short_excerpts(jd: str, max_excerpts: int = 4, span_chars: int = 240) -> list[str]:
-    """Pull a few short verbatim spans from the JD so the generator
-    retains tone/seniority cues without seeing the whole thing.
-
-    Always include the JD's first paragraph; then any section heading
-    we recognize plus its following 1-2 sentences.
-    """
     if not jd:
         return []
     out: list[str] = []
@@ -60,31 +67,73 @@ def _short_excerpts(jd: str, max_excerpts: int = 4, span_chars: int = 240) -> li
     return out[:max_excerpts]
 
 
+def _chunk(text: str, max_chars: int = 1500) -> list[str]:
+    """Naive char-based chunking so we stay under the model's 512-token window.
+    JDs are short enough that paragraph-aligned splitting is fine."""
+    if len(text) <= max_chars:
+        return [text]
+    parts: list[str] = []
+    buf: list[str] = []
+    size = 0
+    for para in text.split("\n\n"):
+        if size + len(para) + 2 > max_chars and buf:
+            parts.append("\n\n".join(buf))
+            buf, size = [], 0
+        buf.append(para)
+        size += len(para) + 2
+    if buf:
+        parts.append("\n\n".join(buf))
+    return parts
+
+
+def _run_ner(model_name: str, jd: str) -> list[tuple[str, float]]:
+    """Return list of (phrase, score) spans tagged by the given model.
+
+    Phrases are normalized (lowercased, whitespace-collapsed, deduped) and
+    sorted by descending score with a max length cap to drop noisy spans.
+    """
+    pipe = _get_pipeline(model_name)
+    best: dict[str, float] = {}
+    for chunk in _chunk(jd):
+        try:
+            spans = pipe(chunk) or []
+        except Exception:
+            logger.exception("keyword_extractor — NER pipeline failed for %s", model_name)
+            spans = []
+        for s in spans:
+            raw = (s.get("word") or "").strip()
+            # HF subword artifacts: strip leading ## and stray punctuation
+            phrase = re.sub(r"\s+", " ", raw.replace("##", "")).strip(" .,;:()[]\"'")
+            if not phrase or len(phrase) < 2 or len(phrase.split()) > 6:
+                continue
+            key = phrase.lower()
+            score = float(s.get("score", 0.0))
+            if score > best.get(key, 0.0):
+                best[key] = score
+    return sorted(best.items(), key=lambda kv: kv[1], reverse=True)
+
+
 @lru_cache(maxsize=32)
 def _extract_cached(jd: str, top_n: int) -> tuple:
-    kb = _get_keybert()
-    try:
-        raw = kb.extract_keywords(
-            jd,
-            keyphrase_ngram_range=(1, 3),
-            stop_words="english",
-            use_mmr=True,
-            diversity=0.5,
-            top_n=top_n,
-        )
-    except Exception:
-        logger.exception("keyword_extractor — KeyBERT.extract_keywords failed; returning empty list")
-        raw = []
-    # raw: list of (phrase, score) tuples — make it hashable for the cache layer
-    return tuple((str(p), float(s)) for p, s in raw)
+    knowledge = _run_ner(_KNOWLEDGE_MODEL, jd)
+    skills = _run_ner(_SKILL_MODEL, jd)
+    # Cap per-category, knowledge slightly favored since it's what
+    # most differentiates a candidate ("Kubernetes" > "deploying services").
+    k_cap = max(1, int(top_n * 0.6))
+    s_cap = max(1, top_n - k_cap)
+    out = (
+        tuple(("knowledge", p, s) for p, s in knowledge[:k_cap])
+        + tuple(("skill", p, s) for p, s in skills[:s_cap])
+    )
+    return out
 
 
 def extract_jd_keywords(jd: str, top_n: int = 30) -> dict:
-    """Return ranked KeyBERT phrases + a few verbatim excerpts from the JD.
+    """Return categorized JD spans + a few verbatim excerpts.
 
     Shape:
         {
-          "keywords": [{"phrase": str, "score": float}, ...],
+          "keywords": [{"phrase": str, "score": float, "category": str}, ...],
           "excerpts": [str, ...]
         }
     """
@@ -92,15 +141,16 @@ def extract_jd_keywords(jd: str, top_n: int = 30) -> dict:
     if not jd:
         return {"keywords": [], "excerpts": []}
 
-    keywords_raw = _extract_cached(jd, top_n)
-    result = {
-        "keywords": [{"phrase": p, "score": round(s, 4)} for p, s in keywords_raw],
-        "excerpts": _short_excerpts(jd),
-    }
+    rows = _extract_cached(jd, top_n)
+    keywords = [
+        {"phrase": p, "score": round(s, 4), "category": cat}
+        for cat, p, s in rows
+    ]
+    result = {"keywords": keywords, "excerpts": _short_excerpts(jd)}
     logger.info(
         "extract_jd_keywords — jd_chars=%d top_n=%d extracted=%d excerpts=%d; keywords=[%s]",
         len(jd), top_n, len(result["keywords"]), len(result["excerpts"]),
-        ", ".join(f"{k['phrase']!r}@{k['score']:.3f}" for k in result["keywords"]),
+        ", ".join(f"{k['category']}:{k['phrase']!r}@{k['score']:.3f}" for k in result["keywords"]),
     )
     return result
 
@@ -110,15 +160,37 @@ def format_jd_signals(signals: dict) -> str:
     inclusion in an LLM user message."""
     lines: list[str] = []
     kws = signals.get("keywords") or []
-    if kws:
-        lines.append("keywords (ranked, most-relevant first):")
-        for kw in kws:
-            phrase = kw.get("phrase", "") if isinstance(kw, dict) else str(kw)
-            if phrase:
-                lines.append(f"  - {phrase}")
+    by_cat: dict[str, list[str]] = {}
+    for kw in kws:
+        if isinstance(kw, dict):
+            phrase = kw.get("phrase", "")
+            cat = kw.get("category", "keyword")
+        else:
+            phrase = str(kw)
+            cat = "keyword"
+        if phrase:
+            by_cat.setdefault(cat, []).append(phrase)
+
+    label_order = ["knowledge", "skill", "keyword"]
+    label_text = {
+        "knowledge": "tools / technologies / domains (highest-signal — prefer these):",
+        "skill": "methodologies / actions:",
+        "keyword": "keywords (ranked, most-relevant first):",
+    }
+    for cat in label_order:
+        items = by_cat.get(cat)
+        if not items:
+            continue
+        if lines:
+            lines.append("")
+        lines.append(label_text.get(cat, f"{cat}:"))
+        for phrase in items:
+            lines.append(f"  - {phrase}")
+
     excerpts = signals.get("excerpts") or []
     if excerpts:
-        lines.append("")
+        if lines:
+            lines.append("")
         lines.append("verbatim excerpts (tone/seniority cues — NOT the full JD):")
         for ex in excerpts:
             cleaned = " ".join((ex or "").split())

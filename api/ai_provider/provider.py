@@ -184,9 +184,15 @@ class OpenRouterProvider:
                 if final_usage:
                     prompt_t = final_usage.get("prompt_tokens", 0)
                     completion_t = final_usage.get("completion_tokens", 0)
+                    cache_read = (
+                        final_usage.get("cache_read_input_tokens")
+                        or (final_usage.get("prompt_tokens_details") or {}).get("cached_tokens")
+                        or 0
+                    )
+                    cache_write = final_usage.get("cache_creation_input_tokens", 0)
                     logger.info(
-                        "%s — usage tier=%s prompt=%s completion=%s",
-                        log_label, tier, prompt_t, completion_t,
+                        "%s — usage tier=%s prompt=%s completion=%s cache_read=%s cache_write=%s",
+                        log_label, tier, prompt_t, completion_t, cache_read, cache_write,
                     )
                     try:
                         record_usage(tier, prompt_t, completion_t)
@@ -350,30 +356,51 @@ class OpenRouterProvider:
 
         today = today or datetime.date.today().isoformat()
         signals = extract_jd_keywords(job_description)
-        sections: list[str] = [
+        static_sections: list[str] = [
             f"<today>{today}</today>",
             f"<jd_signals>\n{format_jd_signals(signals)}\n</jd_signals>",
-            f"<profile>\n{_profile_json(profile)}\n</profile>",
         ]
+        if company_research:
+            static_sections.append(
+                f"<company_research>\n{json.dumps(company_research, indent=2)}\n</company_research>"
+            )
         if get_resume_template().strip():
-            sections.append(
+            static_sections.append(
                 "<template_note>\nA Jinja-style LaTeX template is configured server-side. "
                 "You do not interact with it; emit JSON only.\n</template_note>"
             )
+        static_sections.append(f"<profile>\n{_profile_json(profile)}\n</profile>")
+
+        dynamic_sections: list[str] = []
         if previous_resume:
-            sections.append(
+            dynamic_sections.append(
                 f"<previous_draft>\n{json.dumps(previous_resume, indent=2)}\n</previous_draft>"
             )
         if feedback:
-            sections.append(f"<feedback>\n{feedback}\n</feedback>")
-        if company_research:
-            sections.append(
-                f"<company_research>\n{json.dumps(company_research, indent=2)}\n</company_research>"
-            )
+            dynamic_sections.append(f"<feedback>\n{feedback}\n</feedback>")
+
+        user_content: list[dict] = [
+            {
+                "type": "text",
+                "text": "\n\n".join(static_sections),
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
+        if dynamic_sections:
+            user_content.append({"type": "text", "text": "\n\n".join(dynamic_sections)})
 
         return [
-            {"role": "system", "content": load_prompt("generate_resume.txt")},
-            {"role": "user", "content": "\n\n".join(sections)},
+            {
+                "role": "system",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": load_prompt("generate_resume.txt"),
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+            },
+            {"role": "user", "content": user_content},
         ]
 
     def generate_resume_stream(

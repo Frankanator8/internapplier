@@ -129,7 +129,7 @@ class ResumeGenerator:
         score_threshold = get_resume_score_threshold()
 
         omitted_labels: set[str] = set()
-        all_drops_log: list[str] = []
+        last_drops: list[str] = []
         feedback: str | None = None
         attempts: list[dict] = []
 
@@ -271,14 +271,14 @@ class ResumeGenerator:
                         omitted_labels.add(key)
                         new_drops.append(d)
                 if new_drops:
-                    all_drops_log.extend(new_drops)
                     logger.info(
                         "generate_latex — page overflow (fill=%.3f > cap=%d), grader dropped: %s",
                         fill, page_cap, new_drops,
                     )
+                last_drops = list(new_drops)
 
             feedback = _build_feedback(
-                compile_error, fill, page_ok, page_cap, all_drops_log, grade, score_ok,
+                compile_error, fill, page_ok, page_cap, last_drops, grade, score_ok,
                 short_bullets,
             )
 
@@ -542,7 +542,7 @@ def _build_feedback(
     fill: float | None,
     page_ok: bool,
     page_cap: int,
-    all_drops: list[str],
+    last_drops: list[str],
     grade: dict | None,
     score_ok: bool,
     short_bullets: list[dict] | None = None,
@@ -555,8 +555,8 @@ def _build_feedback(
         )
     if fill is not None and not page_ok:
         drop_note = (
-            f"Entries/courses removed so far across attempts: {'; '.join(all_drops)}."
-            if all_drops
+            f"Entries/courses removed in the previous attempt: {'; '.join(last_drops)}."
+            if last_drops
             else "The grader did not name anything to drop — tighten remaining content."
         )
         parts.append(
