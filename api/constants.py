@@ -10,6 +10,7 @@ MODELS_FILE = APP_DIR / "models.txt"
 SETTINGS_FILE = APP_DIR / "settings.json"
 TOKEN_USAGE_FILE = APP_DIR / "token_usage.json"
 APP_PROMPTS_DIR = APP_DIR / "prompts"
+ENV_FILE = APP_DIR / ".env"
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
 # --- Server ---

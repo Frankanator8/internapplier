@@ -1,9 +1,11 @@
 import json
+import os
 import pathlib
 from typing import Any, Callable
 
 from ..constants import (
     APP_DIR,
+    ENV_FILE,
     DEFAULT_AUTO_RESYNC_PROMPTS,
     DEFAULT_BASIC_MODEL,
     DEFAULT_FAST_MODEL,
@@ -172,6 +174,50 @@ def get_auto_resync_prompts() -> bool:
 
 def save_auto_resync_prompts(enabled: bool) -> None:
     _set("auto_resync_prompts", bool(enabled))
+
+
+def get_openrouter_api_key() -> str:
+    """Read the OpenRouter API key from the Application Support .env file."""
+    if not ENV_FILE.exists():
+        return ""
+    try:
+        for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
+            if line.startswith("OPENROUTER_API_KEY="):
+                return line.split("=", 1)[1].strip()
+    except OSError:
+        return ""
+    return ""
+
+
+def save_openrouter_api_key(key: str) -> None:
+    """Persist the OpenRouter API key to the Application Support .env file
+    and update the current process environment so changes take effect immediately."""
+    APP_DIR.mkdir(parents=True, exist_ok=True)
+    key = (key or "").strip()
+
+    lines: list[str] = []
+    if ENV_FILE.exists():
+        try:
+            lines = ENV_FILE.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            lines = []
+
+    new_line = f"OPENROUTER_API_KEY={key}"
+    found = False
+    for i, line in enumerate(lines):
+        if line.startswith("OPENROUTER_API_KEY="):
+            lines[i] = new_line
+            found = True
+            break
+    if not found:
+        lines.append(new_line)
+
+    ENV_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    if key:
+        os.environ["OPENROUTER_API_KEY"] = key
+    else:
+        os.environ.pop("OPENROUTER_API_KEY", None)
 
 
 def _load_model_config() -> dict[str, str]:

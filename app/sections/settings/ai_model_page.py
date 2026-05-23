@@ -23,6 +23,34 @@ class AiModelMixin:
         title.setObjectName("card-title")
         card_layout.addWidget(title)
 
+        card_layout.addWidget(_label("OpenRouter API key"))
+        self._api_key_edit = QLineEdit()
+        self._api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._api_key_edit.setPlaceholderText("sk-or-...")
+        self._api_key_edit.setText(ai_provider.get_openrouter_api_key())
+        self._api_key_edit.setMinimumWidth(360)
+        key_row = QHBoxLayout()
+        key_row.setSpacing(8)
+        key_row.addWidget(self._api_key_edit)
+        self._api_key_reveal = _primary_btn("Show", width=70)
+        self._api_key_reveal.clicked.connect(self._toggle_api_key_visible)
+        key_row.addWidget(self._api_key_reveal)
+        key_row.addStretch()
+        card_layout.addLayout(key_row)
+
+        key_hint = QLabel(
+            "Stored in ~/Library/Application Support/InternApplier/.env and "
+            "loaded into the environment as OPENROUTER_API_KEY."
+        )
+        key_hint.setWordWrap(True)
+        key_hint.setObjectName("hint")
+        card_layout.addWidget(key_hint)
+
+        sep_top = QFrame()
+        sep_top.setFrameShape(QFrame.Shape.HLine)
+        sep_top.setObjectName("hline")
+        card_layout.addWidget(sep_top)
+
         config = ai_provider._load_model_config()
 
         self._basic_edit = QLineEdit()
@@ -131,6 +159,14 @@ class AiModelMixin:
 
         return container
 
+    def _toggle_api_key_visible(self) -> None:
+        if self._api_key_edit.echoMode() == QLineEdit.EchoMode.Password:
+            self._api_key_edit.setEchoMode(QLineEdit.EchoMode.Normal)
+            self._api_key_reveal.setText("Hide")
+        else:
+            self._api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+            self._api_key_reveal.setText("Show")
+
     @staticmethod
     def _make_capability_chip(text: str) -> QFrame:
         chip = QFrame()
@@ -152,6 +188,7 @@ class AiModelMixin:
             return
 
         ai_provider.save_model_config(basic, fast, powerful)
+        ai_provider.save_openrouter_api_key(self._api_key_edit.text())
 
         _set_status(self._inline_status, "ok")
         self._inline_status.setText("✓  Saved")

@@ -4,10 +4,12 @@ import sys
 import threading
 from dotenv import load_dotenv
 
-load_dotenv()
-
 _LOG_DIR = pathlib.Path.home() / "Library" / "Application Support" / "InternApplier"
 _LOG_FILE = _LOG_DIR / "app.log"
+_ENV_FILE = _LOG_DIR / ".env"
+
+_LOG_DIR.mkdir(parents=True, exist_ok=True)
+load_dotenv(_ENV_FILE)
 
 
 def _setup_logging() -> None:
