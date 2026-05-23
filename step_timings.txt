@@ -1,0 +1,36 @@
+2026-05-22T21:09:42  step=jd-keywords         elapsed=5.708s
+2026-05-22T21:10:55  attempt=1  step=generate-json       tokens tier=powerful in=5343 out=854
+2026-05-22T21:11:37  attempt=1  step=generate-json       tokens tier=powerful in=6233 out=899
+2026-05-22T21:12:18  attempt=1  step=generate-json       tokens tier=powerful in=7169 out=911
+2026-05-22T21:12:58  attempt=1  step=generate-json       tokens tier=powerful in=8115 out=948
+2026-05-22T21:13:38  attempt=1  step=generate-json       tokens tier=powerful in=9100 out=980
+2026-05-22T21:14:31  attempt=1  step=generate-json       tokens tier=powerful in=10117 out=1051
+2026-05-22T21:15:09  attempt=1  step=generate-json       tokens tier=powerful in=11205 out=904
+2026-05-22T21:15:51  attempt=1  step=generate-json       tokens tier=powerful in=12146 out=993
+2026-05-22T21:16:31  attempt=1  step=generate-json       tokens tier=powerful in=13175 out=1009
+2026-05-22T21:17:07  attempt=1  step=generate-json       tokens tier=powerful in=14219 out=853
+2026-05-22T21:17:07  attempt=1  step=generate-json       elapsed=444.841s
+2026-05-22T21:17:07  attempt=1  step=render-compile      elapsed=0.728s
+2026-05-22T21:18:05  attempt=1  step=grade               tokens tier=powerful in=6729 out=955
+2026-05-22T21:19:07  attempt=1  step=grade               tokens tier=powerful in=7720 out=955
+2026-05-22T21:20:29  attempt=1  step=grade               tokens tier=powerful in=8710 out=1371
+2026-05-22T21:21:23  attempt=1  step=grade               tokens tier=powerful in=10118 out=453
+2026-05-22T21:21:23  attempt=1  step=grade               elapsed=255.739s
+2026-05-22T21:56:55  step=jd-keywords         elapsed=5.544s
+2026-05-22T21:56:55  attempt=1  step=generate-json       elapsed=0.382s
+2026-05-22T21:56:55  step=TOTAL               elapsed=5.931s
+2026-05-22T21:57:16  step=jd-keywords         elapsed=0.000s
+2026-05-22T21:57:16  attempt=1  step=generate-json       elapsed=0.255s
+2026-05-22T21:57:16  step=TOTAL               elapsed=0.258s
+2026-05-22T21:57:17  step=jd-keywords         elapsed=0.001s
+2026-05-22T21:57:17  attempt=1  step=generate-json       elapsed=0.290s
+2026-05-22T21:57:17  step=TOTAL               elapsed=0.295s
+2026-05-22T21:57:21  step=jd-keywords         elapsed=0.001s
+2026-05-22T21:57:21  attempt=1  step=generate-json       elapsed=0.307s
+2026-05-22T21:57:21  step=TOTAL               elapsed=0.310s
+2026-05-22T22:00:20  step=jd-keywords         elapsed=0.000s
+2026-05-22T22:00:20  attempt=1  step=generate-json       elapsed=0.393s
+2026-05-22T22:00:20  step=TOTAL               elapsed=0.396s
+2026-05-23T02:18:49  step=jd-keywords         elapsed=6.068s
+2026-05-23T02:18:49  attempt=1  step=generate-json       elapsed=0.350s
+2026-05-23T02:18:49  step=TOTAL               elapsed=6.422s
