@@ -1,3 +1,1 @@
-test resume generation pipeline
 write READMEs
-write tests in general
