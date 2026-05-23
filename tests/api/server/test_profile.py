@@ -52,7 +52,7 @@ class TestAnswerQuestion:
         from api import data_store
         d = data_store.load()
         d["applications"] = [
-            {"company": "Acme", "description": "JD here"},
+            {"uuid": "abc123", "company": "Acme", "description": "JD here"},
         ]
         data_store.save(d)
 
@@ -63,11 +63,11 @@ class TestAnswerQuestion:
         mocker.patch("api.server.profile.get_provider", return_value=fake_provider)
 
         resp = client.post("/answer/question", json={
-            "question": "Why?", "application_index": 0,
+            "question": "Why?", "application_uuid": "abc123",
         })
         assert resp.json() == {"answer": "Hello world"}
 
-        # Ensure provider received company + JD from app index
+        # Ensure provider received company + JD from app uuid
         call_kwargs = fake_provider.answer_question_stream.call_args.kwargs
         assert call_kwargs["company_name"] == "Acme"
         assert call_kwargs["job_description"] == "JD here"

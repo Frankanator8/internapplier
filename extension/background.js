@@ -52,14 +52,14 @@ async function getProfile({ forceRefresh = false } = {}) {
   return fetchProfile();
 }
 
-async function answerQuestion(question, applicationIndex) {
+async function answerQuestion(question, applicationUuid) {
   try {
     const res = await fetch(`${API_BASE}/answer/question`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         question: question || "",
-        application_index: (applicationIndex == null ? null : applicationIndex),
+        application_uuid: applicationUuid || null,
       }),
     });
     let body = null;
@@ -163,9 +163,28 @@ async function bulkCreateApplications(entries) {
   }
 }
 
-async function attachLink(index, url) {
+async function fetchResume(uuid) {
+  if (!uuid) return { ok: false, error: "no uuid" };
   try {
-    const res = await fetch(`${API_BASE}/applications/${index}/links`, {
+    const res = await fetch(
+      `${API_BASE}/applications/by-uuid/${encodeURIComponent(uuid)}/resume.pdf`,
+      { cache: "no-store" }
+    );
+    if (!res.ok) return { ok: false, status: res.status };
+    const cd = res.headers.get("Content-Disposition") || "";
+    const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);
+    const filename = (m && decodeURIComponent(m[1])) || "Resume.pdf";
+    const arrayBuffer = await res.arrayBuffer();
+    return { ok: true, arrayBuffer, filename };
+  } catch (e) {
+    return { ok: false, status: 0, error: String(e && e.message || e) };
+  }
+}
+
+async function attachLink(uuid, url) {
+  if (!uuid) return { ok: false, error: "no uuid" };
+  try {
+    const res = await fetch(`${API_BASE}/applications/by-uuid/${encodeURIComponent(uuid)}/links`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url: url || "" }),
@@ -186,7 +205,7 @@ browser.runtime.onMessage.addListener((msg, _sender) => {
     return getProfile({ forceRefresh: !!msg.forceRefresh });
   }
   if (msg && msg.type === "ANSWER_QUESTION") {
-    return answerQuestion(msg.question, msg.application_index);
+    return answerQuestion(msg.question, msg.application_uuid);
   }
   if (msg && msg.type === "HEALTH") {
     return checkHealth();
@@ -208,7 +227,7 @@ browser.runtime.onMessage.addListener((msg, _sender) => {
       try {
         const listed = await listApplications();
         if (listed.ok && Array.isArray(listed.body)) {
-          const app = listed.body.find((a) => a.index === msg.index);
+          const app = listed.body.find((a) => a.uuid === msg.uuid);
           if (app) {
             if (app.company) fields.company = app.company;
             if (app.role) fields.role = app.role;
@@ -236,7 +255,10 @@ browser.runtime.onMessage.addListener((msg, _sender) => {
     return listApplications();
   }
   if (msg && msg.type === "ATTACH_LINK") {
-    return attachLink(msg.index, msg.url);
+    return attachLink(msg.uuid, msg.url);
+  }
+  if (msg && msg.type === "FETCH_RESUME") {
+    return fetchResume(msg.uuid);
   }
   if (msg && msg.type === "EXTRACT_JOB_LIST") {
     return extractJobList(msg.selector);

@@ -279,7 +279,10 @@ class TrackerPage(QWidget):
             )
 
         role = (entry.get("role") or "").strip()
-        worker = _GenerateResumeWorker(profile, jd, company, url, cache, role)
+        worker = _GenerateResumeWorker(
+            profile, jd, company, url, cache, role,
+            application_uuid=entry.get("uuid"),
+        )
         thread = QThread(self)
         worker.moveToThread(thread)
         self._prep_threads.append(thread)

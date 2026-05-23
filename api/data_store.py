@@ -116,6 +116,45 @@ def save(data: dict) -> None:
     _cache_mtime = RESUME_DATA_FILE.stat().st_mtime
 
 
+def find_application_by_uuid(uuid: str) -> tuple[int, dict] | None:
+    apps = load().get("applications") or []
+    for i, entry in enumerate(apps):
+        if isinstance(entry, dict) and entry.get("uuid") == uuid:
+            return i, entry
+    return None
+
+
+def set_application_resume_pdf(uuid: str, pdf_path: str) -> dict:
+    data = load()
+    apps = data.get("applications") or []
+    for i, entry in enumerate(apps):
+        if isinstance(entry, dict) and entry.get("uuid") == uuid:
+            entry["resume_pdf"] = pdf_path
+            apps[i] = entry
+            data["applications"] = apps
+            save(data)
+            return entry
+    raise KeyError(uuid)
+
+
+def attach_application_link(uuid: str, url: str) -> list[str]:
+    data = load()
+    apps = data.get("applications") or []
+    for i, entry in enumerate(apps):
+        if isinstance(entry, dict) and entry.get("uuid") == uuid:
+            links = entry.get("links")
+            if not isinstance(links, list):
+                links = []
+            if url not in links:
+                links.append(url)
+            entry["links"] = links
+            apps[i] = entry
+            data["applications"] = apps
+            save(data)
+            return links
+    raise KeyError(uuid)
+
+
 def load_interview_template() -> list[dict]:
     APP_DIR.mkdir(parents=True, exist_ok=True)
     if not INTERVIEW_TEMPLATE_FILE.exists():

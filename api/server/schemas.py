@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 from pydantic import BaseModel, Field
 
 from ..constants import ALL_FIELDS, COMBO_FIELDS, DEFAULT_STATUS, LINE_FIELDS
@@ -16,6 +18,7 @@ __all__ = [
 
 
 class ApplicationEntry(BaseModel):
+    uuid: str = Field(default_factory=lambda: uuid.uuid4().hex)
     company: str = ""
     role: str = ""
     date: str = ""
@@ -24,6 +27,7 @@ class ApplicationEntry(BaseModel):
     notes: str = ""
     description: str = ""
     interview_questions: list = Field(default_factory=list)
+    resume_pdf: str = ""
 
 
 class AttachLinkBody(BaseModel):
@@ -36,4 +40,4 @@ class BulkApplicationsBody(BaseModel):
 
 class AnswerQuestionBody(BaseModel):
     question: str
-    application_index: int | None = None
+    application_uuid: str | None = None

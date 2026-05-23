@@ -303,6 +303,14 @@
           <label class="field" for="load-target">Application</label>
           <select id="load-target"></select>
         </div>
+        <div id="resume-chip-row" class="chip-row" hidden>
+          <span class="field-name">Resume</span>
+          <span id="resume-chip" class="chip" draggable="true"
+                title="Drag onto a resume upload field">
+            <span class="chip-label">📄</span>
+            <span id="resume-chip-name">Resume.pdf</span>
+          </span>
+        </div>
         <button id="load-btn" disabled>Autofill Application</button>
         <button id="create-btn" class="secondary" disabled>Make New Application</button>
         <button id="ask-btn" class="secondary" disabled>Ask AI about a question on page</button>

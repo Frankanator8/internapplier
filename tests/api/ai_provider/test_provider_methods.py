@@ -26,6 +26,12 @@ def _stop_event(sse_factory):
     return [sse_factory.delta(finish_reason="stop")]
 
 
+def _text(content):
+    if isinstance(content, str):
+        return content
+    return "".join(b.get("text", "") for b in content if isinstance(b, dict))
+
+
 class TestAnalyzeBullet:
     def test_tier_basic_and_user_block(self, provider, mock_openrouter, sse_factory):
         mock_openrouter.queue_stream(_stop_event(sse_factory))
@@ -55,7 +61,7 @@ class TestGradeResume:
         payload = mock_openrouter.last_payload()
         assert payload["model"] == "F"
         assert "tools" not in payload
-        user_msg = payload["messages"][1]["content"]
+        user_msg = _text(payload["messages"][1]["content"])
         assert "2026-01-01" in user_msg
         assert "fill=0.92" in user_msg
         assert sample_jd.strip() in user_msg
@@ -77,7 +83,7 @@ class TestGradeResume:
             company_research={"summary": "Acme is great"},
             today="2026-01-01",
         ))
-        user_msg = mock_openrouter.last_payload()["messages"][1]["content"]
+        user_msg = _text(mock_openrouter.last_payload()["messages"][1]["content"])
         assert "Acme is great" in user_msg
         assert "<company_research>" in user_msg
 

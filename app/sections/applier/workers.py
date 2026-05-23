@@ -58,7 +58,7 @@ class _GenerateResumeWorker(QObject):
     progress = pyqtSignal(str)
     stream = pyqtSignal(str, str)  # (stage, chunk)
 
-    def __init__(self, profile: dict, jd: str, company_name: str, url: str, research_cache: dict, job_title: str = ""):
+    def __init__(self, profile: dict, jd: str, company_name: str, url: str, research_cache: dict, job_title: str = "", application_uuid: str | None = None):
         super().__init__()
         self._profile = profile
         self._jd = jd
@@ -66,6 +66,7 @@ class _GenerateResumeWorker(QObject):
         self._url = url
         self._job_title = job_title
         self._cache = research_cache or {}
+        self._application_uuid = application_uuid
 
     def run(self):
         from api.ai_provider import get_provider
@@ -106,6 +107,15 @@ class _GenerateResumeWorker(QObject):
                 "_GenerateResumeWorker.run — success, fill=%s",
                 latex_result.get("fill"),
             )
+            if self._application_uuid and pdf_path:
+                try:
+                    from api import data_store
+                    data_store.set_application_resume_pdf(self._application_uuid, str(pdf_path))
+                except Exception:
+                    logger.exception(
+                        "_GenerateResumeWorker.run — failed to link resume pdf to application %s",
+                        self._application_uuid,
+                    )
             self.finished.emit({
                 "research": research,
                 "new_research": new_research,

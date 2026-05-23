@@ -34,12 +34,12 @@ def autofill_fields() -> dict:
 @router.post("/answer/question")
 def answer_question(body: AnswerQuestionBody) -> dict:
     profile = data_store.load()
-    apps = profile.get("applications") or []
     company = None
     job_description = None
-    if body.application_index is not None and 0 <= body.application_index < len(apps):
-        app = apps[body.application_index]
-        if isinstance(app, dict):
+    if body.application_uuid:
+        found = data_store.find_application_by_uuid(body.application_uuid)
+        if found is not None:
+            _, app = found
             company = app.get("company") or None
             job_description = app.get("description") or None
     chunks = list(get_provider().answer_question_stream(

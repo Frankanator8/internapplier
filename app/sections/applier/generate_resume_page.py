@@ -34,6 +34,7 @@ class GenerateResumeMixin:
         self._gen_app_picker = QComboBox()
         self._gen_app_picker.currentIndexChanged.connect(self._on_fill_from_application)
         left_layout.addWidget(self._gen_app_picker)
+        self._gen_selected_app_uuid: str | None = None
         self._refresh_app_picker()
 
         form_row = QHBoxLayout()
@@ -158,7 +159,11 @@ class GenerateResumeMixin:
         _set_status(self._gen_status, "neutral")
         self._gen_status.setText("Starting…")
 
-        worker = _GenerateResumeWorker(profile, jd, name, url, self._research_cache, job_title)
+        worker = _GenerateResumeWorker(
+            profile, jd, name, url, self._research_cache, job_title,
+            application_uuid=self._gen_selected_app_uuid,
+        )
+        self._gen_selected_app_uuid = None
         thread = QThread(self)
         worker.moveToThread(thread)
 
@@ -361,6 +366,7 @@ class GenerateResumeMixin:
 
     def _on_fill_from_application(self, idx: int):
         if idx <= 0:
+            self._gen_selected_app_uuid = None
             return
         entry = self._gen_app_picker.itemData(idx)
         if not isinstance(entry, dict):
@@ -368,6 +374,7 @@ class GenerateResumeMixin:
         self._gen_name_input.setText(entry.get("company", "") or "")
         self._gen_title_input.setText(entry.get("role", "") or "")
         self._gen_jd_input.setPlainText(entry.get("description", "") or "")
+        self._gen_selected_app_uuid = entry.get("uuid") or None
         self._gen_app_picker.blockSignals(True)
         self._gen_app_picker.setCurrentIndex(0)
         self._gen_app_picker.blockSignals(False)

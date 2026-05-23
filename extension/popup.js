@@ -2,6 +2,9 @@ const dot = document.getElementById("dot");
 const statusText = document.getElementById("status-text");
 const nameEl = document.getElementById("name");
 const loadTarget = document.getElementById("load-target");
+const resumeChipRow = document.getElementById("resume-chip-row");
+const resumeChip = document.getElementById("resume-chip");
+const resumeChipName = document.getElementById("resume-chip-name");
 const loadBtn = document.getElementById("load-btn");
 const createBtn = document.getElementById("create-btn");
 const askBtn = document.getElementById("ask-btn");
@@ -127,29 +130,29 @@ async function loadStatuses() {
 }
 
 function pickBestMatch(apps, meta) {
-  if (!Array.isArray(apps) || !apps.length) return -1;
+  if (!Array.isArray(apps) || !apps.length) return "";
   const company = (meta.company || "").toLowerCase().trim();
   const role = (meta.role || "").toLowerCase().trim();
   if (company) {
     for (const a of apps) {
-      if ((a.company || "").toLowerCase().trim() === company) return a.index;
+      if ((a.company || "").toLowerCase().trim() === company) return a.uuid;
     }
   }
   if (role) {
     for (const a of apps) {
-      if ((a.role || "").toLowerCase().trim() === role) return a.index;
+      if ((a.role || "").toLowerCase().trim() === role) return a.uuid;
     }
   }
-  return apps[0].index;
+  return apps[0].uuid || "";
 }
 
 function pickByLink(apps, url) {
-  if (!Array.isArray(apps) || !apps.length || !url) return -1;
+  if (!Array.isArray(apps) || !apps.length || !url) return "";
   for (const a of apps) {
     const links = Array.isArray(a.links) ? a.links : [];
-    if (links.includes(url)) return a.index;
+    if (links.includes(url)) return a.uuid;
   }
-  return -1;
+  return "";
 }
 
 async function populateLoadDropdown() {
@@ -173,12 +176,13 @@ async function populateLoadDropdown() {
     loadTarget.appendChild(opt);
     loadBtn.disabled = true;
     askBtn.disabled = true;
+    hideResumeChip();
     return;
   }
 
   for (const a of apps) {
     const opt = document.createElement("option");
-    opt.value = String(a.index);
+    opt.value = a.uuid || "";
     const company = a.company || "(no company)";
     const role = a.role || "(no role)";
     opt.textContent = `${company} — ${role}`;
@@ -186,10 +190,69 @@ async function populateLoadDropdown() {
   }
 
   let best = pickByLink(apps, meta.url);
-  if (best < 0) best = pickBestMatch(apps, meta);
-  if (best >= 0) loadTarget.value = String(best);
+  if (!best) best = pickBestMatch(apps, meta);
+  if (best) loadTarget.value = best;
   loadBtn.disabled = false;
-  askBtn.disabled = selectedApplicationIndex() == null;
+  askBtn.disabled = selectedApplicationUuid() == null;
+  refreshResumeChip(selectedApplicationUuid());
+}
+
+let _resumeChipObjectUrl = null;
+
+function hideResumeChip() {
+  if (resumeChip) resumeChip._file = null;
+  if (resumeChipRow) resumeChipRow.hidden = true;
+  if (_resumeChipObjectUrl) {
+    try { URL.revokeObjectURL(_resumeChipObjectUrl); } catch (_) {}
+    _resumeChipObjectUrl = null;
+  }
+}
+
+async function refreshResumeChip(uuid) {
+  if (!resumeChip || !resumeChipRow) return;
+  if (!uuid) {
+    hideResumeChip();
+    return;
+  }
+  let reply = null;
+  try {
+    reply = await browser.runtime.sendMessage({
+      type: "FETCH_RESUME",
+      uuid,
+    });
+  } catch (_) {}
+  if (!reply || !reply.ok || !reply.arrayBuffer) {
+    hideResumeChip();
+    return;
+  }
+  if (loadTarget.value !== uuid) return;
+  const file = new File([reply.arrayBuffer], reply.filename || "Resume.pdf", {
+    type: "application/pdf",
+  });
+  resumeChip._file = file;
+  if (resumeChipName) resumeChipName.textContent = file.name;
+  resumeChipRow.hidden = false;
+}
+
+if (resumeChip) {
+  resumeChip.addEventListener("dragstart", (e) => {
+    const file = resumeChip._file;
+    if (!file) { e.preventDefault(); return; }
+    try {
+      e.dataTransfer.effectAllowed = "copy";
+      e.dataTransfer.items.add(file);
+      if (_resumeChipObjectUrl) {
+        try { URL.revokeObjectURL(_resumeChipObjectUrl); } catch (_) {}
+      }
+      _resumeChipObjectUrl = URL.createObjectURL(file);
+      e.dataTransfer.setData(
+        "DownloadURL",
+        `application/pdf:${file.name}:${_resumeChipObjectUrl}`
+      );
+    } catch (_) {
+      // Some browsers throw on items.add for cross-origin; fall through silently.
+    }
+  });
 }
 
 async function refreshStatus() {
@@ -224,28 +287,29 @@ async function refreshStatus() {
     askBtn.disabled = true;
     scanBtn.disabled = true;
     loadTarget.innerHTML = "";
+    hideResumeChip();
     nameEl.textContent = "";
     profileSection.classList.add("hidden");
   }
 }
 
 loadTarget.addEventListener("change", () => {
-  askBtn.disabled = selectedApplicationIndex() == null;
+  askBtn.disabled = selectedApplicationUuid() == null;
+  refreshResumeChip(selectedApplicationUuid());
 });
 
 loadBtn.addEventListener("click", async () => {
-  const idxStr = loadTarget.value;
-  if (idxStr === "" || idxStr == null) {
+  const uuid = loadTarget.value;
+  if (!uuid) {
     resultEl.textContent = "Pick an application.";
     return;
   }
-  const index = parseInt(idxStr, 10);
   resultEl.textContent = "Loading…";
   loadBtn.disabled = true;
   try {
     const reply = await browser.runtime.sendMessage({
       type: "AUTOFILL_WITH_APPLICATION",
-      index,
+      uuid,
     });
     if (reply && reply.ok) {
       resultEl.textContent = "Done.";
@@ -797,11 +861,10 @@ function applyProfileFilter() {
 
 profileSearch.addEventListener("input", applyProfileFilter);
 
-function selectedApplicationIndex() {
+function selectedApplicationUuid() {
   const v = loadTarget.value;
-  if (v === "" || v == null) return null;
-  const n = parseInt(v, 10);
-  return Number.isFinite(n) ? n : null;
+  if (!v) return null;
+  return v;
 }
 
 let _answerCounter = 0;
@@ -872,12 +935,12 @@ async function askQuestion(question) {
     return;
   }
   const { card, body } = renderAnswerCard(trimmed);
-  const appIdx = selectedApplicationIndex();
+  const appUuid = selectedApplicationUuid();
   try {
     const reply = await browser.runtime.sendMessage({
       type: "ANSWER_QUESTION",
       question: trimmed,
-      application_index: appIdx,
+      application_uuid: appUuid,
     });
     if (reply && reply.ok && reply.answer) {
       finalizeAnswerCard(card, body, reply.answer);
