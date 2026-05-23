@@ -1,3 +1,2 @@
 write READMEs
 test resume generation
-onboarding screen

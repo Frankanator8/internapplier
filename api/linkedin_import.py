@@ -267,6 +267,48 @@ def parse_zip(zip_path: str) -> dict:
     return result
 
 
+def apply_to_store(data: dict, mode: str = "replace") -> None:
+    """Apply an imported LinkedIn dict directly to the on-disk resume store.
+
+    Used by flows that don't have the main window open (e.g. onboarding).
+    The toolbar import path in MainWindow updates live UI widgets instead.
+    """
+    from . import data_store
+
+    store = data_store.load()
+
+    if mode == "replace":
+        store["experience"] = list(data.get("experience") or [])
+        store["projects"] = list(data.get("projects") or [])
+        store["education"] = list(data.get("education") or [])
+        store["awards"] = list(data.get("awards") or [])
+        store["skills"] = list(data.get("skills") or [])
+    else:
+        store.setdefault("experience", []).extend(data.get("experience") or [])
+        store.setdefault("projects", []).extend(data.get("projects") or [])
+        store.setdefault("education", []).extend(data.get("education") or [])
+        store.setdefault("awards", []).extend(data.get("awards") or [])
+        existing_skills = {s.lower() for s in store.get("skills") or []}
+        for s in data.get("skills") or []:
+            if s.lower() not in existing_skills:
+                store.setdefault("skills", []).append(s)
+                existing_skills.add(s.lower())
+
+    imported_general = data.get("general_info") or {}
+    if imported_general:
+        current_general = store.get("general_info") or {}
+        if mode == "replace":
+            merged = {**current_general, **imported_general}
+        else:
+            merged = dict(current_general)
+            for k, v in imported_general.items():
+                if not merged.get(k):
+                    merged[k] = v
+        store["general_info"] = merged
+
+    data_store.save(store)
+
+
 def summarize(data: dict) -> str:
     """Short human summary of an imported dict — used in the confirmation dialog."""
     parts = [

@@ -39,7 +39,9 @@ _setup_logging()
 import uvicorn
 from PyQt6.QtWidgets import QApplication
 from api import ai_provider
+from api.constants import ONBOARDED_FILE
 from app.main_window import MainWindow
+from app.onboarding import OnboardingDialog
 from app.theme import apply_theme, install_system_listener
 
 
@@ -69,6 +71,8 @@ def main():
     app.setApplicationName("I*ternship")
     apply_theme(app, ai_provider.get_theme_preference())
     install_system_listener(app)
+    if not ONBOARDED_FILE.exists():
+        OnboardingDialog().exec()
     window = MainWindow()
     window.show()
     sys.exit(app.exec())

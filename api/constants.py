@@ -11,6 +11,7 @@ SETTINGS_FILE = APP_DIR / "settings.json"
 TOKEN_USAGE_FILE = APP_DIR / "token_usage.json"
 APP_PROMPTS_DIR = APP_DIR / "prompts"
 ENV_FILE = APP_DIR / ".env"
+ONBOARDED_FILE = APP_DIR / "onboarded.ini"
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
 # --- Server ---
