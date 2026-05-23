@@ -26,6 +26,9 @@ def _setup_logging() -> None:
     sh.setFormatter(fmt)
     root.addHandler(sh)
 
+    for noisy in ("httpx", "httpcore", "filelock", "urllib3", "huggingface_hub"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+
     print(f"Logging to: {_LOG_FILE}", file=sys.stderr)
 
 

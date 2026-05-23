@@ -1,4 +1,3 @@
 test resume generation pipeline
 write READMEs
-Humanize AI responses
-Resume generation speedup
+write tests in general

@@ -156,9 +156,20 @@ def compile_latex(latex: str, workdir: Path | None = None) -> Path:
 def pdf_page_fill(pdf: Path) -> float:
     """Measure how many pages of content the PDF holds, line-wise.
 
-    Returns ``full_pages + (lines_on_last_page / max_lines_per_page)``.
-    A single-page resume that's three-quarters full returns ``0.75``;
-    one filling 1 page + 75% of a second returns ``1.75``.
+    Backward-compatible wrapper around :func:`pdf_page_metrics`.
+    """
+    return pdf_page_metrics(pdf)["fill"]
+
+
+def pdf_page_metrics(pdf: Path) -> dict:
+    """Measure page fill and reconstruct per-line geometry.
+
+    Returns ``{"fill": float, "lines": list[list[dict]]}`` where ``lines``
+    is one list per page; each entry is
+    ``{"text": str, "x_start": float, "x_end": float, "y": float,
+       "width_ratio": float, "is_last_on_page": bool}``.
+    ``width_ratio`` is the line's drawn width over the widest body-line
+    width observed in the document — a proxy for "how full" the line is.
     """
     from statistics import median
 
@@ -167,23 +178,78 @@ def pdf_page_fill(pdf: Path) -> float:
     reader = PdfReader(str(pdf))
     n_pages = len(reader.pages)
     if n_pages == 0:
-        return 0.0
+        return {"fill": 0.0, "lines": []}
 
     try:
-        per_page_ys: list[list[float]] = []
+        # Per page: list of fragments (x, y, text).
+        per_page_frags: list[list[tuple[float, float, str]]] = []
         for page in reader.pages:
-            ys: list[float] = []
+            frags: list[tuple[float, float, str]] = []
 
-            def visitor(text, cm, tm, font_dict, font_size, _ys=ys):
+            def visitor(text, cm, tm, font_dict, font_size, _frags=frags):
                 if text and text.strip():
-                    _ys.append(round(float(tm[5]) * 2) / 2)
+                    x = float(tm[4])
+                    y = round(float(tm[5]) * 2) / 2
+                    _frags.append((x, y, text))
 
             page.extract_text(visitor_text=visitor)
-            per_page_ys.append(sorted(set(ys)))
+            per_page_frags.append(frags)
 
+        # Group each page's fragments into lines (by y), then compute
+        # x_start/x_end and reconstructed text per line.
+        per_page_lines: list[list[dict]] = []
+        for frags in per_page_frags:
+            by_y: dict[float, list[tuple[float, str]]] = {}
+            for x, y, text in frags:
+                by_y.setdefault(y, []).append((x, text))
+            lines: list[dict] = []
+            # Sort y descending so visual top-of-page is first.
+            for y in sorted(by_y.keys(), reverse=True):
+                parts = sorted(by_y[y], key=lambda p: p[0])
+                text = "".join(p[1] for p in parts).strip()
+                if not text:
+                    continue
+                xs = [p[0] for p in parts]
+                # Approximate x_end as the x of the last fragment plus a
+                # character-width estimate per remaining char. The visitor
+                # gives us start-x per fragment but not advance widths;
+                # a fixed factor of font_size is unavailable, so use a
+                # nominal 5pt-per-char heuristic which is close enough
+                # for the short-tail ratio comparison (we only care about
+                # relative line widths).
+                last_x = xs[-1]
+                last_text = parts[-1][1]
+                approx_end = last_x + len(last_text) * 5.0
+                lines.append({
+                    "text": text,
+                    "x_start": xs[0],
+                    "x_end": approx_end,
+                    "y": y,
+                })
+            per_page_lines.append(lines)
+
+        # Document-wide max line width — proxy for "full line".
+        all_widths = [
+            ln["x_end"] - ln["x_start"]
+            for page in per_page_lines for ln in page
+        ]
+        max_width = max(all_widths) if all_widths else 1.0
+        if max_width <= 0:
+            max_width = 1.0
+
+        for page in per_page_lines:
+            for idx, ln in enumerate(page):
+                width = ln["x_end"] - ln["x_start"]
+                ln["width_ratio"] = max(0.0, min(width / max_width, 1.0))
+                ln["is_last_on_page"] = idx == len(page) - 1
+
+        # --- fill calculation (same logic as before) ---
+        per_page_ys: list[list[float]] = [
+            sorted({ln["y"] for ln in page}) for page in per_page_lines
+        ]
         line_counts = [len(ys) for ys in per_page_ys]
         if not any(line_counts):
-            return float(n_pages)
+            return {"fill": float(n_pages), "lines": per_page_lines}
 
         last_lines = line_counts[-1]
         if n_pages >= 2:
@@ -191,7 +257,7 @@ def pdf_page_fill(pdf: Path) -> float:
         else:
             ys = per_page_ys[0]
             if len(ys) < 2:
-                return float(n_pages)
+                return {"fill": float(n_pages), "lines": per_page_lines}
             diffs = [b - a for a, b in zip(ys, ys[1:]) if b - a > 0.1]
             spacing = median(diffs) if diffs else (ys[-1] - ys[0]) / max(len(ys) - 1, 1)
             page_height = float(reader.pages[0].mediabox.height)
@@ -201,14 +267,15 @@ def pdf_page_fill(pdf: Path) -> float:
             max_lines = max(int(round(usable / spacing)), last_lines)
 
         if max_lines <= 0:
-            return float(n_pages)
+            return {"fill": float(n_pages), "lines": per_page_lines}
 
         fractional = last_lines / max_lines
         fractional = max(0.0, min(fractional, 1.0))
-        return (n_pages - 1) + fractional
+        fill = (n_pages - 1) + fractional
+        return {"fill": fill, "lines": per_page_lines}
     except Exception:
-        logger.exception("pdf_page_fill — extraction failed; falling back to raw page count")
-        return float(n_pages)
+        logger.exception("pdf_page_metrics — extraction failed; falling back to raw page count")
+        return {"fill": float(n_pages), "lines": []}
 
 
 def _extract_error_excerpt(log_text: str, max_chars: int = 1500) -> str:

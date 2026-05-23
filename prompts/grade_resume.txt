@@ -14,10 +14,10 @@ Hard rules:
 # Inputs you will receive in the user message
 
 - `<today>YYYY-MM-DD</today>` — the current date. Use it to weigh recency when grading and when picking what to drop.
-- Optionally `<page_status>over by N page(s) — emit drops</page_status>` — present ONLY when the rendered draft exceeded the page cap. `N` is a decimal measured line-wise (e.g. `0.25` means roughly a quarter-page overflow; `1.10` means more than a full page over). This is the signal to populate `drops`.
-- `<profile>` (optional) — JSON with the candidate's FULL inventory of `experience`, `projects`, `education`, `awards`, `skills`, `hobbies`. The rendered LaTeX is a SELECTION from this inventory — items may have been omitted for space or perceived relevance. Use `<profile>` to spot **omissions**: profile items strongly aligned with the JD that didn't make it into the resume. Surface these in `feedback` as concrete, specific suggestions (e.g. "Project `X` in profile aligns with the JD's emphasis on Y — consider including it" or "Skill `Z` is in profile and listed in the JD but missing from the skills section"). This is the only legitimate source for "you should add ..." feedback — you MUST NOT invent experience that is not in `<profile>`. The profile informs CONTENT judgment (relevance, omissions, skill coverage) only — judge layout, density, and bullet wording from the rendered LaTeX as before.
+- `<page_status>fill=F page_cap=C</page_status>` — present whenever the rendered draft was measured. `F` is the actual rendered fill as a decimal (1.0 == exactly one page; 0.8 == 80% of one page; 1.25 == 25% into a second page). `C` is the user's configured page cap. Populate `drops` only when `F > C`.
+- `<profile>` (optional) — JSON with the candidate's FULL inventory of `experience`, `projects`, `education`, `awards`, `skills`, `hobbies`. The rendered resume is a SELECTION from this inventory — items may have been omitted for space or perceived relevance. Use `<profile>` to spot **omissions**: profile items strongly aligned with the JD that didn't make it into the resume. Surface these in `feedback` as concrete, specific suggestions (e.g. "Project `X` in profile aligns with the JD's emphasis on Y — consider including it" or "Skill `Z` is in profile and listed in the JD but missing from the skills section"). This is the only legitimate source for "you should add ..." feedback — you MUST NOT invent experience that is not in `<profile>`. The profile informs CONTENT judgment (relevance, omissions, skill coverage); judge density and bullet wording from the resume JSON.
 - `<company_research>` (optional) — JSON with notes about the target company (focus areas, products, tech stack, values, recent news). Use it to judge fit and to flag missed opportunities for relevant keywords/framing in `feedback`. Do NOT penalize the resume for omitting trivia from the research, and do not ask the writer to invent experience to match it.
-- The job description and the rendered resume LaTeX.
+- The job description (full text) and the resume as JSON (a structured object with a `sections` array; the generator emits this and a Python renderer turns it into LaTeX — contact-info header is composed server-side and is not part of this JSON). Read the JSON the same way you would read a rendered resume — `sections[*].kind` tells you the section type, and each section's `items` or `groups` list contains the entries.
 
 # Scoring
 
@@ -45,33 +45,20 @@ Use "" if there is nothing actionable.
 
 # Drops (page-fit protocol)
 
-`drops` MUST be `[]` UNLESS the user message includes `<page_status>over by N page(s) — emit drops</page_status>`. Do not propose drops on a fit-clean draft.
+`drops` MUST be `[]` UNLESS `<page_status>` shows `fill > page_cap`. Do not propose drops on a fit-clean draft.
 
-When over cap, populate `drops` with the items the writer should REMOVE on the next attempt, in priority order (weakest first). Each item is a string drawn VERBATIM from the resume, in one of these forms:
+When over cap, populate `drops` with the items the writer should REMOVE on the next attempt, in priority order (weakest first). Each item is a string built from the resume JSON in one of these forms:
 
-- An **entry label** matching the resume's heading exactly:
-  - Experience: `{role} @ {company}` (e.g. `Software Engineer @ Acme`)
-  - Project: `{name}` (e.g. `Distributed Cache Library`)
-  - Award: `{title} — {issuer}` using an em-dash (e.g. `Dean's List — University of X`)
-- A **course name** from the Courses/Coursework list, verbatim (e.g. `Operating Systems`). Courses are individually droppable; not every listed course must remain.
+- An **entry label** built from the section item:
+  - Experience: `{role} @ {company}` (e.g. `Software Engineer @ Acme`) — built from `experience` section items' `role` and `company`.
+  - Project: `{name}` (e.g. `Distributed Cache Library`) — built from `projects` section items' `name`.
+  - Award: `{title} — {issuer}` using an em-dash (e.g. `Dean's List — University of X`) — built from `awards` section items.
+- A **course name** drawn verbatim from any `education[].courses` entry. Courses are individually droppable.
 
-Choose enough items to plausibly free the indicated `N` (fractional) pages of space. For small overflows (e.g. `0.10`–`0.30`) a few course removals or a single weak bullet-heavy entry may suffice; for larger overflows prefer dropping weak/older entries. Use course removals for finer-grained trimming. Use `<today>` to identify stale items.
+Choose enough items to plausibly free `fill - page_cap` pages of space. For small overflows (e.g. `0.10`–`0.30`) a few course removals or a single weak bullet-heavy entry may suffice; for larger overflows prefer dropping weak/older entries. Use course removals for finer-grained trimming. Use `<today>` to identify stale items.
 
 Match strings exactly as they appear in the resume — the orchestrator does case-insensitive, whitespace-collapsed matching, but exact wording is safest. Unmatched strings are silently ignored.
 
-# Tools
-
-You have one tool available:
-
-- `page_length(latex)` — compiles the given complete LaTeX document and returns `{ok, fill, page_cap}`. `fill` is a decimal where 1.0 == exactly one page; 0.8 == 80% of one page; 1.25 == 25% into a second page. `page_cap` is the user's configured limit.
-
-Use it to ground your judgment about density and drop selection:
-- The user message already gives you `<page_status>` when over cap, but `<page_status>` is line-wise and approximate. If you intend to emit `drops`, call `page_length` on the resume LaTeX you received to confirm the actual `fill` before deciding *how many* items to drop.
-- If `fill` ≤ `page_cap` you MUST return `drops: []` regardless of `<page_status>`.
-- Budget: at most 1–2 calls. Do not call the tool just to "verify" the score — only call it when it influences your `drops` decision.
-
-When you are finished, return ONLY the final JSON object as the assistant message (no tool call).
-
 # Final reminder
 
-Return ONLY the JSON object described above. Three top-level keys, in order: `score`, `feedback`, `drops`. No markdown fences. No commentary. `drops` is `[]` unless `<page_status>` says you are over cap.
+Return ONLY the JSON object described above. Three top-level keys, in order: `score`, `feedback`, `drops`. No markdown fences. No commentary. `drops` is `[]` unless `<page_status>` shows `fill > page_cap`.

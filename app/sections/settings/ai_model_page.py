@@ -62,7 +62,7 @@ class AiModelMixin:
             section_label="Fast model",
             line_edit=self._fast_edit,
             capabilities=["Streaming", "JSON output"],
-            used_for=["Company research", "Interview grading"],
+            used_for=["Company research", "Interview grading", "Resume grading"],
         ))
 
         card_layout.addWidget(_sep())
@@ -71,7 +71,7 @@ class AiModelMixin:
             section_label="Powerful model",
             line_edit=self._powerful_edit,
             capabilities=["Streaming", "Tool / function calling", "Agentic loop (4 rounds)"],
-            used_for=["Resume generation", "Resume grading"],
+            used_for=["Resume generation"],
         ))
 
         btn_row = QHBoxLayout()

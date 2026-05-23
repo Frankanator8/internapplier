@@ -20,6 +20,28 @@
     "log_excerpt": {
       "type": "string",
       "description": "Truncated LaTeX compile-log excerpt. Present only when ok is false."
+    },
+    "short_bullets": {
+      "type": "array",
+      "description": "Bullets whose final wrapped line is mostly empty — wasted vertical space. Sorted worst-first (smallest last_line_fill first). Empty when no bullets qualify. Present only when ok is true.",
+      "items": {
+        "type": "object",
+        "required": ["text", "lines", "last_line_fill"],
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "Bullet text, truncated to ~120 chars."
+          },
+          "lines": {
+            "type": "integer",
+            "description": "Number of rendered lines this bullet occupies (>= 2)."
+          },
+          "last_line_fill": {
+            "type": "number",
+            "description": "Fraction of line width (0–1) consumed by the trailing wrap line — lower means more wasted space."
+          }
+        }
+      }
     }
   }
 }

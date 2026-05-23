@@ -1,0 +1,161 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "generate_resume_output",
+  "description": "Structured resume produced by the generator agent. The Python renderer substitutes these values into a Jinja-style LaTeX template; the model MUST NOT emit LaTeX itself. All string fields are plain text — escaping is handled by the renderer. The contact-info header (name, email, phone, links) is composed server-side from the user's profile and MUST NOT be emitted here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["sections"],
+  "properties": {
+    "sections": {
+      "type": "array",
+      "description": "Ordered list of resume sections. Order on the page is the order in this array. Include only sections you intend to render.",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "items"],
+            "properties": {
+              "kind": { "const": "experience" },
+              "title": { "type": "string", "description": "Section heading; defaults to 'Experience' if omitted." },
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["role", "company", "bullets"],
+                  "properties": {
+                    "role": { "type": "string" },
+                    "company": { "type": "string" },
+                    "location": { "type": "string" },
+                    "start": { "type": "string", "description": "e.g. 'May 2024'" },
+                    "end": { "type": "string", "description": "e.g. 'Aug 2024' or 'Present'" },
+                    "bullets": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "items"],
+            "properties": {
+              "kind": { "const": "projects" },
+              "title": { "type": "string" },
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["name", "bullets"],
+                  "properties": {
+                    "name": { "type": "string" },
+                    "tagline": { "type": "string", "description": "Short tech-stack or summary line." },
+                    "start": { "type": "string" },
+                    "end": { "type": "string" },
+                    "bullets": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "items"],
+            "properties": {
+              "kind": { "const": "education" },
+              "title": { "type": "string" },
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["school"],
+                  "properties": {
+                    "school": { "type": "string" },
+                    "degree": { "type": "string" },
+                    "location": { "type": "string" },
+                    "start": { "type": "string" },
+                    "end": { "type": "string" },
+                    "gpa": { "type": "string" },
+                    "courses": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "groups"],
+            "properties": {
+              "kind": { "const": "skills" },
+              "title": { "type": "string" },
+              "groups": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["label", "items"],
+                  "properties": {
+                    "label": { "type": "string", "description": "e.g. 'Languages', 'Frameworks'." },
+                    "items": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "items"],
+            "properties": {
+              "kind": { "const": "awards" },
+              "title": { "type": "string" },
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["title", "issuer"],
+                  "properties": {
+                    "title": { "type": "string" },
+                    "issuer": { "type": "string" },
+                    "date": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "items"],
+            "properties": {
+              "kind": { "const": "hobbies" },
+              "title": { "type": "string" },
+              "items": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

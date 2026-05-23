@@ -19,7 +19,10 @@ from api.ai_provider import (
     strip_code_fence,
 )
 
-from .compile import LatexCompileError, compile_latex, extract_document, pdf_page_fill
+from .agent_tools import detect_short_bullets
+from .compile import LatexCompileError, compile_latex, pdf_page_metrics
+from .render import render_resume, validate_resume_shape
+from .step_timing import time_call, time_step
 
 logger = logging.getLogger(__name__)
 
@@ -97,9 +100,13 @@ class ResumeGenerator:
         self.job_description = job_description or ""
         self.company_research = company_research or {}
         self.provider: OpenRouterProvider = provider or get_provider()
+        self._header = _build_header_from_general_info(
+            self.profile.get("general_info") or {}
+        )
 
     # ---------- public API ----------
 
+    @time_call("TOTAL")
     def generate_latex(
         self,
         output_pdf: pathlib.Path | str | None = None,
@@ -124,58 +131,57 @@ class ResumeGenerator:
         feedback: str | None = None
         attempts: list[dict] = []
 
+        from ..ai_provider import get_resume_template
+        from ..ai_provider.keyword_extractor import extract_jd_keywords, format_jd_signals
+        template = get_resume_template()
+
+        with time_step("jd-keywords"):
+            signals = extract_jd_keywords(self.job_description)
+        _emit(
+            stream_cb, "jd-keywords",
+            "[jd-keywords] extracted from job description:\n" + format_jd_signals(signals),
+        )
+
         for attempt in range(1, max_attempts + 1):
             logger.info("generate_latex — attempt %d/%d", attempt, max_attempts)
             profile_for_attempt = _apply_label_drops(self.profile, omitted_labels)
             if progress_cb:
-                progress_cb(f"Attempt {attempt}/{max_attempts}: generating LaTeX…")
-            previous_latex = attempts[-1]["latex"] if attempts else None
+                progress_cb(f"Attempt {attempt}/{max_attempts}: generating resume JSON…")
+            previous_resume = attempts[-1]["resume"] if attempts else None
             try:
-                latex = self._generate_resume_text(
-                    profile_for_attempt, feedback, previous_latex, today, stream_cb
-                )
+                with time_step("generate-json", attempt):
+                    resume_json = self._generate_resume_json(
+                        profile_for_attempt, feedback, previous_resume, today, stream_cb
+                    )
             except Exception:
                 logger.exception("generate_latex — provider.generate_resume failed on attempt %d", attempt)
                 raise
 
-            if progress_cb:
-                progress_cb(f"Attempt {attempt}: compiling LaTeX…")
-            latex, pdf_path, compile_error = self._compile_with_fix(
-                latex, attempt, progress_cb, stream_cb
+            try:
+                resume_pretty = json.dumps(resume_json, indent=2)
+            except Exception:
+                resume_pretty = repr(resume_json)
+            _emit(
+                stream_cb, "generate-json",
+                f"[generate-json] attempt {attempt} resume JSON:\n{resume_pretty}",
             )
-            if compile_error is not None:
-                inner_feedback = (
-                    "PREVIOUS DRAFT FAILED TO COMPILE. Fix the LaTeX syntax error "
-                    "below and return the corrected full document. Do not change "
-                    "content; only fix what the compiler is complaining about.\n\n"
-                    f"Compiler output:\n{compile_error}"
+
+            if progress_cb:
+                progress_cb(f"Attempt {attempt}: rendering + compiling…")
+            with time_step("render-compile", attempt):
+                latex, pdf_path, compile_error = self._render_and_compile(
+                    resume_json, template, attempt, stream_cb
                 )
-                if progress_cb:
-                    progress_cb(f"Attempt {attempt}: regenerating to fix compile error…")
-                try:
-                    retry_latex = self._generate_resume_text(
-                        profile_for_attempt, inner_feedback, latex, today, stream_cb
-                    )
-                    retry_pdf, retry_compile_error = self._try_compile(retry_latex)
-                except Exception:
-                    logger.exception(
-                        "generate_latex — within-attempt compile retry raised on attempt %d",
-                        attempt,
-                    )
-                    retry_pdf, retry_compile_error = None, None
-                    retry_latex = None
-                if retry_latex is not None and retry_compile_error is None:
-                    logger.info(
-                        "generate_latex — within-attempt compile retry succeeded on attempt %d",
-                        attempt,
-                    )
-                    latex, pdf_path, compile_error = retry_latex, retry_pdf, None
-                elif retry_latex is not None:
-                    logger.info(
-                        "generate_latex — within-attempt compile retry still failed on attempt %d",
-                        attempt,
-                    )
-            fill = pdf_page_fill(pdf_path) if pdf_path is not None else None
+            if pdf_path is not None:
+                metrics = pdf_page_metrics(pdf_path)
+                fill = metrics["fill"]
+                short_bullets = detect_short_bullets(
+                    {**resume_json, "header": self._header},
+                    metrics.get("lines") or [],
+                )
+            else:
+                fill = None
+                short_bullets = []
 
             page_ok = fill is not None and fill <= page_cap + 1e-6
             over_by = max(0.0, (fill or 0.0) - page_cap) if fill is not None else 0.0
@@ -183,25 +189,26 @@ class ResumeGenerator:
             grade: dict | None = None
             if progress_cb:
                 progress_cb(f"Attempt {attempt}: grading…")
-            for grade_try in (1, 2):
-                try:
-                    grade = self._grade_resume_text(
-                        latex, over_by, today, profile_for_attempt, stream_cb
-                    )
-                    break
-                except ValueError:
-                    logger.warning(
-                        "generate_latex — grade parse failed on attempt %d (try %d/2)",
-                        attempt, grade_try,
-                    )
-                    if grade_try == 2:
+            with time_step("grade", attempt):
+                for grade_try in (1, 2):
+                    try:
+                        grade = self._grade_resume_text(
+                            resume_json, fill, page_cap, today, profile_for_attempt, stream_cb
+                        )
+                        break
+                    except ValueError:
+                        logger.warning(
+                            "generate_latex — grade parse failed on attempt %d (try %d/2)",
+                            attempt, grade_try,
+                        )
+                        if grade_try == 2:
+                            grade = None
+                    except Exception:
+                        logger.exception(
+                            "generate_latex — grade_resume failed on attempt %d", attempt
+                        )
                         grade = None
-                except Exception:
-                    logger.exception(
-                        "generate_latex — grade_resume failed on attempt %d", attempt
-                    )
-                    grade = None
-                    break
+                        break
             if progress_cb and grade is not None:
                 progress_cb(
                     f"Attempt {attempt}: graded {grade['score']:.2f}/10"
@@ -210,6 +217,7 @@ class ResumeGenerator:
             score_ok = grade is not None and grade["score"] >= score_threshold
 
             attempts.append({
+                "resume": resume_json,
                 "latex": latex,
                 "pdf": pdf_path,
                 "fill": fill,
@@ -218,12 +226,22 @@ class ResumeGenerator:
                 "attempt": attempt,
             })
             logger.info(
-                "generate_latex — attempt %d: fill=%s score=%s compiled=%s",
+                "generate_latex — attempt %d: fill=%s score=%s compiled=%s short_bullets=%d",
                 attempt,
                 f"{fill:.3f}" if fill is not None else None,
                 grade["score"] if grade else None,
                 compile_error is None,
+                len(short_bullets),
             )
+            if short_bullets:
+                logger.info(
+                    "generate_latex — attempt %d short bullets: %s",
+                    attempt,
+                    "; ".join(
+                        f"[{sb['lines']}L fill={sb['last_line_fill']:.2f}] {sb['text']}"
+                        for sb in short_bullets
+                    ),
+                )
 
             if page_ok and score_ok:
                 logger.info("generate_latex — passed on attempt %d", attempt)
@@ -254,7 +272,8 @@ class ResumeGenerator:
                     )
 
             feedback = _build_feedback(
-                compile_error, fill, page_ok, page_cap, all_drops_log, grade, score_ok
+                compile_error, fill, page_ok, page_cap, all_drops_log, grade, score_ok,
+                short_bullets,
             )
 
         best = self._pick_best_attempt(attempts, page_cap)
@@ -274,72 +293,83 @@ class ResumeGenerator:
             "chosen_attempt": best.get("attempt"),
         }
 
-    def _generate_resume_text(
+    def _generate_resume_json(
         self,
         profile: dict,
         feedback: str | None,
-        previous_latex: str | None,
+        previous_resume: dict | None,
         today: str,
         stream_cb: Callable[[str, str], None] | None,
-    ) -> str:
+    ) -> dict:
         raw = strip_code_fence(
             _collect_stream(
                 "generate",
                 self.provider.generate_resume_stream(
                     profile, self.job_description, feedback=feedback,
-                    previous_latex=previous_latex, today=today,
+                    previous_resume=previous_resume, today=today,
                     company_research=self.company_research,
                 ),
                 stream_cb,
             ),
-            lang_hints=("latex", "tex"),
+            lang_hints=("json",),
         )
-        extracted = extract_document(raw)
-        if extracted is None:
-            logger.warning(
-                "_generate_resume_text — output missing \\documentclass{...} "
-                "(%d chars); passing raw output to compiler",
-                len(raw),
-            )
-            return raw
-        if extracted != raw:
+        try:
+            obj = json.loads(raw)
+        except json.JSONDecodeError:
+            extracted = _extract_json_object(raw)
+            if extracted is None:
+                logger.error("_generate_resume_json — JSON parse failed, raw=%r", raw[:500])
+                raise ValueError("AI returned unexpected format — please try again.")
+            obj = json.loads(extracted)
             logger.info(
-                "_generate_resume_text — trimmed %d chars of surrounding prose",
+                "_generate_resume_json — recovered JSON via balanced extract "
+                "(%d chars of surrounding prose discarded)",
                 len(raw) - len(extracted),
             )
-        return extracted
-
-    @staticmethod
-    def _try_compile(latex: str) -> tuple[pathlib.Path | None, str | None]:
+        validate_resume_shape(obj)
         try:
-            return compile_latex(latex), None
-        except LatexCompileError as e:
-            return None, f"{e}\n{e.log_excerpt}".strip()
+            logger.info(
+                "_generate_resume_json — resume JSON (%d chars):\n%s",
+                len(raw), json.dumps(obj, indent=2),
+            )
+        except Exception:
+            logger.info("_generate_resume_json — resume JSON keys=%s", list(obj.keys()))
+        return obj
 
-    def _compile_with_fix(
+    def _render_and_compile(
         self,
-        latex: str,
+        resume_json: dict,
+        template: str,
         attempt: int,
-        progress_cb: Callable[[str], None] | None,
         stream_cb: Callable[[str, str], None] | None,
     ) -> tuple[str, pathlib.Path | None, str | None]:
-        pdf_path, compile_error = self._try_compile(latex)
-        if compile_error is None:
+        resume_json = {**resume_json, "header": self._header}
+        try:
+            latex = render_resume(resume_json, template)
+        except Exception as e:
+            logger.exception("_render_and_compile — render failed")
+            _emit(
+                stream_cb, "render-error",
+                f"[render-error] attempt {attempt}: {e}",
+            )
+            return "", None, f"render error: {e}"
+        try:
+            pdf_path = compile_latex(latex)
             return latex, pdf_path, None
-        _emit(
-            stream_cb,
-            "compile-error",
-            f"[compile-error] attempt {attempt}: LaTeX failed to compile "
-            f"— grading raw LaTeX anyway\n{compile_error}",
-        )
-        if progress_cb:
-            progress_cb(f"Attempt {attempt}: compile failed — grading anyway")
-        return latex, None, compile_error
+        except LatexCompileError as e:
+            err = f"{e}\n{e.log_excerpt}".strip()
+            _emit(
+                stream_cb, "compile-error",
+                f"[compile-error] attempt {attempt}: LaTeX failed to compile "
+                f"— grading anyway\n{err}",
+            )
+            return latex, None, err
 
     def _grade_resume_text(
         self,
-        latex: str,
-        over_by: float,
+        resume_json: dict,
+        fill: float | None,
+        page_cap: float,
         today: str,
         profile: dict,
         stream_cb: Callable[[str, str], None] | None,
@@ -348,8 +378,8 @@ class ResumeGenerator:
             _collect_stream(
                 "grade",
                 self.provider.grade_resume_stream(
-                    latex, self.job_description,
-                    over_by=over_by, today=today,
+                    resume_json, self.job_description,
+                    fill=fill, page_cap=page_cap, today=today,
                     company_research=self.company_research,
                     profile=profile,
                 ),
@@ -396,7 +426,7 @@ class ResumeGenerator:
 
         drops_raw = obj.get("drops") or []
         drops: list[str] = [str(d) for d in drops_raw if isinstance(d, str) and d.strip()]
-        if over_by <= 1e-6 and drops:
+        if fill is not None and fill <= page_cap + 1e-6 and drops:
             logger.info(
                 "_grade_resume_text — discarding %d drop(s) since page count is fine: %s",
                 len(drops), drops,
@@ -408,6 +438,10 @@ class ResumeGenerator:
             "feedback": str(obj["feedback"]),
             "drops": drops,
         }
+        logger.info(
+            "_grade_resume_text — score=%.2f drops=%d; feedback:\n%s",
+            score, len(drops), result["feedback"],
+        )
 
         def _indent(text: str, prefix: str = "    ") -> str:
             return "\n".join(prefix + ln for ln in (text or "").splitlines()) or (prefix + "(empty)")
@@ -501,6 +535,7 @@ def _build_feedback(
     all_drops: list[str],
     grade: dict | None,
     score_ok: bool,
+    short_bullets: list[dict] | None = None,
 ) -> str | None:
     parts: list[str] = []
     if compile_error:
@@ -521,6 +556,19 @@ def _build_feedback(
             "Length may drop below the original — but keep the most important "
             "information (lead action verb, primary impact metric, key tools relevant "
             "to the JD); drop secondary clauses first. Never invent facts."
+        )
+    if short_bullets:
+        lines = [
+            f"- ({sb['lines']} lines, last line fill={sb['last_line_fill']:.2f}) "
+            f"{sb['text']}"
+            for sb in short_bullets
+        ]
+        parts.append(
+            "SHORT-TAIL BULLETS: the following bullets wrap with a mostly-empty "
+            "final line — wasted vertical space. Either shorten each so it fits "
+            "on one fewer line, or strengthen it with an additional concrete "
+            "detail/metric/keyword that the profile already supports so the wrap "
+            "is justified. Never invent facts.\n" + "\n".join(lines)
         )
     if grade is not None and not score_ok and grade.get("feedback"):
         parts.append("GRADER FEEDBACK:\n" + grade["feedback"])
@@ -576,6 +624,39 @@ def _exp_label(e: dict) -> str:
 
 def _project_label(p: dict) -> str:
     return (p.get("name") or "(unnamed project)").strip()
+
+
+def _build_header_from_general_info(gi: dict) -> dict:
+    preferred = (gi.get("preferred_name") or "").strip()
+    first = (gi.get("first_name") or "").strip()
+    last = (gi.get("last_name") or "").strip()
+    name = preferred or " ".join(p for p in (first, last) if p)
+
+    location_parts = [
+        (gi.get("city") or "").strip(),
+        (gi.get("state") or "").strip(),
+        (gi.get("country") or "").strip(),
+    ]
+    location = ", ".join(p for p in location_parts if p)
+
+    links: list[dict] = []
+    for label, key in (("LinkedIn", "linkedin"), ("GitHub", "github"), ("Website", "website")):
+        url = (gi.get(key) or "").strip()
+        if url:
+            links.append({"label": label, "url": url})
+
+    header: dict = {}
+    if name:
+        header["name"] = name
+    for k in ("email", "phone"):
+        v = (gi.get(k) or "").strip()
+        if v:
+            header[k] = v
+    if location:
+        header["location"] = location
+    if links:
+        header["links"] = links
+    return header
 
 
 def _award_label(a: dict) -> str:
