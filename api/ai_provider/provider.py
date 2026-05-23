@@ -303,7 +303,10 @@ class OpenRouterProvider:
             )
             if profile else "none"
         )
-        resume_text = json.dumps(resume_json, indent=2) if resume_json is not None else ""
+        resume_text = (
+            json.dumps(resume_json, separators=(",", ":"))
+            if resume_json is not None else ""
+        )
         logger.info(
             "grade_resume_stream — jd=%r resume_chars=%d fill=%s page_cap=%s research=%s profile=%s",
             job_description[:120], len(resume_text),
@@ -318,26 +321,47 @@ class OpenRouterProvider:
             if fill is not None and page_cap is not None else ""
         )
         research_block = (
-            f"<company_research>\n{json.dumps(company_research, indent=2)}\n</company_research>\n\n"
+            f"<company_research>\n{json.dumps(company_research, separators=(',', ':'))}\n</company_research>\n\n"
             if company_research else ""
         )
         profile_block = (
             f"<profile>\n{_profile_json(profile)}\n</profile>\n\n" if profile else ""
         )
-        user_message = (
+        static_text = (
             f"<today>{today}</today>\n\n"
-            f"{page_status}"
             f"{profile_block}"
             f"{research_block}"
-            f"Job Description:\n{job_description}\n\n"
+            f"Job Description:\n{job_description}"
+        )
+        dynamic_text = (
+            f"{page_status}"
             f"Resume JSON:\n{resume_text}\n\n"
             "Grade this resume against the job description following the system "
             "instructions exactly."
         )
         yield from self._stream_chat_completion(
             messages=[
-                {"role": "system", "content": load_prompt("grade_resume.txt")},
-                {"role": "user", "content": user_message},
+                {
+                    "role": "system",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": load_prompt("grade_resume.txt"),
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": static_text,
+                            "cache_control": {"type": "ephemeral"},
+                        },
+                        {"type": "text", "text": dynamic_text},
+                    ],
+                },
             ],
             tier="fast",
             log_label="grade_resume",
@@ -362,7 +386,7 @@ class OpenRouterProvider:
         ]
         if company_research:
             static_sections.append(
-                f"<company_research>\n{json.dumps(company_research, indent=2)}\n</company_research>"
+                f"<company_research>\n{json.dumps(company_research, separators=(',', ':'))}\n</company_research>"
             )
         if get_resume_template().strip():
             static_sections.append(
@@ -372,9 +396,10 @@ class OpenRouterProvider:
         static_sections.append(f"<profile>\n{_profile_json(profile)}\n</profile>")
 
         dynamic_sections: list[str] = []
+        previous_draft_text: str | None = None
         if previous_resume:
-            dynamic_sections.append(
-                f"<previous_draft>\n{json.dumps(previous_resume, indent=2)}\n</previous_draft>"
+            previous_draft_text = (
+                f"<previous_draft>\n{json.dumps(previous_resume, separators=(',', ':'))}\n</previous_draft>"
             )
         if feedback:
             dynamic_sections.append(f"<feedback>\n{feedback}\n</feedback>")
@@ -386,6 +411,12 @@ class OpenRouterProvider:
                 "cache_control": {"type": "ephemeral"},
             }
         ]
+        if previous_draft_text:
+            user_content.append({
+                "type": "text",
+                "text": previous_draft_text,
+                "cache_control": {"type": "ephemeral"},
+            })
         if dynamic_sections:
             user_content.append({"type": "text", "text": "\n\n".join(dynamic_sections)})
 

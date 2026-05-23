@@ -1,4 +1,2 @@
 write READMEs
 test resume generation
-better keyword extraction
-is keywords really necessary - where are tokens being used?

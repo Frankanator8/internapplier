@@ -31,7 +31,10 @@ _PROFILE_KEYS = ("experience", "projects", "education", "awards", "skills", "hob
 
 
 def _profile_json(profile: dict) -> str:
-    return json.dumps({k: profile.get(k, []) for k in _PROFILE_KEYS}, indent=2)
+    return json.dumps(
+        {k: profile.get(k, []) for k in _PROFILE_KEYS},
+        separators=(",", ":"),
+    )
 
 
 def _format_tool_event(name: str, round_idx: int, args: dict, result: dict) -> str:
