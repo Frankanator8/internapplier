@@ -1,7 +1,41 @@
+import datetime
 import json
 import re
 
 TOOL_EVENT_PREFIX = "\x1e"
+
+
+def _today(today: str | None) -> str:
+    return today or datetime.date.today().isoformat()
+
+
+def _common_context_sections(
+    *,
+    profile: dict | None = None,
+    company_name: str | None = None,
+    company_research: dict | None = None,
+    job_description: str | None = None,
+) -> list[str]:
+    """Common `<tag>...</tag>` blocks shared across LLM call sites.
+
+    Callers prepend `<today>` (and any operation-specific blocks like
+    `<question>`/`<response>`) themselves; the order returned here is
+    company_name → profile → company_research → job_description.
+    """
+    sections: list[str] = []
+    if company_name:
+        sections.append(f"<company_name>{company_name}</company_name>")
+    if profile is not None:
+        sections.append(f"<profile>\n{_profile_json(profile)}\n</profile>")
+    if company_research:
+        sections.append(
+            f"<company_research>\n"
+            f"{json.dumps(company_research, separators=(',', ':'))}\n"
+            f"</company_research>"
+        )
+    if job_description:
+        sections.append(f"<job_description>\n{job_description}\n</job_description>")
+    return sections
 
 
 def strip_code_fence(raw: str, lang_hints: tuple[str, ...] = ()) -> str:

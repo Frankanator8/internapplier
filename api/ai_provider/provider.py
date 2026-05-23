@@ -1,4 +1,3 @@
-import datetime
 import json
 import logging
 import os
@@ -9,9 +8,12 @@ import requests
 
 from .formatting import (
     TOOL_EVENT_PREFIX,
+    _common_context_sections,
     _format_context,
     _format_tool_event,
     _profile_json,
+    _today,
+    strip_code_fence,
 )
 from .prompts import load_prompt, load_schema
 from .settings import _load_model_config, get_resume_template, get_writing_sample
@@ -23,38 +25,60 @@ logger = logging.getLogger(__name__)
 class OpenRouterProvider:
     BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-    def __init__(
-        self,
-        api_key: str | None = None,
-    ):
+    def __init__(self, api_key: str | None = None):
         self.api_key = api_key or os.environ.get("OPENROUTER_API_KEY", "")
-        key_hint = f"...{self.api_key[-6:]}" if len(self.api_key) >= 6 else ("(set)" if self.api_key else "(MISSING)")
+        key_hint = (
+            f"...{self.api_key[-6:]}" if len(self.api_key) >= 6
+            else ("(set)" if self.api_key else "(MISSING)")
+        )
         logger.debug("OpenRouterProvider init — api_key=%s", key_hint)
+
+    # ── Internals: HTTP, models, usage ──────────────────────────────────────
 
     def _model_for(self, tier: str) -> str:
         config = _load_model_config()
         return config.get(tier) or config["fast"]
 
-    def analyze_bullet_stream(self, bullet: str, context: dict) -> Iterator[str]:
-        logger.info("analyze_bullet_stream — bullet=%r context=%s", bullet[:120], context)
-        user_message = (
-            f"{_format_context(context)}\n\n"
-            f'Resume bullet: "{bullet}"\n\n'
-            "Please provide:\n"
-            "1. CRITIQUE: A 1-2 sentence assessment of this bullet's weaknesses "
-            "(e.g., missing metrics, weak action verb, unclear impact).\n"
-            "2. REWRITE A: An improved version of this bullet.\n"
-            "3. REWRITE B: A second, alternative improved version."
+    def _require_api_key(self, log_label: str) -> None:
+        if not self.api_key:
+            logger.error("%s — API key missing", log_label)
+            raise ValueError(
+                "No API key found. Set the OPENROUTER_API_KEY environment variable."
+            )
+
+    def _headers(self, *, sse: bool) -> dict:
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        if sse:
+            headers["Accept"] = "text/event-stream"
+        return headers
+
+    def _record_token_usage(
+        self, log_label: str, tier: str, usage: dict | None, *, model: str
+    ) -> None:
+        if not isinstance(usage, dict):
+            logger.warning("%s — no usage block received (model=%s)", log_label, model)
+            return
+        prompt_t = usage.get("prompt_tokens", 0)
+        completion_t = usage.get("completion_tokens", 0)
+        cache_read = (
+            usage.get("cache_read_input_tokens")
+            or (usage.get("prompt_tokens_details") or {}).get("cached_tokens")
+            or 0
         )
-        yield from self._stream_chat_completion(
-            messages=[
-                {"role": "system", "content": load_prompt("analyze_bullet.txt")},
-                {"role": "user", "content": user_message},
-            ],
-            tier="basic",
-            log_label="analyze_bullet_stream",
-            timeout=(10.0, 60.0),
+        cache_write = usage.get("cache_creation_input_tokens", 0)
+        logger.info(
+            "%s — usage tier=%s prompt=%s completion=%s cache_read=%s cache_write=%s",
+            log_label, tier, prompt_t, completion_t, cache_read, cache_write,
         )
+        try:
+            record_usage(tier, prompt_t, completion_t)
+        except Exception:
+            logger.exception("%s — record_usage failed", log_label)
+
+    # ── Streaming core ──────────────────────────────────────────────────────
 
     def _stream_chat_completion(
         self,
@@ -81,209 +105,253 @@ class OpenRouterProvider:
         :data:`TOOL_EVENT_PREFIX`; downstream collectors strip these so they
         do not pollute the model's text output.
         """
-        if not self.api_key:
-            logger.error("%s — API key missing", log_label)
-            raise ValueError(
-                "No API key found. Set the OPENROUTER_API_KEY environment variable."
-            )
+        self._require_api_key(log_label)
 
         from ..generate_resume.agent_tools import TOOL_HANDLERS
 
         model = self._model_for(tier)
-        logger.debug("%s — POST %s tier=%s model=%s stream=True timeout=%s tools=%s",
-                     log_label, self.BASE_URL, tier, model, timeout,
-                     [t["function"]["name"] for t in tools] if tools else None)
+        logger.debug(
+            "%s — POST %s tier=%s model=%s stream=True timeout=%s tools=%s",
+            log_label, self.BASE_URL, tier, model, timeout,
+            [t["function"]["name"] for t in tools] if tools else None,
+        )
 
         messages = list(messages)
         rounds_used = 0
 
         while True:
-            payload_json: dict = {
-                "model": model,
-                "stream": True,
-                "messages": messages,
-                "usage": {"include": True},
-            }
-            if tools:
-                payload_json["tools"] = tools
-                payload_json["tool_choice"] = (
-                    "none" if rounds_used >= max_tool_rounds else "auto"
-                )
-            if response_format:
-                payload_json["response_format"] = response_format
-            if sampling:
-                for k, v in sampling.items():
-                    if v is not None:
-                        payload_json[k] = v
+            payload = self._build_stream_payload(
+                model=model,
+                messages=messages,
+                tools=tools,
+                tool_choice_auto=rounds_used < max_tool_rounds,
+                response_format=response_format,
+                sampling=sampling,
+            )
+            content, tool_calls, finish_reason, usage = yield from self._stream_round(
+                payload, tier=tier, model=model, log_label=log_label, timeout=timeout,
+                emit_content=not tools,
+            )
 
-            accumulated_content: list[str] = []
-            tool_calls_acc: dict[int, dict] = {}
-            finish_reason: str | None = None
-            final_usage: dict | None = None
-            t0 = time.perf_counter()
-            chunk_count = 0
-            try:
-                with requests.post(
-                    self.BASE_URL,
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json",
-                        "Accept": "text/event-stream",
-                    },
-                    json=payload_json,
-                    stream=True,
-                    timeout=timeout,
-                ) as response:
-                    response.raise_for_status()
-                    response.encoding = "utf-8"
-                    for line in response.iter_lines(decode_unicode=True):
-                        if not line or line.startswith(": ") or not line.startswith("data: "):
-                            continue
-                        payload = line[6:].strip()
-                        if payload == "[DONE]":
-                            break
-                        try:
-                            data = json.loads(payload)
-                        except json.JSONDecodeError:
-                            logger.debug("%s — skipping non-JSON line: %r",
-                                         log_label, payload[:120])
-                            continue
-                        if isinstance(data.get("usage"), dict):
-                            final_usage = data["usage"]
-                        choices = data.get("choices") or []
-                        if not choices:
-                            continue
-                        choice = choices[0]
-                        delta = choice.get("delta") or {}
-                        content = delta.get("content")
-                        if content:
-                            chunk_count += 1
-                            accumulated_content.append(content)
-                            if not tools:
-                                yield content
-                        for tc in delta.get("tool_calls") or []:
-                            idx = tc.get("index", 0)
-                            entry = tool_calls_acc.setdefault(
-                                idx, {"id": None, "name": None, "arguments": ""}
-                            )
-                            if tc.get("id"):
-                                entry["id"] = tc["id"]
-                            fn = tc.get("function") or {}
-                            if fn.get("name"):
-                                entry["name"] = fn["name"]
-                            if fn.get("arguments"):
-                                entry["arguments"] += fn["arguments"]
-                        if choice.get("finish_reason"):
-                            finish_reason = choice["finish_reason"]
-                elapsed = time.perf_counter() - t0
-                logger.info(
-                    "%s — stream done in %.2fs, %d chunks, finish=%s, tool_calls=%d",
-                    log_label, elapsed, chunk_count, finish_reason,
-                    len(tool_calls_acc),
-                )
-                if final_usage:
-                    prompt_t = final_usage.get("prompt_tokens", 0)
-                    completion_t = final_usage.get("completion_tokens", 0)
-                    cache_read = (
-                        final_usage.get("cache_read_input_tokens")
-                        or (final_usage.get("prompt_tokens_details") or {}).get("cached_tokens")
-                        or 0
-                    )
-                    cache_write = final_usage.get("cache_creation_input_tokens", 0)
-                    logger.info(
-                        "%s — usage tier=%s prompt=%s completion=%s cache_read=%s cache_write=%s",
-                        log_label, tier, prompt_t, completion_t, cache_read, cache_write,
-                    )
-                    try:
-                        record_usage(tier, prompt_t, completion_t)
-                    except Exception:
-                        logger.exception("%s — record_usage failed", log_label)
-                else:
-                    logger.warning(
-                        "%s — no usage block received from provider (model=%s)",
-                        log_label, model,
-                    )
-            except Exception:
-                logger.exception("%s — stream failed", log_label)
-                raise
-
-            round_content = "".join(accumulated_content)
-
-            if finish_reason != "tool_calls" or not tool_calls_acc:
-                if round_content and tools:
-                    yield round_content
+            if finish_reason != "tool_calls" or not tool_calls:
+                if content and tools:
+                    yield content
                 return
 
-            if round_content.strip():
+            if content.strip():
                 yield TOOL_EVENT_PREFIX + (
-                    f"[reasoning] round {rounds_used + 1}:\n{round_content}\n"
+                    f"[reasoning] round {rounds_used + 1}:\n{content}\n"
                 )
 
             rounds_used += 1
-            assembled: list[dict] = []
-            for idx in sorted(tool_calls_acc):
-                entry = tool_calls_acc[idx]
-                assembled.append({
-                    "id": entry["id"] or f"call_{idx}",
-                    "type": "function",
-                    "function": {
-                        "name": entry["name"] or "",
-                        "arguments": entry["arguments"] or "{}",
-                    },
-                })
-
+            assembled = self._assemble_tool_calls(tool_calls)
             messages.append({
                 "role": "assistant",
-                "content": "".join(accumulated_content) or None,
+                "content": content or None,
                 "tool_calls": assembled,
             })
 
             for tc in assembled:
-                name = tc["function"]["name"]
-                args_raw = tc["function"]["arguments"]
-                args: dict = {}
-                try:
-                    parsed = json.loads(args_raw) if args_raw else {}
-                    if not isinstance(parsed, dict):
-                        raise ValueError("arguments must decode to a JSON object")
-                    args = parsed
-                except (json.JSONDecodeError, ValueError) as e:
-                    result = {"ok": False, "error": f"invalid arguments: {e}"}
-                else:
-                    handler = (tool_overrides or {}).get(name) or TOOL_HANDLERS.get(name)
-                    if handler is None:
-                        result = {"ok": False, "error": f"unknown tool: {name}"}
-                    else:
-                        try:
-                            result = handler(**args)
-                        except TypeError as e:
-                            result = {"ok": False, "error": f"bad arguments: {e}"}
-                        except Exception as e:
-                            logger.exception("%s — tool %s raised", log_label, name)
-                            result = {"ok": False, "error": str(e)}
-
-                try:
-                    args_preview = json.dumps(args)[:500]
-                except Exception:
-                    args_preview = repr(args)[:500]
-                try:
-                    result_preview = json.dumps(result)[:500]
-                except Exception:
-                    result_preview = repr(result)[:500]
-                logger.info(
-                    "%s — tool %s round=%d ok=%s args=%s result=%s",
-                    log_label, name, rounds_used, result.get("ok"),
-                    args_preview, result_preview,
+                result, event = self._dispatch_tool_call(
+                    tc, tool_overrides=tool_overrides,
+                    handlers=TOOL_HANDLERS, log_label=log_label, round_idx=rounds_used,
                 )
-                yield TOOL_EVENT_PREFIX + _format_tool_event(
-                    name, rounds_used, args, result
-                )
-
+                yield TOOL_EVENT_PREFIX + event
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc["id"],
                     "content": json.dumps(result),
                 })
+
+    def _build_stream_payload(
+        self,
+        *,
+        model: str,
+        messages: list[dict],
+        tools: list[dict] | None,
+        tool_choice_auto: bool,
+        response_format: dict | None,
+        sampling: dict | None,
+    ) -> dict:
+        payload: dict = {
+            "model": model,
+            "stream": True,
+            "messages": messages,
+            "usage": {"include": True},
+        }
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto" if tool_choice_auto else "none"
+        if response_format:
+            payload["response_format"] = response_format
+        if sampling:
+            for k, v in sampling.items():
+                if v is not None:
+                    payload[k] = v
+        return payload
+
+    def _stream_round(
+        self,
+        payload: dict,
+        *,
+        tier: str,
+        model: str,
+        log_label: str,
+        timeout: tuple[float, float],
+        emit_content: bool,
+    ) -> Iterator[str]:
+        """Stream a single completion request. Yields content chunks when
+        ``emit_content`` is True. Returns ``(content, tool_calls, finish, usage)``
+        via ``StopIteration.value`` (i.e. ``return`` from this generator)."""
+        accumulated: list[str] = []
+        tool_calls_acc: dict[int, dict] = {}
+        finish_reason: str | None = None
+        final_usage: dict | None = None
+        chunk_count = 0
+        t0 = time.perf_counter()
+        try:
+            with requests.post(
+                self.BASE_URL,
+                headers=self._headers(sse=True),
+                json=payload,
+                stream=True,
+                timeout=timeout,
+            ) as response:
+                response.raise_for_status()
+                response.encoding = "utf-8"
+                for line in response.iter_lines(decode_unicode=True):
+                    if not line or line.startswith(": ") or not line.startswith("data: "):
+                        continue
+                    raw = line[6:].strip()
+                    if raw == "[DONE]":
+                        break
+                    try:
+                        data = json.loads(raw)
+                    except json.JSONDecodeError:
+                        logger.debug("%s — skipping non-JSON line: %r", log_label, raw[:120])
+                        continue
+                    if isinstance(data.get("usage"), dict):
+                        final_usage = data["usage"]
+                    choices = data.get("choices") or []
+                    if not choices:
+                        continue
+                    choice = choices[0]
+                    delta = choice.get("delta") or {}
+                    content = delta.get("content")
+                    if content:
+                        chunk_count += 1
+                        accumulated.append(content)
+                        if emit_content:
+                            yield content
+                    for tc in delta.get("tool_calls") or []:
+                        idx = tc.get("index", 0)
+                        entry = tool_calls_acc.setdefault(
+                            idx, {"id": None, "name": None, "arguments": ""},
+                        )
+                        if tc.get("id"):
+                            entry["id"] = tc["id"]
+                        fn = tc.get("function") or {}
+                        if fn.get("name"):
+                            entry["name"] = fn["name"]
+                        if fn.get("arguments"):
+                            entry["arguments"] += fn["arguments"]
+                    if choice.get("finish_reason"):
+                        finish_reason = choice["finish_reason"]
+            logger.info(
+                "%s — stream done in %.2fs, %d chunks, finish=%s, tool_calls=%d",
+                log_label, time.perf_counter() - t0, chunk_count, finish_reason,
+                len(tool_calls_acc),
+            )
+            self._record_token_usage(log_label, tier, final_usage, model=model)
+        except Exception:
+            logger.exception("%s — stream failed", log_label)
+            raise
+
+        return "".join(accumulated), tool_calls_acc, finish_reason, final_usage
+
+    @staticmethod
+    def _assemble_tool_calls(tool_calls_acc: dict[int, dict]) -> list[dict]:
+        return [
+            {
+                "id": tool_calls_acc[idx]["id"] or f"call_{idx}",
+                "type": "function",
+                "function": {
+                    "name": tool_calls_acc[idx]["name"] or "",
+                    "arguments": tool_calls_acc[idx]["arguments"] or "{}",
+                },
+            }
+            for idx in sorted(tool_calls_acc)
+        ]
+
+    def _dispatch_tool_call(
+        self,
+        tc: dict,
+        *,
+        tool_overrides: dict | None,
+        handlers: dict,
+        log_label: str,
+        round_idx: int,
+    ) -> tuple[dict, str]:
+        name = tc["function"]["name"]
+        args_raw = tc["function"]["arguments"]
+        args: dict = {}
+        try:
+            parsed = json.loads(args_raw) if args_raw else {}
+            if not isinstance(parsed, dict):
+                raise ValueError("arguments must decode to a JSON object")
+            args = parsed
+        except (json.JSONDecodeError, ValueError) as e:
+            result = {"ok": False, "error": f"invalid arguments: {e}"}
+        else:
+            handler = (tool_overrides or {}).get(name) or handlers.get(name)
+            if handler is None:
+                result = {"ok": False, "error": f"unknown tool: {name}"}
+            else:
+                try:
+                    result = handler(**args)
+                except TypeError as e:
+                    result = {"ok": False, "error": f"bad arguments: {e}"}
+                except Exception as e:
+                    logger.exception("%s — tool %s raised", log_label, name)
+                    result = {"ok": False, "error": str(e)}
+
+        try:
+            args_preview = json.dumps(args)[:500]
+        except Exception:
+            args_preview = repr(args)[:500]
+        try:
+            result_preview = json.dumps(result)[:500]
+        except Exception:
+            result_preview = repr(result)[:500]
+        logger.info(
+            "%s — tool %s round=%d ok=%s args=%s result=%s",
+            log_label, name, round_idx, result.get("ok"),
+            args_preview, result_preview,
+        )
+        return result, _format_tool_event(name, round_idx, args, result)
+
+    # ── Public streaming methods ────────────────────────────────────────────
+
+    def analyze_bullet_stream(self, bullet: str, context: dict) -> Iterator[str]:
+        logger.info("analyze_bullet_stream — bullet=%r context=%s", bullet[:120], context)
+        user_message = (
+            f"{_format_context(context)}\n\n"
+            f'Resume bullet: "{bullet}"\n\n'
+            "Please provide:\n"
+            "1. CRITIQUE: A 1-2 sentence assessment of this bullet's weaknesses "
+            "(e.g., missing metrics, weak action verb, unclear impact).\n"
+            "2. REWRITE A: An improved version of this bullet.\n"
+            "3. REWRITE B: A second, alternative improved version."
+        )
+        yield from self._stream_chat_completion(
+            messages=[
+                {"role": "system", "content": load_prompt("analyze_bullet.txt")},
+                {"role": "user", "content": user_message},
+            ],
+            tier="basic",
+            log_label="analyze_bullet_stream",
+            timeout=(10.0, 60.0),
+        )
 
     def grade_resume_stream(
         self,
@@ -315,7 +383,6 @@ class OpenRouterProvider:
             f"{len(company_research)} keys" if company_research else "none",
             profile_summary,
         )
-        today = today or datetime.date.today().isoformat()
         page_status = (
             f"<page_status>fill={fill:.2f} page_cap={page_cap:.2f}</page_status>\n\n"
             if fill is not None and page_cap is not None else ""
@@ -328,7 +395,7 @@ class OpenRouterProvider:
             f"<profile>\n{_profile_json(profile)}\n</profile>\n\n" if profile else ""
         )
         static_text = (
-            f"<today>{today}</today>\n\n"
+            f"<today>{_today(today)}</today>\n\n"
             f"{profile_block}"
             f"{research_block}"
             f"Job Description:\n{job_description}"
@@ -343,13 +410,11 @@ class OpenRouterProvider:
             messages=[
                 {
                     "role": "system",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": load_prompt("grade_resume.txt"),
-                            "cache_control": {"type": "ephemeral"},
-                        }
-                    ],
+                    "content": [{
+                        "type": "text",
+                        "text": load_prompt("grade_resume.txt"),
+                        "cache_control": {"type": "ephemeral"},
+                    }],
                 },
                 {
                     "role": "user",
@@ -366,73 +431,6 @@ class OpenRouterProvider:
             tier="fast",
             log_label="grade_resume",
         )
-
-    def _build_generate_resume_messages(
-        self,
-        profile: dict,
-        job_description: str,
-        feedback: str | None,
-        previous_resume: dict | None = None,
-        today: str | None = None,
-        company_research: dict | None = None,
-    ) -> list[dict]:
-        from .keyword_extractor import extract_jd_keywords, format_jd_signals
-
-        today = today or datetime.date.today().isoformat()
-        signals = extract_jd_keywords(job_description)
-        static_sections: list[str] = [
-            f"<today>{today}</today>",
-            f"<jd_signals>\n{format_jd_signals(signals)}\n</jd_signals>",
-        ]
-        if company_research:
-            static_sections.append(
-                f"<company_research>\n{json.dumps(company_research, separators=(',', ':'))}\n</company_research>"
-            )
-        if get_resume_template().strip():
-            static_sections.append(
-                "<template_note>\nA Jinja-style LaTeX template is configured server-side. "
-                "You do not interact with it; emit JSON only.\n</template_note>"
-            )
-        static_sections.append(f"<profile>\n{_profile_json(profile)}\n</profile>")
-
-        dynamic_sections: list[str] = []
-        previous_draft_text: str | None = None
-        if previous_resume:
-            previous_draft_text = (
-                f"<previous_draft>\n{json.dumps(previous_resume, separators=(',', ':'))}\n</previous_draft>"
-            )
-        if feedback:
-            dynamic_sections.append(f"<feedback>\n{feedback}\n</feedback>")
-
-        user_content: list[dict] = [
-            {
-                "type": "text",
-                "text": "\n\n".join(static_sections),
-                "cache_control": {"type": "ephemeral"},
-            }
-        ]
-        if previous_draft_text:
-            user_content.append({
-                "type": "text",
-                "text": previous_draft_text,
-                "cache_control": {"type": "ephemeral"},
-            })
-        if dynamic_sections:
-            user_content.append({"type": "text", "text": "\n\n".join(dynamic_sections)})
-
-        return [
-            {
-                "role": "system",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": load_prompt("generate_resume.txt"),
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ],
-            },
-            {"role": "user", "content": user_content},
-        ]
 
     def generate_resume_stream(
         self,
@@ -463,6 +461,62 @@ class OpenRouterProvider:
             tools=[OPENAI_TOOL_SCHEMAS["page_length"]],
         )
 
+    def _build_generate_resume_messages(
+        self,
+        profile: dict,
+        job_description: str,
+        feedback: str | None,
+        previous_resume: dict | None = None,
+        today: str | None = None,
+        company_research: dict | None = None,
+    ) -> list[dict]:
+        from .keyword_extractor import extract_jd_keywords, format_jd_signals
+
+        signals = extract_jd_keywords(job_description)
+        static_sections: list[str] = [
+            f"<today>{_today(today)}</today>",
+            f"<jd_signals>\n{format_jd_signals(signals)}\n</jd_signals>",
+        ]
+        if company_research:
+            static_sections.append(
+                f"<company_research>\n{json.dumps(company_research, separators=(',', ':'))}\n</company_research>"
+            )
+        if get_resume_template().strip():
+            static_sections.append(
+                "<template_note>\nA Jinja-style LaTeX template is configured server-side. "
+                "You do not interact with it; emit JSON only.\n</template_note>"
+            )
+        static_sections.append(f"<profile>\n{_profile_json(profile)}\n</profile>")
+
+        user_content: list[dict] = [{
+            "type": "text",
+            "text": "\n\n".join(static_sections),
+            "cache_control": {"type": "ephemeral"},
+        }]
+        if previous_resume:
+            user_content.append({
+                "type": "text",
+                "text": f"<previous_draft>\n{json.dumps(previous_resume, separators=(',', ':'))}\n</previous_draft>",
+                "cache_control": {"type": "ephemeral"},
+            })
+        if feedback:
+            user_content.append({
+                "type": "text",
+                "text": f"<feedback>\n{feedback}\n</feedback>",
+            })
+
+        return [
+            {
+                "role": "system",
+                "content": [{
+                    "type": "text",
+                    "text": load_prompt("generate_resume.txt"),
+                    "cache_control": {"type": "ephemeral"},
+                }],
+            },
+            {"role": "user", "content": user_content},
+        ]
+
     def answer_question_stream(
         self,
         question: str,
@@ -474,25 +528,18 @@ class OpenRouterProvider:
     ) -> Iterator[str]:
         logger.info(
             "answer_question_stream — question=%r company=%r research=%s jd=%s",
-            question[:120],
-            company_name,
+            question[:120], company_name,
             f"{len(company_research)} keys" if company_research else "none",
             f"{len(job_description)} chars" if job_description else "none",
         )
-        today = today or datetime.date.today().isoformat()
-        sections: list[str] = [
-            f"<today>{today}</today>",
+        sections = [
+            f"<today>{_today(today)}</today>",
             f"<question>\n{question}\n</question>",
         ]
-        if company_name:
-            sections.append(f"<company_name>{company_name}</company_name>")
-        sections.append(f"<profile>\n{_profile_json(profile)}\n</profile>")
-        if company_research:
-            sections.append(
-                f"<company_research>\n{json.dumps(company_research, indent=2)}\n</company_research>"
-            )
-        if job_description:
-            sections.append(f"<job_description>\n{job_description}\n</job_description>")
+        sections.extend(_common_context_sections(
+            profile=profile, company_name=company_name,
+            company_research=company_research, job_description=job_description,
+        ))
         writing_sample = (get_writing_sample() or "").strip()
         if writing_sample:
             sections.append(f"<writing_sample>\n{writing_sample}\n</writing_sample>")
@@ -523,27 +570,19 @@ class OpenRouterProvider:
     ) -> Iterator[str]:
         logger.info(
             "grade_interview_response_stream — question=%r response_chars=%d company=%r research=%s jd=%s",
-            question[:120],
-            len(response),
-            company_name,
+            question[:120], len(response), company_name,
             f"{len(company_research)} keys" if company_research else "none",
             f"{len(job_description)} chars" if job_description else "none",
         )
-        today = today or datetime.date.today().isoformat()
-        sections: list[str] = [
-            f"<today>{today}</today>",
+        sections = [
+            f"<today>{_today(today)}</today>",
             f"<question>\n{question}\n</question>",
             f"<response>\n{response}\n</response>",
         ]
-        if company_name:
-            sections.append(f"<company_name>{company_name}</company_name>")
-        sections.append(f"<profile>\n{_profile_json(profile)}\n</profile>")
-        if company_research:
-            sections.append(
-                f"<company_research>\n{json.dumps(company_research, indent=2)}\n</company_research>"
-            )
-        if job_description:
-            sections.append(f"<job_description>\n{job_description}\n</job_description>")
+        sections.extend(_common_context_sections(
+            profile=profile, company_name=company_name,
+            company_research=company_research, job_description=job_description,
+        ))
 
         yield from self._stream_chat_completion(
             messages=[
@@ -573,26 +612,19 @@ class OpenRouterProvider:
     ) -> Iterator[str]:
         logger.info(
             "chat_interview_stream — turns=%d company=%r research=%s jd=%s",
-            len(history),
-            company_name,
+            len(history), company_name,
             f"{len(company_research)} keys" if company_research else "none",
             f"{len(job_description)} chars" if job_description else "none",
         )
-        today = today or datetime.date.today().isoformat()
-        context_sections: list[str] = [f"<today>{today}</today>"]
-        if company_name:
-            context_sections.append(f"<company_name>{company_name}</company_name>")
-        context_sections.append(f"<profile>\n{_profile_json(profile)}\n</profile>")
-        if company_research:
-            context_sections.append(
-                f"<company_research>\n{json.dumps(company_research, indent=2)}\n</company_research>"
-            )
-        if job_description:
-            context_sections.append(f"<job_description>\n{job_description}\n</job_description>")
+        sections = [f"<today>{_today(today)}</today>"]
+        sections.extend(_common_context_sections(
+            profile=profile, company_name=company_name,
+            company_research=company_research, job_description=job_description,
+        ))
 
         messages: list[dict] = [
             {"role": "system", "content": load_prompt("interview_chat.txt")},
-            {"role": "user", "content": "\n\n".join(context_sections)},
+            {"role": "user", "content": "\n\n".join(sections)},
         ]
         for turn in history:
             role = turn.get("role")
@@ -601,9 +633,7 @@ class OpenRouterProvider:
                 messages.append({"role": role, "content": content})
 
         yield from self._stream_chat_completion(
-            messages=messages,
-            tier="basic",
-            log_label="chat_interview",
+            messages=messages, tier="basic", log_label="chat_interview",
         )
 
     def summarize_interview_notes_stream(
@@ -620,29 +650,21 @@ class OpenRouterProvider:
             "summarize_interview_notes_stream — turns=%d prior_chars=%d company=%r",
             len(history), len(prior_notes or ""), company_name,
         )
-        today = today or datetime.date.today().isoformat()
-        transcript_lines: list[str] = []
-        for turn in history:
-            role = turn.get("role")
-            content = (turn.get("content") or "").strip()
-            if role in ("user", "assistant") and content:
-                transcript_lines.append(f"{role}: {content}")
-        transcript_text = "\n\n".join(transcript_lines)
-
-        sections: list[str] = [
-            f"<today>{today}</today>",
+        transcript_text = "\n\n".join(
+            f"{turn['role']}: {(turn.get('content') or '').strip()}"
+            for turn in history
+            if turn.get("role") in ("user", "assistant")
+            and (turn.get("content") or "").strip()
+        )
+        sections = [
+            f"<today>{_today(today)}</today>",
             f"<prior_notes>\n{prior_notes or ''}\n</prior_notes>",
             f"<transcript>\n{transcript_text}\n</transcript>",
-            f"<profile>\n{_profile_json(profile)}\n</profile>",
         ]
-        if company_name:
-            sections.append(f"<company_name>{company_name}</company_name>")
-        if company_research:
-            sections.append(
-                f"<company_research>\n{json.dumps(company_research, indent=2)}\n</company_research>"
-            )
-        if job_description:
-            sections.append(f"<job_description>\n{job_description}\n</job_description>")
+        sections.extend(_common_context_sections(
+            profile=profile, company_name=company_name,
+            company_research=company_research, job_description=job_description,
+        ))
 
         yield from self._stream_chat_completion(
             messages=[
@@ -653,84 +675,39 @@ class OpenRouterProvider:
             log_label="interview_chat_notes",
         )
 
-    def research_company(self, company_name: str, scraped_text: str) -> dict:
-        logger.info("research_company — company=%r scraped_chars=%d", company_name, len(scraped_text))
-        if not self.api_key:
-            logger.error("research_company — API key missing")
-            raise ValueError(
-                "No API key found. Set the OPENROUTER_API_KEY environment variable."
-            )
+    # ── Non-streaming ───────────────────────────────────────────────────────
 
+    def research_company(self, company_name: str, scraped_text: str) -> dict:
+        logger.info(
+            "research_company — company=%r scraped_chars=%d",
+            company_name, len(scraped_text),
+        )
         user_message = (
             f"Company: {company_name}\n\n"
             f"Scraped content from the company's own website:\n{scraped_text}\n\n"
             "From the scraped content above, extract a shallow research brief. "
             "Return ONLY the JSON object described in the system prompt, no markdown."
         )
-
-        model = self._model_for("fast")
-        logger.debug("research_company — POST %s tier=fast model=%s timeout=60", self.BASE_URL, model)
-        t0 = time.perf_counter()
-        try:
-            response = requests.post(
-                self.BASE_URL,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
+        raw = self._post_json(
+            messages=[
+                {"role": "system", "content": load_prompt("research_company.txt")},
+                {"role": "user", "content": user_message},
+            ],
+            tier="fast",
+            log_label="research_company",
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "research_company_output",
+                    "strict": True,
+                    "schema": load_schema("research_company.schema.json"),
                 },
-                json={
-                    "model": model,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": load_prompt("research_company.txt"),
-                        },
-                        {"role": "user", "content": user_message},
-                    ],
-                    "response_format": {
-                        "type": "json_schema",
-                        "json_schema": {
-                            "name": "research_company_output",
-                            "strict": True,
-                            "schema": load_schema("research_company.schema.json"),
-                        },
-                    },
-                },
-                timeout=60,
-            )
-            elapsed = time.perf_counter() - t0
-            logger.info("research_company — HTTP %s in %.2fs", response.status_code, elapsed)
-            logger.debug("research_company — raw response: %s", response.text[:300])
-            response.raise_for_status()
-        except Exception:
-            logger.exception("research_company — request failed")
-            raise
-
-        response_json = response.json()
-        usage = response_json.get("usage") if isinstance(response_json, dict) else None
-        if isinstance(usage, dict):
-            prompt_t = usage.get("prompt_tokens", 0)
-            completion_t = usage.get("completion_tokens", 0)
-            logger.info(
-                "research_company — usage tier=fast prompt=%s completion=%s",
-                prompt_t, completion_t,
-            )
-            try:
-                record_usage("fast", prompt_t, completion_t)
-            except Exception:
-                logger.exception("research_company — record_usage failed")
-        else:
-            logger.warning("research_company — no usage block in response (model=%s)", model)
-        raw = response_json["choices"][0]["message"]["content"].strip()
-
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-            raw = raw.strip()
+            },
+            timeout=60,
+        )
 
         try:
-            data = json.loads(raw)
+            data = json.loads(strip_code_fence(raw, ("json",)))
         except json.JSONDecodeError:
             logger.error("research_company — JSON parse failed, raw=%r", raw[:500])
             raise ValueError("AI returned unexpected format — please try again.")
@@ -745,8 +722,58 @@ class OpenRouterProvider:
             "recent_projects": _str_list(data.get("recent_projects")),
             "summary": str(data.get("summary", "")).strip(),
         }
-        logger.info("research_company — success, values=%d projects=%d", len(result["core_values"]), len(result["recent_projects"]))
+        logger.info(
+            "research_company — success, values=%d projects=%d",
+            len(result["core_values"]), len(result["recent_projects"]),
+        )
         return result
+
+    def _post_json(
+        self,
+        *,
+        messages: list[dict],
+        tier: str,
+        log_label: str,
+        response_format: dict | None = None,
+        timeout: float | tuple[float, float] = 60,
+    ) -> str:
+        """POST a non-streaming completion. Returns the assistant's content
+        string; logs and records token usage as a side effect."""
+        self._require_api_key(log_label)
+        model = self._model_for(tier)
+        logger.debug(
+            "%s — POST %s tier=%s model=%s timeout=%s",
+            log_label, self.BASE_URL, tier, model, timeout,
+        )
+        payload: dict = {"model": model, "messages": messages}
+        if response_format:
+            payload["response_format"] = response_format
+
+        t0 = time.perf_counter()
+        try:
+            response = requests.post(
+                self.BASE_URL,
+                headers=self._headers(sse=False),
+                json=payload,
+                timeout=timeout,
+            )
+            logger.info(
+                "%s — HTTP %s in %.2fs",
+                log_label, response.status_code, time.perf_counter() - t0,
+            )
+            logger.debug("%s — raw response: %s", log_label, response.text[:300])
+            response.raise_for_status()
+        except Exception:
+            logger.exception("%s — request failed", log_label)
+            raise
+
+        response_json = response.json()
+        self._record_token_usage(
+            log_label, tier,
+            response_json.get("usage") if isinstance(response_json, dict) else None,
+            model=model,
+        )
+        return response_json["choices"][0]["message"]["content"].strip()
 
 
 def get_provider() -> OpenRouterProvider:
