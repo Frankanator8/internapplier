@@ -14,12 +14,31 @@
     "http://127.0.0.1:8765/*"
   ],
   "background": {
-    "scripts": ["background.js"]
+    "scripts": [
+      "src/shared/constants.js",
+      "src/background/api-client.js",
+      "src/background/cache.js",
+      "src/background/tab-bridge.js",
+      "src/background/router.js"
+    ]
   },
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content.js"],
+      "js": [
+        "src/shared/normalize.js",
+        "src/content/autofill/aliases.js",
+        "src/content/autofill/fill.js",
+        "src/content/scrape/utils.js",
+        "src/content/scrape/meta.js",
+        "src/content/scrape/table.js",
+        "src/content/scrape/repeating.js",
+        "src/content/scrape/aria.js",
+        "src/content/scrape/job-list.js",
+        "src/content/picker/selector.js",
+        "src/content/picker/ui.js",
+        "src/content/index.js"
+      ],
       "run_at": "document_idle"
     }
   ],

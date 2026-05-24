@@ -35,7 +35,6 @@ from .persist import (
     persist_pdf as _persist_pdf,
 )
 from .render import render_resume, validate_resume_shape
-from .step_timing import time_call, time_step
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +81,6 @@ class ResumeGenerator:
 
     # ---------- public API ----------
 
-    @time_call("TOTAL")
     def generate_latex(
         self,
         output_pdf: pathlib.Path | str | None = None,
@@ -112,8 +110,7 @@ class ResumeGenerator:
         from ..ai_provider.keyword_extractor import extract_jd_keywords, format_jd_signals
         template = get_resume_template()
 
-        with time_step("jd-keywords"):
-            signals = extract_jd_keywords(self.job_description)
+        signals = extract_jd_keywords(self.job_description)
         _emit(
             stream_cb, "jd-keywords",
             "[jd-keywords] extracted from job description:\n" + format_jd_signals(signals),
@@ -126,10 +123,9 @@ class ResumeGenerator:
                 progress_cb(f"Attempt {attempt}/{max_attempts}: generating resume JSON…")
             previous_resume = attempts[-1]["resume"] if attempts else None
             try:
-                with time_step("generate-json", attempt):
-                    resume_json = self._generate_resume_json(
-                        profile_for_attempt, feedback, previous_resume, today, stream_cb
-                    )
+                resume_json = self._generate_resume_json(
+                    profile_for_attempt, feedback, previous_resume, today, stream_cb
+                )
             except Exception:
                 logger.exception("generate_latex — provider.generate_resume failed on attempt %d", attempt)
                 raise
@@ -145,10 +141,9 @@ class ResumeGenerator:
 
             if progress_cb:
                 progress_cb(f"Attempt {attempt}: rendering + compiling…")
-            with time_step("render-compile", attempt):
-                latex, pdf_path, compile_error = self._render_and_compile(
-                    resume_json, template, attempt, stream_cb
-                )
+            latex, pdf_path, compile_error = self._render_and_compile(
+                resume_json, template, attempt, stream_cb
+            )
             if pdf_path is not None:
                 metrics = pdf_page_metrics(pdf_path)
                 fill = metrics["fill"]
