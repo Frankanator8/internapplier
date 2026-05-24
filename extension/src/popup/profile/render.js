@@ -92,11 +92,18 @@ async function renderProfilePanel() {
     profileSection.classList.add("hidden");
     return;
   }
-  const order = ["general_info", "experience", "projects", "skills", "applications"];
-  const seen = new Set();
+  const order = [
+    "general_info",
+    "experience",
+    "projects",
+    "education",
+    "awards",
+    "skills",
+    "hobbies",
+    "applications",
+  ];
   for (const key of order) {
     if (!(key in profile)) continue;
-    seen.add(key);
     const v = profile[key];
     if (v == null) continue;
     if (typeof v === "object") {
@@ -120,17 +127,6 @@ async function renderProfilePanel() {
       profileTree.appendChild(node.details);
     } else {
       appendChipRow(profileTree, key, v);
-    }
-  }
-  for (const [k, v] of Object.entries(profile)) {
-    if (seen.has(k)) continue;
-    if (v == null) continue;
-    if (typeof v === "object") {
-      const node = makeTreeNode(k, false);
-      renderDict(node.body, v);
-      profileTree.appendChild(node.details);
-    } else {
-      appendChipRow(profileTree, k, v);
     }
   }
   profileSection.classList.remove("hidden");

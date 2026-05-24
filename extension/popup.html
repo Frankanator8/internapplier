@@ -285,6 +285,21 @@
         overflow: hidden;
         text-overflow: ellipsis;
       }
+      details.master-section > summary {
+        cursor: pointer;
+        user-select: none;
+        list-style: none;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      details.master-section > summary::-webkit-details-marker { display: none; }
+      details.master-section > summary::before {
+        content: "▸";
+        font-size: 10px;
+        color: var(--text-faint);
+      }
+      details.master-section[open] > summary::before { content: "▾"; }
       .scan-row .badge {
         font-size: 10px;
         background: var(--badge-bg);
@@ -305,27 +320,38 @@
         <span id="status-text">Checking server…</span>
       </div>
       <div id="name" class="name"></div>
-      <div class="stack">
-        <div class="row" style="margin-bottom: 0;">
-          <label class="field" for="load-target">Application</label>
-          <select id="load-target"></select>
+
+      <details class="section master-section" id="new-app-section" open>
+        <summary class="section-title">New Application</summary>
+        <div class="stack">
+          <button id="create-btn" disabled>Make New Application</button>
+          <button id="scan-btn" class="secondary" disabled>Scan page for jobs</button>
         </div>
-        <div id="resume-chip-row" class="chip-row" hidden>
-          <span class="field-name">Resume</span>
-          <span id="resume-chip" class="chip" draggable="true"
-                title="Drag onto a resume upload field" hidden>
-            <span class="chip-label">📄</span>
-            <span id="resume-chip-name">Resume.pdf</span>
-          </span>
-          <button id="resume-generate-btn" class="secondary chip-button" hidden>
-            Generate Resume
-          </button>
+      </details>
+
+      <details class="section master-section" id="autofill-section" open>
+        <summary class="section-title">Autofill</summary>
+        <div class="stack">
+          <div class="row" style="margin-bottom: 0;">
+            <label class="field" for="load-target">Application</label>
+            <select id="load-target"></select>
+          </div>
+          <div id="resume-chip-row" class="chip-row" hidden>
+            <span class="field-name">Resume</span>
+            <span id="resume-chip" class="chip" draggable="true"
+                  title="Drag onto a resume upload field" hidden>
+              <span class="chip-label">📄</span>
+              <span id="resume-chip-name">Resume.pdf</span>
+            </span>
+            <button id="resume-generate-btn" class="secondary chip-button" hidden>
+              Generate Resume
+            </button>
+          </div>
+          <button id="load-btn" disabled>Autofill Application</button>
+          <button id="ask-btn" class="secondary" disabled>Ask AI about a question on page</button>
         </div>
-        <button id="load-btn" disabled>Autofill Application</button>
-        <button id="create-btn" class="secondary" disabled>Make New Application</button>
-        <button id="ask-btn" class="secondary" disabled>Ask AI about a question on page</button>
-        <button id="scan-btn" class="secondary" disabled>Scan page for jobs</button>
-      </div>
+      </details>
+
       <div id="result" class="result"></div>
 
       <div id="answers-section" class="section hidden">
