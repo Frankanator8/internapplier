@@ -17,8 +17,19 @@ from .entry_dialog import _EntryDialog, _empty_entry, _STATUS_OPTIONS
 logger = logging.getLogger(__name__)
 
 
-_COLUMNS = ["Company", "Role", "Date Applied", "Status", "Notes", ""]
-_COL_COMPANY, _COL_ROLE, _COL_DATE, _COL_STATUS, _COL_NOTES, _COL_DEL = range(6)
+_COLUMNS = ["Company", "Role", "Date Applied", "Status", "Notes", "JD", "Resume", ""]
+(
+    _COL_COMPANY,
+    _COL_ROLE,
+    _COL_DATE,
+    _COL_STATUS,
+    _COL_NOTES,
+    _COL_JD,
+    _COL_RESUME,
+    _COL_DEL,
+) = range(8)
+
+_JD_PREVIEW_MAX = 80
 
 
 class TrackerPage(QWidget):
@@ -79,12 +90,16 @@ class TrackerPage(QWidget):
         hdr.setSectionResizeMode(_COL_DATE, QHeaderView.ResizeMode.Interactive)
         hdr.setSectionResizeMode(_COL_STATUS, QHeaderView.ResizeMode.Interactive)
         hdr.setSectionResizeMode(_COL_NOTES, QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(_COL_JD, QHeaderView.ResizeMode.Interactive)
+        hdr.setSectionResizeMode(_COL_RESUME, QHeaderView.ResizeMode.Fixed)
         hdr.setSectionResizeMode(_COL_DEL, QHeaderView.ResizeMode.Fixed)
 
         self._table.setColumnWidth(_COL_COMPANY, 160)
         self._table.setColumnWidth(_COL_ROLE, 160)
         self._table.setColumnWidth(_COL_DATE, 110)
         self._table.setColumnWidth(_COL_STATUS, 120)
+        self._table.setColumnWidth(_COL_JD, 220)
+        self._table.setColumnWidth(_COL_RESUME, 70)
         self._table.setColumnWidth(_COL_DEL, 48)
 
         outer.addWidget(self._table)
@@ -137,6 +152,24 @@ class TrackerPage(QWidget):
         self._render_role_cell(row, entry["role"], primary_link)
         self._table.setItem(row, _COL_DATE, QTableWidgetItem(entry["date"]))
         self._table.setItem(row, _COL_NOTES, QTableWidgetItem(entry["notes"]))
+
+        description = (entry.get("description") or "")
+        collapsed = " ".join(description.split())
+        if len(collapsed) > _JD_PREVIEW_MAX:
+            preview = collapsed[: _JD_PREVIEW_MAX - 1].rstrip() + "…"
+        else:
+            preview = collapsed
+        jd_item = QTableWidgetItem(preview)
+        if description:
+            jd_item.setToolTip(description)
+        self._table.setItem(row, _COL_JD, jd_item)
+
+        resume_path = entry.get("resume_pdf") or ""
+        resume_item = QTableWidgetItem("✓" if resume_path else "")
+        resume_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        if resume_path:
+            resume_item.setToolTip(str(resume_path))
+        self._table.setItem(row, _COL_RESUME, resume_item)
 
         existing_combo = self._table.cellWidget(row, _COL_STATUS)
         if isinstance(existing_combo, QComboBox):
