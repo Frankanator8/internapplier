@@ -17,7 +17,7 @@ def provider(fake_api_key, isolated_app_dir):
 @pytest.fixture(autouse=True)
 def _stub_model_config(monkeypatch):
     monkeypatch.setattr(
-        "api.ai_provider.provider._load_model_config",
+        "api.ai_provider.http_client._load_model_config",
         lambda: {"basic": "B", "fast": "F", "powerful": "P"},
     )
 

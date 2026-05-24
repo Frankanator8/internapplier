@@ -3,7 +3,7 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 
-from api import ai_provider
+from api import app_settings
 
 from .style import build_stylesheet
 
@@ -35,7 +35,7 @@ def install_system_listener(app: QApplication) -> None:
         return
 
     def _on_change(_scheme) -> None:
-        if ai_provider.get_theme_preference() == "system":
+        if app_settings.get_theme_preference() == "system":
             apply_theme(app, "system")
 
     signal.connect(_on_change)

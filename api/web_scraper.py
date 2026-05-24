@@ -12,7 +12,7 @@ from playwright.sync_api import (
     sync_playwright,
 )
 
-from .ai_provider import get_scraper_candidate_paths
+from .app_settings import get_scraper_candidate_paths
 from .constants import (
     SCRAPER_MAX_PAGES,
     SCRAPER_MAX_TOTAL_CHARS,

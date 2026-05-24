@@ -1,37 +1,16 @@
 from __future__ import annotations
 
 import datetime
-import json
 import logging
-import os
 import threading
 
-from .constants import APP_DIR, TOKEN_USAGE_FILE
+from .constants import TOKEN_USAGE_FILE
+from .json_store import load_json, save_json
 
 logger = logging.getLogger(__name__)
 
 _TIERS = ("basic", "fast", "powerful")
 _lock = threading.Lock()
-
-
-def _read() -> dict:
-    if not TOKEN_USAGE_FILE.exists():
-        return {}
-    try:
-        with open(TOKEN_USAGE_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except (OSError, json.JSONDecodeError):
-        logger.exception("token_usage: failed to read %s", TOKEN_USAGE_FILE)
-        return {}
-
-
-def _write(data: dict) -> None:
-    APP_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = TOKEN_USAGE_FILE.with_suffix(".tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-    os.replace(tmp, TOKEN_USAGE_FILE)
 
 
 def record_usage(tier: str, input_tokens: int, output_tokens: int) -> None:
@@ -46,20 +25,23 @@ def record_usage(tier: str, input_tokens: int, output_tokens: int) -> None:
         return
     today = datetime.date.today().isoformat()
     with _lock:
-        data = _read()
+        data = load_json(TOKEN_USAGE_FILE, {})
+        if not isinstance(data, dict):
+            data = {}
         day = data.setdefault(today, {})
         entry = day.setdefault(tier, {"input": 0, "output": 0})
         entry["input"] = int(entry.get("input", 0)) + input_tokens
         entry["output"] = int(entry.get("output", 0)) + output_tokens
         try:
-            _write(data)
+            save_json(TOKEN_USAGE_FILE, data)
         except OSError:
             logger.exception("token_usage: failed to write %s", TOKEN_USAGE_FILE)
 
 
 def load_usage() -> dict:
     with _lock:
-        return _read()
+        data = load_json(TOKEN_USAGE_FILE, {})
+        return data if isinstance(data, dict) else {}
 
 
 def usage_since(start: datetime.date) -> dict:

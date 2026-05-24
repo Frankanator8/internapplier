@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QStackedWidget, QTabBar, QVBoxLayout, QWidget,
 )
 
-from api import ai_provider
+from api import ai_provider, app_settings
 
 from ..base import _primary_btn, _secondary_btn, _set_status
 
@@ -73,7 +73,7 @@ class PromptsMixin:
         layout.addWidget(hint)
 
         self._auto_resync_checkbox = QCheckBox("Auto resync all prompts to default on app load")
-        self._auto_resync_checkbox.setChecked(ai_provider.get_auto_resync_prompts())
+        self._auto_resync_checkbox.setChecked(app_settings.get_auto_resync_prompts())
         self._auto_resync_checkbox.stateChanged.connect(self._toggle_auto_resync)
         layout.addWidget(self._auto_resync_checkbox)
 
@@ -155,7 +155,7 @@ class PromptsMixin:
 
     def _toggle_auto_resync(self, state: int) -> None:
         enabled = bool(state)
-        ai_provider.save_auto_resync_prompts(enabled)
+        app_settings.save_auto_resync_prompts(enabled)
         if self._status_bar:
             msg = "✓  Auto resync on load enabled." if enabled else "✓  Auto resync on load disabled."
             self._status_bar.showMessage(msg, 3000)

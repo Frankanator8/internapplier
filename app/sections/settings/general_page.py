@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QSpinBox, QVBoxLayout, QWidget,
 )
 
-from api import ai_provider
+from api import app_settings
 
 from app.theme import apply_theme
 
@@ -32,7 +32,7 @@ class GeneralMixin:
         self._theme_combo = QComboBox()
         for label_text, value in _THEME_OPTIONS:
             self._theme_combo.addItem(label_text, value)
-        current_pref = ai_provider.get_theme_preference()
+        current_pref = app_settings.get_theme_preference()
         for i, (_, value) in enumerate(_THEME_OPTIONS):
             if value == current_pref:
                 self._theme_combo.setCurrentIndex(i)
@@ -59,7 +59,7 @@ class GeneralMixin:
             "your own words). The AI mirrors its rhythm and vocabulary when "
             "drafting answers, so they sound like you."
         )
-        self._writing_sample_edit.setPlainText(ai_provider.get_writing_sample())
+        self._writing_sample_edit.setPlainText(app_settings.get_writing_sample())
         layout.addWidget(self._writing_sample_edit)
 
         writing_hint = QLabel(
@@ -75,7 +75,7 @@ class GeneralMixin:
         self._scraper_paths_edit.setMinimumHeight(180)
         self._scraper_paths_edit.setPlaceholderText("/about\n/careers\n…")
         self._scraper_paths_edit.setPlainText(
-            "\n".join(ai_provider.get_scraper_candidate_paths())
+            "\n".join(app_settings.get_scraper_candidate_paths())
         )
         layout.addWidget(self._scraper_paths_edit)
 
@@ -98,8 +98,8 @@ class GeneralMixin:
         heatmap_hint.setObjectName("hint")
         layout.addWidget(heatmap_hint)
 
-        day_values = ai_provider.get_heatmap_day_thresholds()
-        week_values = ai_provider.get_heatmap_week_thresholds()
+        day_values = app_settings.get_heatmap_day_thresholds()
+        week_values = app_settings.get_heatmap_week_thresholds()
         self._heatmap_day_spins: list[QSpinBox] = []
         self._heatmap_week_spins: list[QSpinBox] = []
 
@@ -139,7 +139,7 @@ class GeneralMixin:
         mode = self._theme_combo.currentData()
         if not isinstance(mode, str):
             return
-        ai_provider.save_theme_preference(mode)
+        app_settings.save_theme_preference(mode)
         app = QApplication.instance()
         if app is not None:
             apply_theme(app, mode)
@@ -158,10 +158,10 @@ class GeneralMixin:
             for line in self._scraper_paths_edit.toPlainText().splitlines()
             if line.strip()
         ]
-        ai_provider.save_scraper_candidate_paths(paths)
-        ai_provider.save_writing_sample(self._writing_sample_edit.toPlainText())
-        ai_provider.save_heatmap_day_thresholds(day_vals)
-        ai_provider.save_heatmap_week_thresholds(week_vals)
+        app_settings.save_scraper_candidate_paths(paths)
+        app_settings.save_writing_sample(self._writing_sample_edit.toPlainText())
+        app_settings.save_heatmap_day_thresholds(day_vals)
+        app_settings.save_heatmap_week_thresholds(week_vals)
 
         cb = getattr(self, "_on_heatmap_thresholds_changed", None)
         if callable(cb):

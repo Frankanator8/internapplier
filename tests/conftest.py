@@ -59,15 +59,13 @@ _PATH_BINDINGS = [
     ("api.constants", "SETTINGS_FILE", "settings.json"),
     ("api.constants", "TOKEN_USAGE_FILE", "token_usage.json"),
     ("api.constants", "APP_PROMPTS_DIR", "prompts"),
-    ("api.data_store", "APP_DIR", ""),
     ("api.data_store", "RESUME_DATA_FILE", "resume.json"),
     ("api.data_store", "INTERVIEW_TEMPLATE_FILE", "interview_template.json"),
     ("api.data_store", "INTERVIEW_FEEDBACK_FILE", "interview_feedback.json"),
-    ("api.token_usage", "APP_DIR", ""),
     ("api.token_usage", "TOKEN_USAGE_FILE", "token_usage.json"),
+    ("api._settings_base", "SETTINGS_FILE", "settings.json"),
     ("api.ai_provider.settings", "APP_DIR", ""),
     ("api.ai_provider.settings", "MODELS_FILE", "models.txt"),
-    ("api.ai_provider.settings", "SETTINGS_FILE", "settings.json"),
     ("api.ai_provider.prompts", "APP_PROMPTS_DIR", "prompts"),
 ]
 
@@ -93,10 +91,11 @@ def isolated_app_dir(tmp_path, monkeypatch):
     # Reset module caches.
     import api.data_store as data_store
     import api.ai_provider.settings as ap_settings
+    import api._settings_base as settings_base
 
     monkeypatch.setattr(data_store, "_cache", None)
     monkeypatch.setattr(data_store, "_cache_mtime", None)
-    monkeypatch.setattr(ap_settings, "_settings_cache", None)
+    monkeypatch.setattr(settings_base, "_settings_cache", None)
     monkeypatch.setattr(ap_settings, "_model_config_cache", None)
 
     # Seed prompt files into the isolated dir from the project's PROMPTS_DIR.
@@ -197,7 +196,7 @@ def mock_openrouter(mocker, fake_api_key):
             return _FakeResponse(["data: [DONE]"])
         return state["responses"].pop(0)
 
-    mocker.patch("api.ai_provider.provider.requests.post", side_effect=_fake_post)
+    mocker.patch("api.ai_provider.http_client.requests.post", side_effect=_fake_post)
 
     class _Handle:
         FakeResponse = _FakeResponse

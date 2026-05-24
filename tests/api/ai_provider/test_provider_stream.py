@@ -159,7 +159,7 @@ class TestRequestPayload:
 class TestUsageRecording:
     def test_usage_block_triggers_record_usage(
             self, provider, mock_openrouter, sse_factory, mocker):
-        rec = mocker.patch("api.ai_provider.provider.record_usage")
+        rec = mocker.patch("api.ai_provider.http_client.record_usage")
         mock_openrouter.queue_stream([
             sse_factory.delta(content="x"),
             sse_factory.delta(usage={"prompt_tokens": 42, "completion_tokens": 7},
@@ -173,7 +173,7 @@ class TestUsageRecording:
 
     def test_missing_usage_logs_warning_no_raise(
             self, provider, mock_openrouter, sse_factory, mocker, caplog):
-        rec = mocker.patch("api.ai_provider.provider.record_usage")
+        rec = mocker.patch("api.ai_provider.http_client.record_usage")
         mock_openrouter.queue_stream([
             sse_factory.delta(content="x"),
             sse_factory.delta(finish_reason="stop"),
@@ -201,7 +201,7 @@ class TestModelTierMapping:
             self, provider, mock_openrouter, sse_factory, monkeypatch):
         # Force model config: basic -> "B", fast -> "F", powerful -> "P"
         monkeypatch.setattr(
-            "api.ai_provider.provider._load_model_config",
+            "api.ai_provider.http_client._load_model_config",
             lambda: {"basic": "B", "fast": "F", "powerful": "P"},
         )
         mock_openrouter.queue_stream([sse_factory.delta(finish_reason="stop")])
@@ -215,7 +215,7 @@ class TestModelTierMapping:
     def test_known_tier_uses_mapped_model(
             self, provider, mock_openrouter, sse_factory, monkeypatch):
         monkeypatch.setattr(
-            "api.ai_provider.provider._load_model_config",
+            "api.ai_provider.http_client._load_model_config",
             lambda: {"basic": "B", "fast": "F", "powerful": "P"},
         )
         mock_openrouter.queue_stream([sse_factory.delta(finish_reason="stop")])

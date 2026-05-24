@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit, QSpinBox, QVBoxLayout, QWidget,
 )
 
-from api import ai_provider
+from api import ai_provider, app_settings
 
 from ..base import _label, _primary_btn, _secondary_btn, _set_status
 
@@ -79,7 +79,7 @@ class ResumeMixin:
         output_dir_row.setSpacing(12)
         output_dir_row.addWidget(_label("Output folder"))
         self._output_dir_edit = QLineEdit()
-        self._output_dir_edit.setText(str(ai_provider.get_resume_output_dir()))
+        self._output_dir_edit.setText(str(app_settings.get_resume_output_dir()))
         output_dir_row.addWidget(self._output_dir_edit, stretch=1)
         browse_btn = _secondary_btn("Browse…", width=100)
         browse_btn.clicked.connect(self._browse_output_dir)
@@ -117,7 +117,7 @@ class ResumeMixin:
         return self._wrap_scroll(resume_card)
 
     def _browse_output_dir(self) -> None:
-        current = self._output_dir_edit.text().strip() or str(ai_provider.get_resume_output_dir())
+        current = self._output_dir_edit.text().strip() or str(app_settings.get_resume_output_dir())
         chosen = QFileDialog.getExistingDirectory(self, "Select resume output folder", current)
         if chosen:
             self._output_dir_edit.setText(chosen)
@@ -127,7 +127,7 @@ class ResumeMixin:
         ai_provider.save_resume_page_cap(self._page_cap_spin.value())
         ai_provider.save_max_generation_attempts(self._max_iters_spin.value())
         ai_provider.save_resume_score_threshold(self._score_threshold_spin.value())
-        ai_provider.save_resume_output_dir(self._output_dir_edit.text())
+        app_settings.save_resume_output_dir(self._output_dir_edit.text())
         _set_status(self._resume_template_status, "ok")
         self._resume_template_status.setText("✓  Saved")
         QTimer.singleShot(3000, lambda: self._resume_template_status.setText(""))

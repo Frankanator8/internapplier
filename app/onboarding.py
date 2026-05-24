@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit, QStackedWidget, QVBoxLayout, QWidget,
 )
 
-from api import ai_provider, linkedin_import
+from api import ai_provider, app_settings, linkedin_import
 from api.constants import ONBOARDED_FILE
 
 from .sections.base import _label, _primary_btn, _secondary_btn
@@ -243,7 +243,7 @@ class OnboardingDialog(QDialog):
         self._writing_sample_edit.setPlaceholderText(
             "Paste a sample of your own writing here…"
         )
-        self._writing_sample_edit.setPlainText(ai_provider.get_writing_sample())
+        self._writing_sample_edit.setPlainText(app_settings.get_writing_sample())
         v.addWidget(self._writing_sample_edit, stretch=1)
         return w
 
@@ -423,7 +423,7 @@ class OnboardingDialog(QDialog):
         elif idx == 3:  # resume template
             ai_provider.save_resume_template(self._resume_template_edit.toPlainText())
         elif idx == 4:  # writing sample
-            ai_provider.save_writing_sample(self._writing_sample_edit.toPlainText())
+            app_settings.save_writing_sample(self._writing_sample_edit.toPlainText())
         # idx 5 (linkedin) writes on its own button click.
 
     def _populate_summary(self) -> None:
@@ -434,7 +434,7 @@ class OnboardingDialog(QDialog):
             f"✓  Models — basic: {cfg.get('basic')}, fast: {cfg.get('fast')}, powerful: {cfg.get('powerful')}"
         )
         lines.append("✓  Resume template saved" if ai_provider.get_resume_template().strip() else "•  Resume template skipped")
-        lines.append("✓  Writing sample saved" if ai_provider.get_writing_sample().strip() else "•  Writing sample skipped")
+        lines.append("✓  Writing sample saved" if app_settings.get_writing_sample().strip() else "•  Writing sample skipped")
         lines.append(f"✓  LinkedIn imported: {self._linkedin_status}" if self._linkedin_status else "•  LinkedIn import skipped")
         self._done_summary.setText("\n".join(lines))
 

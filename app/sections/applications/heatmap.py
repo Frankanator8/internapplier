@@ -7,7 +7,7 @@ from PyQt6.QtCore import QRect, Qt
 from PyQt6.QtGui import QColor, QPainter
 from PyQt6.QtWidgets import QWidget
 
-from api import ai_provider
+from api import app_settings
 
 
 _COLUMNS = 7
@@ -34,8 +34,8 @@ class ApplicationsHeatmap(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._counts: dict[date, int] = {}
-        self._day_edges = ai_provider.get_heatmap_day_thresholds()
-        self._week_edges = ai_provider.get_heatmap_week_thresholds()
+        self._day_edges = app_settings.get_heatmap_day_thresholds()
+        self._week_edges = app_settings.get_heatmap_week_thresholds()
         width = _COLUMNS * _CELL + (_COLUMNS - 1) * _GAP
         height = _ROWS * _CELL + (_ROWS - 1) * _GAP
         self.setFixedSize(width, height)
@@ -43,8 +43,8 @@ class ApplicationsHeatmap(QWidget):
         self.setToolTip("Applications — last 7 weeks (top) and last 7 days (bottom)")
 
     def reload_thresholds(self) -> None:
-        self._day_edges = ai_provider.get_heatmap_day_thresholds()
-        self._week_edges = ai_provider.get_heatmap_week_thresholds()
+        self._day_edges = app_settings.get_heatmap_day_thresholds()
+        self._week_edges = app_settings.get_heatmap_week_thresholds()
         self.update()
 
     def set_applications(self, apps: list[dict]) -> None:

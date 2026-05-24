@@ -48,13 +48,15 @@ class TestUsageSince:
             "2025-01-01": {"fast": {"input": 1, "output": 2}},
             "2026-05-20": {"fast": {"input": 10, "output": 20}},
         }
-        token_usage._write(data)
+        from api.json_store import save_json
+        save_json(token_usage.TOKEN_USAGE_FILE, data)
         totals = token_usage.usage_since(datetime.date(2026, 1, 1))
         assert totals["fast"] == {"input": 10, "output": 20}
         assert totals["__total__"] == {"input": 10, "output": 20}
 
     def test_skips_invalid_date_keys(self):
-        token_usage._write({
+        from api.json_store import save_json
+        save_json(token_usage.TOKEN_USAGE_FILE, {
             "not-a-date": {"fast": {"input": 5, "output": 5}},
             "2026-05-20": {"basic": {"input": 1, "output": 1}},
         })

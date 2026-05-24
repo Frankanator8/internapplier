@@ -48,7 +48,7 @@ class TestResearchCompany:
             "recent_projects": ["proj-a"],
             "summary": "Acme is great",
         }))
-        mocker.patch("api.ai_provider.provider.requests.post",
+        mocker.patch("api.ai_provider.http_client.requests.post",
                      return_value=_resp(body))
         out = provider.research_company("Acme", "scraped content")
         assert out == {
@@ -59,7 +59,7 @@ class TestResearchCompany:
 
     def test_strips_markdown_fence(self, provider, mocker):
         wrapped = '```json\n{"core_values": [], "recent_projects": [], "summary": "ok"}\n```'
-        mocker.patch("api.ai_provider.provider.requests.post",
+        mocker.patch("api.ai_provider.http_client.requests.post",
                      return_value=_resp(_success_body(wrapped)))
         out = provider.research_company("Acme", "data")
         assert out["summary"] == "ok"
@@ -70,7 +70,7 @@ class TestResearchCompany:
             "recent_projects": [123, "ok", ""],
             "summary": 42,
         }))
-        mocker.patch("api.ai_provider.provider.requests.post",
+        mocker.patch("api.ai_provider.http_client.requests.post",
                      return_value=_resp(body))
         out = provider.research_company("Acme", "data")
         assert out["core_values"] == []
@@ -79,7 +79,7 @@ class TestResearchCompany:
 
     def test_malformed_json_raises_value_error(self, provider, mocker):
         body = _success_body("not json at all")
-        mocker.patch("api.ai_provider.provider.requests.post",
+        mocker.patch("api.ai_provider.http_client.requests.post",
                      return_value=_resp(body))
         with pytest.raises(ValueError, match="unexpected format"):
             provider.research_company("Acme", "data")
@@ -87,7 +87,7 @@ class TestResearchCompany:
     def test_missing_api_key_raises_before_http(self, mocker, monkeypatch):
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
         p = OpenRouterProvider()
-        post = mocker.patch("api.ai_provider.provider.requests.post")
+        post = mocker.patch("api.ai_provider.http_client.requests.post")
         with pytest.raises(ValueError, match="No API key"):
             p.research_company("Acme", "data")
         post.assert_not_called()
@@ -97,8 +97,8 @@ class TestResearchCompany:
             json.dumps({"core_values": [], "recent_projects": [], "summary": "ok"}),
             usage={"prompt_tokens": 10, "completion_tokens": 20},
         )
-        rec = mocker.patch("api.ai_provider.provider.record_usage")
-        mocker.patch("api.ai_provider.provider.requests.post",
+        rec = mocker.patch("api.ai_provider.http_client.record_usage")
+        mocker.patch("api.ai_provider.http_client.requests.post",
                      return_value=_resp(body))
         provider.research_company("Acme", "data")
         rec.assert_called_once_with("fast", 10, 20)

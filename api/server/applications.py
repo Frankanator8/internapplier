@@ -1,32 +1,21 @@
 from __future__ import annotations
 
-import logging
-import threading
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from .. import data_store
-from ..ai_provider.errors import friendly_error_message
-from ..resume_pipeline import (
-    ResumePipelineError,
-    generate_resume_for_application,
-)
+from .. import data_store, resume_job_tracker
+from ..data_store import ApplicationNotFound
+from ..resume_job_tracker import JobAlreadyRunning
 from .schemas import ApplicationEntry, AttachLinkBody, BulkApplicationsBody
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
 class SetResumePdfBody(BaseModel):
     pdf_path: str
-
-
-_resume_jobs: dict[str, dict] = {}
-_resume_jobs_lock = threading.Lock()
 
 
 @router.get("/applications")
@@ -76,10 +65,7 @@ def attach_link(uuid: str, body: AttachLinkBody) -> dict:
     url = (body.url or "").strip()
     if not url:
         raise HTTPException(status_code=400, detail="url required")
-    try:
-        links = data_store.attach_application_link(uuid, url)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="application not found")
+    links = data_store.attach_application_link(uuid, url)
     return {"ok": True, "links": links}
 
 
@@ -97,57 +83,32 @@ def _serve_resume(entry: dict):
 def get_application_resume_by_uuid(uuid: str):
     found = data_store.find_application_by_uuid(uuid)
     if found is None:
-        raise HTTPException(status_code=404, detail="application not found")
+        raise ApplicationNotFound(uuid)
     _, entry = found
     return _serve_resume(entry)
-
-
-def _run_resume_job(uuid: str) -> None:
-    try:
-        payload = generate_resume_for_application(uuid)
-    except ResumePipelineError as exc:
-        with _resume_jobs_lock:
-            _resume_jobs[uuid] = {"status": "error", "error": str(exc)}
-        return
-    except Exception as exc:
-        logger.exception("resume generation failed for %s", uuid)
-        with _resume_jobs_lock:
-            _resume_jobs[uuid] = {"status": "error", "error": friendly_error_message(exc)}
-        return
-    with _resume_jobs_lock:
-        _resume_jobs[uuid] = {
-            "status": "done",
-            "resume_pdf": payload.get("pdf", ""),
-        }
 
 
 @router.post("/applications/by-uuid/{uuid}/resume/generate")
 def start_resume_generation(uuid: str) -> dict:
     found = data_store.find_application_by_uuid(uuid)
     if found is None:
-        raise HTTPException(status_code=404, detail="application not found")
+        raise ApplicationNotFound(uuid)
     _, app = found
     if not (app.get("description") or "").strip():
         raise HTTPException(
             status_code=400,
             detail="application has no job description — add one before generating a resume",
         )
-    with _resume_jobs_lock:
-        existing = _resume_jobs.get(uuid)
-        if existing and existing.get("status") == "running":
-            raise HTTPException(status_code=409, detail="resume generation already running")
-        _resume_jobs[uuid] = {"status": "running"}
-    threading.Thread(target=_run_resume_job, args=(uuid,), daemon=True).start()
+    try:
+        resume_job_tracker.start(uuid)
+    except JobAlreadyRunning:
+        raise HTTPException(status_code=409, detail="resume generation already running")
     return {"ok": True, "status": "running"}
 
 
 @router.get("/applications/by-uuid/{uuid}/resume/generate/status")
 def get_resume_generation_status(uuid: str) -> dict:
-    with _resume_jobs_lock:
-        entry = _resume_jobs.get(uuid)
-        if entry is None:
-            return {"status": "idle"}
-        return dict(entry)
+    return resume_job_tracker.get(uuid)
 
 
 @router.post("/applications/by-uuid/{uuid}/resume")
@@ -155,8 +116,5 @@ def set_application_resume(uuid: str, body: SetResumePdfBody) -> dict:
     pdf_path = (body.pdf_path or "").strip()
     if not pdf_path:
         raise HTTPException(status_code=400, detail="pdf_path required")
-    try:
-        entry = data_store.set_application_resume_pdf(uuid, pdf_path)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="application not found")
+    entry = data_store.set_application_resume_pdf(uuid, pdf_path)
     return {"ok": True, "uuid": uuid, "resume_pdf": entry.get("resume_pdf", "")}

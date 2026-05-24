@@ -29,49 +29,6 @@ class TestLoadSave:
         assert d2["experience"] == []
 
 
-class TestMigrateApplicationLinks:
-    def test_converts_legacy_link_to_links(self):
-        data = {"applications": [{"company": "X", "link": "http://a"}]}
-        assert data_store._migrate_application_links(data) is True
-        assert data["applications"][0]["links"] == ["http://a"]
-        assert "link" not in data["applications"][0]
-
-    def test_empty_link_becomes_empty_list(self):
-        data = {"applications": [{"company": "X", "link": ""}]}
-        data_store._migrate_application_links(data)
-        assert data["applications"][0]["links"] == []
-
-    def test_skips_non_list(self):
-        assert data_store._migrate_application_links({"applications": "bad"}) is False
-
-    def test_idempotent_when_links_present(self):
-        data = {"applications": [{"links": ["http://a"]}]}
-        # Already migrated; no change
-        assert data_store._migrate_application_links(data) is False
-
-
-class TestMigrateResearchCache:
-    def test_converts_legacy_research_to_cache(self):
-        data = {
-            "research": {
-                "company_name": "Acme",
-                "url": "https://acme",
-                "result": {"summary": "ok"},
-            },
-        }
-        assert data_store._migrate_research_cache(data) is True
-        assert "Acme" in data["research_cache"]
-        assert "research" not in data
-
-    def test_drops_legacy_research_when_cache_already_has_data(self):
-        data = {
-            "research_cache": {"Acme": {"result": {"summary": "ok"}}},
-            "research": {"company_name": "x", "result": {}},
-        }
-        assert data_store._migrate_research_cache(data) is True
-        assert "research" not in data
-
-
 class TestInterviewTemplate:
     def test_returns_defaults_when_no_file(self):
         items = data_store.load_interview_template()

@@ -8,6 +8,7 @@ import pathlib
 import pytest
 
 from api.generate_resume import generator as gen_mod
+from api.generate_resume import persist as persist_mod
 from api.generate_resume.generator import (
     ResumeGenerator,
     _apply_label_drops,
@@ -166,7 +167,7 @@ class TestPersistPdf:
         out_dir.mkdir()
         existing = out_dir / "Acme.pdf"
         existing.write_bytes(b"prev")
-        monkeypatch.setattr(gen_mod, "get_resume_output_dir", lambda: out_dir)
+        monkeypatch.setattr(persist_mod, "get_resume_output_dir", lambda: out_dir)
         written, desired, collided = _persist_pdf(src, None, company="Acme")
         assert collided is True
         assert desired == existing
@@ -213,7 +214,7 @@ class TestResumeGeneratorIntegration:
         mocker.patch.object(gen_mod, "get_max_generation_attempts", return_value=3)
         mocker.patch.object(gen_mod, "get_resume_score_threshold", return_value=9.0)
         mocker.patch("api.ai_provider.get_resume_template", return_value="")
-        mocker.patch.object(gen_mod, "get_resume_output_dir",
+        mocker.patch.object(persist_mod, "get_resume_output_dir",
                             return_value=tmp_path / "outdir")
 
         gen = ResumeGenerator(sample_profile, sample_jd, {}, provider=FakeProv())
@@ -265,7 +266,7 @@ class TestResumeGeneratorIntegration:
         mocker.patch.object(gen_mod, "get_max_generation_attempts", return_value=2)
         mocker.patch.object(gen_mod, "get_resume_score_threshold", return_value=9.0)
         mocker.patch("api.ai_provider.get_resume_template", return_value="")
-        mocker.patch.object(gen_mod, "get_resume_output_dir",
+        mocker.patch.object(persist_mod, "get_resume_output_dir",
                             return_value=tmp_path / "outdir")
 
         gen = ResumeGenerator(sample_profile, sample_jd, {}, provider=FakeProv())
@@ -309,7 +310,7 @@ class TestResumeGeneratorIntegration:
         mocker.patch.object(gen_mod, "get_max_generation_attempts", return_value=2)
         mocker.patch.object(gen_mod, "get_resume_score_threshold", return_value=9.0)
         mocker.patch("api.ai_provider.get_resume_template", return_value="")
-        mocker.patch.object(gen_mod, "get_resume_output_dir",
+        mocker.patch.object(persist_mod, "get_resume_output_dir",
                             return_value=tmp_path / "outdir")
 
         gen = ResumeGenerator(sample_profile, sample_jd, {}, provider=FakeProv())
@@ -350,7 +351,7 @@ class TestResumeGeneratorIntegration:
         mocker.patch.object(gen_mod, "get_max_generation_attempts", return_value=1)
         mocker.patch.object(gen_mod, "get_resume_score_threshold", return_value=9.0)
         mocker.patch("api.ai_provider.get_resume_template", return_value="")
-        mocker.patch.object(gen_mod, "get_resume_output_dir",
+        mocker.patch.object(persist_mod, "get_resume_output_dir",
                             return_value=tmp_path / "outdir")
 
         gen = ResumeGenerator(sample_profile, sample_jd, {}, provider=FakeProv())

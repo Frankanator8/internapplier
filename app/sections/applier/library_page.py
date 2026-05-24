@@ -86,7 +86,7 @@ class LibraryMixin:
     def _refresh_library(self):
         if not hasattr(self, "_library_list"):
             return
-        from api.ai_provider import get_resume_output_dir
+        from api.app_settings import get_resume_output_dir
 
         prev_path = self._current_library_path()
         out_dir = get_resume_output_dir()
@@ -159,7 +159,7 @@ class LibraryMixin:
     def _reveal_library_item(self):
         path = self._current_library_path()
         if not path:
-            from api.ai_provider import get_resume_output_dir
+            from api.app_settings import get_resume_output_dir
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(get_resume_output_dir())))
             return
         import pathlib

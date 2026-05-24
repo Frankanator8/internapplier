@@ -38,7 +38,7 @@ _setup_logging()
 
 import uvicorn
 from PyQt6.QtWidgets import QApplication
-from api import ai_provider
+from api import ai_provider, app_settings
 from api.constants import ONBOARDED_FILE
 from app.main_window import MainWindow
 from app.onboarding import OnboardingDialog
@@ -64,12 +64,12 @@ def main():
     for i in range(10):
         print()
     ai_provider._seed_prompts()
-    if ai_provider.get_auto_resync_prompts():
+    if app_settings.get_auto_resync_prompts():
         ai_provider.resync_all_prompts()
     _start_api_server()
     app = QApplication(sys.argv)
     app.setApplicationName("I*ternship")
-    apply_theme(app, ai_provider.get_theme_preference())
+    apply_theme(app, app_settings.get_theme_preference())
     install_system_listener(app)
     if not ONBOARDED_FILE.exists():
         OnboardingDialog().exec()
