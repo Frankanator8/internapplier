@@ -8,12 +8,6 @@ from api import token_usage
 pytestmark = pytest.mark.usefixtures("isolated_app_dir")
 
 
-# NOTE: api.generate_resume.step_timing monkey-patches record_usage at
-# import time. The patched version still calls the original, so behavior
-# is preserved — but we test the raw write logic via _write/_read where
-# appropriate.
-
-
 class TestRecordUsage:
     def test_records_for_known_tier(self):
         token_usage.record_usage("fast", 10, 20)

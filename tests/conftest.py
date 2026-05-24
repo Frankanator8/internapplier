@@ -13,10 +13,6 @@ The patterns here are:
   context manager whose ``iter_lines`` yields scripted Server-Sent Events,
   and capture the JSON body submitted.
 
-Importing this module pulls in ``api`` modules, which in turn may import
-``api.generate_resume.step_timing`` which writes to a file in CWD on
-import. The autouse fixture below redirects that timing file at session
-start so we never pollute the project root.
 """
 from __future__ import annotations
 
@@ -35,16 +31,6 @@ import pytest
 _REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
-
-
-@pytest.fixture(autouse=True, scope="session")
-def _redirect_step_timing_file(tmp_path_factory):
-    """Redirect step_timing._TIMING_FILE before any test touches it."""
-    from api.generate_resume import step_timing
-
-    tmp = tmp_path_factory.mktemp("step_timing")
-    step_timing._TIMING_FILE = tmp / "step_timings.txt"
-    yield
 
 
 # ---- isolated app dir ---------------------------------------------------

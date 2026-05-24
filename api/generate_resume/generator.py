@@ -160,26 +160,25 @@ class ResumeGenerator:
             grade: dict | None = None
             if progress_cb:
                 progress_cb(f"Attempt {attempt}: grading…")
-            with time_step("grade", attempt):
-                for grade_try in (1, 2):
-                    try:
-                        grade = self._grade_resume_text(
-                            resume_json, fill, page_cap, today, profile_for_attempt, stream_cb
-                        )
-                        break
-                    except ValueError:
-                        logger.warning(
-                            "generate_latex — grade parse failed on attempt %d (try %d/2)",
-                            attempt, grade_try,
-                        )
-                        if grade_try == 2:
-                            grade = None
-                    except Exception:
-                        logger.exception(
-                            "generate_latex — grade_resume failed on attempt %d", attempt
-                        )
+            for grade_try in (1, 2):
+                try:
+                    grade = self._grade_resume_text(
+                        resume_json, fill, page_cap, today, profile_for_attempt, stream_cb
+                    )
+                    break
+                except ValueError:
+                    logger.warning(
+                        "generate_latex — grade parse failed on attempt %d (try %d/2)",
+                        attempt, grade_try,
+                    )
+                    if grade_try == 2:
                         grade = None
-                        break
+                except Exception:
+                    logger.exception(
+                        "generate_latex — grade_resume failed on attempt %d", attempt
+                    )
+                    grade = None
+                    break
             if progress_cb and grade is not None:
                 progress_cb(
                     f"Attempt {attempt}: graded {grade['score']:.2f}/10"

@@ -10,4 +10,3 @@ Pipeline that turns a job posting + the user's base resume into a tailored resum
 | `render.py` | Renders the compiled resume to its output format. |
 | `persist.py` | Saves generated resumes into the on-disk library. |
 | `json_recovery.py` | Salvages malformed JSON from LLM responses. |
-| `step_timing.py` | Per-step timing instrumentation (writes to `step_timings.txt`). |
