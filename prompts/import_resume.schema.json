@@ -1,0 +1,139 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "import_resume_output",
+  "description": "Structured content transcribed from the plain text of a candidate's existing resume. Every value is copied verbatim from the source; use an empty string or empty array when the resume does not state something.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["general_info", "experience", "projects", "education", "awards", "skills", "hobbies"],
+  "properties": {
+    "general_info": {
+      "type": "object",
+      "description": "Contact and identity details literally printed on the resume, usually in the header.",
+      "additionalProperties": false,
+      "required": [
+        "first_name", "last_name", "preferred_name", "pronouns", "email", "phone",
+        "address1", "address2", "city", "state", "postal_code", "country",
+        "linkedin", "website", "github"
+      ],
+      "properties": {
+        "first_name": { "type": "string" },
+        "last_name": { "type": "string" },
+        "preferred_name": { "type": "string", "description": "Only when the resume shows a nickname, e.g. 'Robert \"Bob\" Smith'." },
+        "pronouns": { "type": "string", "description": "Only when printed, e.g. 'she/her'." },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "address1": { "type": "string", "description": "Street address, only when printed." },
+        "address2": { "type": "string", "description": "Apartment or unit, only when printed." },
+        "city": { "type": "string" },
+        "state": { "type": "string", "description": "State or province." },
+        "postal_code": { "type": "string" },
+        "country": { "type": "string" },
+        "linkedin": { "type": "string", "description": "LinkedIn URL or handle exactly as printed." },
+        "website": { "type": "string", "description": "Personal site or portfolio URL. Not LinkedIn, not GitHub." },
+        "github": { "type": "string", "description": "GitHub URL or handle exactly as printed." }
+      }
+    },
+    "experience": {
+      "type": "array",
+      "description": "Jobs, internships and research positions, plus clubs, volunteering and leadership roles (which take category 'other').",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["company", "title", "start", "end", "bullets", "skills", "category"],
+        "properties": {
+          "company": { "type": "string", "description": "Employer or organization name." },
+          "title": { "type": "string", "description": "Role held, e.g. 'Software Engineer Intern'." },
+          "start": { "type": "string", "description": "Start date, e.g. 'Jun 2024'." },
+          "end": { "type": "string", "description": "End date, e.g. 'Aug 2024', or 'Present' when ongoing." },
+          "bullets": {
+            "type": "array",
+            "description": "One entry per bullet in the source, verbatim, with the leading glyph or dash stripped.",
+            "items": { "type": "string" }
+          },
+          "skills": {
+            "type": "array",
+            "description": "Technologies named inside this entry. Empty array when none are named.",
+            "items": { "type": "string" }
+          },
+          "category": {
+            "type": "string",
+            "description": "'relevant' for professional, technical or research work; 'other' for leadership, clubs, societies and volunteering.",
+            "enum": ["relevant", "other"]
+          }
+        }
+      }
+    },
+    "projects": {
+      "type": "array",
+      "description": "Personal, side and course projects.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "url", "start", "end", "bullets", "skills"],
+        "properties": {
+          "name": { "type": "string" },
+          "url": { "type": "string", "description": "Link printed with the project. Empty string when none." },
+          "start": { "type": "string" },
+          "end": { "type": "string" },
+          "bullets": { "type": "array", "items": { "type": "string" } },
+          "skills": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "education": {
+      "type": "array",
+      "description": "Schools and degrees.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["school", "degree", "start", "end", "gpa", "courses"],
+        "properties": {
+          "school": { "type": "string" },
+          "degree": { "type": "string", "description": "e.g. 'B.S. Computer Science'." },
+          "start": { "type": "string" },
+          "end": { "type": "string", "description": "Graduation date; may be in the future." },
+          "gpa": { "type": "string", "description": "Exactly as printed, e.g. '3.9/4.0'. Empty string when absent." },
+          "courses": {
+            "type": "array",
+            "description": "Relevant coursework listed under this school.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "grade"],
+              "properties": {
+                "name": { "type": "string", "description": "Course name." },
+                "grade": { "type": "string", "description": "Only when printed next to the course. Usually an empty string." }
+              }
+            }
+          }
+        }
+      }
+    },
+    "awards": {
+      "type": "array",
+      "description": "Honors, scholarships, competition placings and certifications.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "issuer", "date", "bullets", "skills"],
+        "properties": {
+          "title": { "type": "string" },
+          "issuer": { "type": "string", "description": "Awarding organization. Empty string when not stated." },
+          "date": { "type": "string" },
+          "bullets": { "type": "array", "items": { "type": "string" } },
+          "skills": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "skills": {
+      "type": "array",
+      "description": "Flat list of individual skill names from the skills section. Never grouped and never a category label: split 'Languages: Python, Go' into 'Python' and 'Go'.",
+      "items": { "type": "string" }
+    },
+    "hobbies": {
+      "type": "array",
+      "description": "Interests or hobbies, one per entry.",
+      "items": { "type": "string" }
+    }
+  }
+}

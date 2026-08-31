@@ -9,7 +9,17 @@ def shutdown_threads(threads: list[QThread], timeout_ms: int = 1500) -> None:
     Called on app close to prevent crashes from QThreads still running while the
     Qt event loop is torn down.
     """
-    live = [t for t in threads if t is not None and t.isRunning()]
+    live = []
+    for t in threads:
+        if t is None:
+            continue
+        try:
+            if t.isRunning():
+                live.append(t)
+        except RuntimeError:
+            # Already deleteLater'd — nothing to wait on, and raising here
+            # would skip shutdown of the threads after it in the list.
+            continue
     for t in live:
         t.quit()
     for t in live:

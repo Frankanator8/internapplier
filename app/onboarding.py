@@ -4,16 +4,19 @@ import logging
 import subprocess
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QObject, QThread
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
     QPlainTextEdit, QStackedWidget, QVBoxLayout, QWidget,
 )
 
-from api import ai_provider, app_settings, linkedin_import
+from api import ai_provider, app_settings, linkedin_import, resume_pdf_import
 from api.constants import ONBOARDED_FILE
 
+from .import_review_dialog import ImportReviewDialog
+from .resume_pdf_worker import ResumePdfImportWorker
+from .sections._thread_cleanup import shutdown_threads
 from .sections.base import _label, _primary_btn, _secondary_btn
 
 logger = logging.getLogger(__name__)
@@ -30,7 +33,9 @@ class OnboardingDialog(QDialog):
         self.resize(720, 600)
 
         self._finished_cleanly = False
-        self._linkedin_status = ""
+        self._import_status = ""
+        self._import_threads: list[QThread] = []
+        self._import_workers: list[QObject] = []
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -54,7 +59,7 @@ class OnboardingDialog(QDialog):
         self._stack.addWidget(self._build_models())
         self._stack.addWidget(self._build_resume_template())
         self._stack.addWidget(self._build_writing_sample())
-        self._stack.addWidget(self._build_linkedin())
+        self._stack.addWidget(self._build_import())
         self._stack.addWidget(self._build_extension())
         self._stack.addWidget(self._build_done())
 
@@ -76,7 +81,25 @@ class OnboardingDialog(QDialog):
     def closeEvent(self, event):
         # Closing via the X button does NOT mark onboarding complete.
         # Onboarding will reappear on next launch until the user clicks Finish.
+        self._shutdown_import_threads()
         super().closeEvent(event)
+
+    def reject(self):
+        self._shutdown_import_threads()
+        super().reject()
+
+    def _shutdown_import_threads(self) -> None:
+        """Join any in-flight import thread before this dialog goes away.
+
+        main.py calls ``OnboardingDialog().exec()`` without keeping a
+        reference, so the dialog is collected the moment exec() returns — and
+        a QThread parented to a destroyed widget crashes. accept() does not
+        deliver a QCloseEvent, so every exit path has to call this.
+        """
+        try:
+            shutdown_threads(self._import_threads)
+        except Exception:
+            logger.exception("Failed to shut down import threads")
 
     # ── Steps ──────────────────────────────────────────────────────────
 
@@ -96,7 +119,7 @@ class OnboardingDialog(QDialog):
             "  • Which AI models to use\n"
             "  • A resume template (LaTeX)\n"
             "  • A writing sample (so generated answers sound like you)\n"
-            "  • An optional LinkedIn data import\n"
+            "  • An optional profile import (resume PDF or LinkedIn export)\n"
             "  • The Firefox autofill extension (optional)\n\n"
             "All of this can be edited later in Settings."
         )
@@ -247,20 +270,23 @@ class OnboardingDialog(QDialog):
         v.addWidget(self._writing_sample_edit, stretch=1)
         return w
 
-    def _build_linkedin(self) -> QWidget:
+    def _build_import(self) -> QWidget:
         w = QWidget()
         v = QVBoxLayout(w)
         v.setSpacing(12)
 
-        title = QLabel("Import from LinkedIn (optional)")
+        title = QLabel("Import your profile (optional)")
         title.setObjectName("card-title")
         v.addWidget(title)
 
         hint = QLabel(
-            "Optional. Pre-fills your profile from a LinkedIn data export. "
-            "Get the ZIP at LinkedIn → Settings → Data Privacy → "
-            "Get a copy of your data → request the Profile, Positions, "
-            "Projects, Education, Skills, and Honors files.\n\n"
+            "Two ways to pre-fill your profile — use either, both, or neither.\n\n"
+            "Resume PDF: pick an existing resume and the AI reads it into "
+            "your profile. You get to review everything it found before it's "
+            "saved. Needs the API key from step 2.\n\n"
+            "LinkedIn export: get the ZIP at LinkedIn → Settings → Data "
+            "Privacy → Get a copy of your data → request the Profile, "
+            "Positions, Projects, Education, Skills, and Honors files.\n\n"
             "You can also skip this and enter everything by hand in the "
             "Profile tab later."
         )
@@ -270,16 +296,19 @@ class OnboardingDialog(QDialog):
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(12)
-        choose_btn = _primary_btn("Choose ZIP…", width=140)
-        choose_btn.clicked.connect(self._do_linkedin_import)
-        btn_row.addWidget(choose_btn)
+        self._import_pdf_btn = _primary_btn("Choose resume PDF…", width=180)
+        self._import_pdf_btn.clicked.connect(self._do_resume_pdf_import)
+        btn_row.addWidget(self._import_pdf_btn)
+        self._import_zip_btn = _secondary_btn("Choose ZIP…", width=140)
+        self._import_zip_btn.clicked.connect(self._do_linkedin_import)
+        btn_row.addWidget(self._import_zip_btn)
         btn_row.addStretch()
         v.addLayout(btn_row)
 
-        self._linkedin_status_label = QLabel("")
-        self._linkedin_status_label.setObjectName("hint")
-        self._linkedin_status_label.setWordWrap(True)
-        v.addWidget(self._linkedin_status_label)
+        self._import_status_label = QLabel("")
+        self._import_status_label.setObjectName("hint")
+        self._import_status_label.setWordWrap(True)
+        v.addWidget(self._import_status_label)
 
         v.addStretch()
         return w
@@ -388,15 +417,106 @@ class OnboardingDialog(QDialog):
             return
 
         try:
-            linkedin_import.apply_to_store(data, mode="replace")
+            # Append, not replace: the user may have already imported a
+            # resume PDF on this same step.
+            linkedin_import.apply_to_store(data, mode="append")
         except Exception as e:
             logger.exception("LinkedIn import to store failed")
             QMessageBox.critical(self, "Import failed", f"Couldn't write profile data:\n\n{e}")
             return
 
         summary = linkedin_import.summarize(data)
-        self._linkedin_status = summary
-        self._linkedin_status_label.setText(f"✓  Imported: {summary}")
+        self._import_status = summary
+        self._import_status_label.setText(f"✓  Imported: {summary}")
+
+    def _do_resume_pdf_import(self) -> None:
+        if self._import_threads:
+            return
+        if not (ai_provider.get_openrouter_api_key() or "").strip():
+            QMessageBox.warning(
+                self, "API key required",
+                "Reading a resume PDF uses the AI.\n\n"
+                "Go back to step 2 and add your OpenRouter API key first.",
+            )
+            return
+
+        pdf_path, _ = QFileDialog.getOpenFileName(
+            self, "Select your resume PDF", "", "PDF files (*.pdf)"
+        )
+        if not pdf_path:
+            return
+
+        self._set_import_busy(True)
+        self._import_status_label.setText("Reading PDF…")
+
+        worker = ResumePdfImportWorker(pdf_path)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+
+        def on_finished(data: dict):
+            # Quit first — the review dialog runs a nested event loop.
+            thread.quit()
+            self._set_import_busy(False)
+            self._apply_pdf_import(data)
+
+        def on_error(msg: str):
+            thread.quit()
+            self._set_import_busy(False)
+            self._import_status_label.setText("")
+            QMessageBox.critical(self, "Import failed", msg)
+
+        def on_thread_finished():
+            if worker in self._import_workers:
+                self._import_workers.remove(worker)
+            if thread in self._import_threads:
+                self._import_threads.remove(thread)
+
+        worker.progress.connect(self._import_status_label.setText)
+        worker.finished.connect(on_finished)
+        worker.error.connect(on_error)
+        thread.started.connect(worker.run)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(on_thread_finished)
+        self._import_threads.append(thread)
+        self._import_workers.append(worker)
+        thread.start()
+
+    def _set_import_busy(self, busy: bool) -> None:
+        self._import_pdf_btn.setEnabled(not busy)
+        self._import_zip_btn.setEnabled(not busy)
+        self._next_btn.setEnabled(not busy)
+
+    def _apply_pdf_import(self, data: dict) -> None:
+        if resume_pdf_import.is_empty(data):
+            self._import_status_label.setText("")
+            QMessageBox.warning(
+                self, "Nothing to import",
+                "The PDF was read successfully but the AI found no resume "
+                "content in it.",
+            )
+            return
+
+        dlg = ImportReviewDialog(data, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            self._import_status_label.setText("")
+            return
+
+        accepted = dlg.accepted_data()
+        if resume_pdf_import.is_empty(accepted):
+            self._import_status_label.setText("")
+            return
+
+        try:
+            resume_pdf_import.apply_to_store(accepted, mode="append")
+        except Exception as e:
+            logger.exception("Resume PDF import to store failed")
+            self._import_status_label.setText("")
+            QMessageBox.critical(self, "Import failed", f"Couldn't write profile data:\n\n{e}")
+            return
+
+        summary = resume_pdf_import.summarize(accepted)
+        self._import_status = summary
+        self._import_status_label.setText(f"✓  Imported: {summary}")
 
     def _reveal_extension_folder(self) -> None:
         path = _EXTENSION_DIR
@@ -424,7 +544,7 @@ class OnboardingDialog(QDialog):
             ai_provider.save_resume_template(self._resume_template_edit.toPlainText())
         elif idx == 4:  # writing sample
             app_settings.save_writing_sample(self._writing_sample_edit.toPlainText())
-        # idx 5 (linkedin) writes on its own button click.
+        # idx 5 (profile import) writes on its own button click.
 
     def _populate_summary(self) -> None:
         lines = []
@@ -435,7 +555,7 @@ class OnboardingDialog(QDialog):
         )
         lines.append("✓  Resume template saved" if ai_provider.get_resume_template().strip() else "•  Resume template skipped")
         lines.append("✓  Writing sample saved" if app_settings.get_writing_sample().strip() else "•  Writing sample skipped")
-        lines.append(f"✓  LinkedIn imported: {self._linkedin_status}" if self._linkedin_status else "•  LinkedIn import skipped")
+        lines.append(f"✓  Profile imported: {self._import_status}" if self._import_status else "•  Profile import skipped")
         self._done_summary.setText("\n".join(lines))
 
     def _go_next(self) -> None:
@@ -449,6 +569,7 @@ class OnboardingDialog(QDialog):
             except OSError as e:
                 logger.warning("Could not write onboarded marker: %s", e)
             self._finished_cleanly = True
+            self._shutdown_import_threads()
             self.accept()
             return
         self._stack.setCurrentIndex(idx + 1)

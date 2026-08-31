@@ -441,6 +441,51 @@ class OpenRouterProvider:
         )
         return result
 
+    def extract_resume(self, resume_text: str) -> dict:
+        """Transcribe the plain text of a resume PDF into structured sections.
+
+        Returns the model's JSON as-is. Coercion into the profile-store shape
+        is the caller's job — see :func:`api.resume_pdf_import.normalize_extraction`.
+        """
+        # Local import: json_recovery imports from this package, so a
+        # module-level import here would be a circular import.
+        from ..generate_resume.json_recovery import parse_lenient_json
+
+        logger.info("extract_resume — chars=%d", len(resume_text))
+        user_message = (
+            "<resume_text>\n"
+            f"{resume_text}\n"
+            "</resume_text>\n\n"
+            "Transcribe the resume above into the JSON object described in the "
+            "system prompt. Return ONLY the JSON object, no markdown."
+        )
+        raw = self._client.post_json(
+            messages=[
+                {"role": "system", "content": load_prompt("import_resume.txt")},
+                {"role": "user", "content": user_message},
+            ],
+            # Transcription against a strict schema — no tool calling, no
+            # judgement. The fast/JSON tier is the right size for it.
+            tier="fast",
+            log_label="extract_resume",
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "import_resume_output",
+                    "strict": True,
+                    "schema": load_schema("import_resume.schema.json"),
+                },
+            },
+            # Output runs to a few thousand tokens on a two-page resume.
+            timeout=(10.0, 120.0),
+        )
+
+        data = parse_lenient_json(raw, log_label="extract_resume")
+        if not isinstance(data, dict):
+            logger.error("extract_resume — expected an object, got %s", type(data).__name__)
+            raise ValueError("AI returned unexpected format — please try again.")
+        return data
+
 
 def get_provider() -> OpenRouterProvider:
     return OpenRouterProvider()

@@ -9,7 +9,9 @@ Mirrors [`api/`](../../api/). Top-level test modules cover the flat `api/*.py` f
 | `test_interview_links.py` | `api/interview_links.py` |
 | `test_interview_parsing.py` | `api/interview_parsing.py` |
 | `test_linkedin_import.py` | `api/linkedin_import.py` |
+| `test_profile_merge.py` | `api/profile_merge.py` |
 | `test_research_cache.py` | `api/research_cache.py` |
+| `test_resume_pdf_import.py` | `api/resume_pdf_import.py` |
 | `test_token_usage.py` | `api/token_usage.py` |
 | `test_web_scraper.py` | `api/web_scraper.py` |
 | `ai_provider/` | `api/ai_provider/` |

@@ -90,7 +90,10 @@ class AiModelMixin:
             section_label="Fast model",
             line_edit=self._fast_edit,
             capabilities=["Streaming", "JSON output"],
-            used_for=["Company research", "Interview grading", "Resume grading"],
+            used_for=[
+                "Company research", "Interview grading", "Resume grading",
+                "Resume PDF import",
+            ],
         ))
 
         card_layout.addWidget(_sep())

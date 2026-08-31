@@ -5,13 +5,14 @@ import logging
 from typing import Callable
 
 from PyQt6.QtCore import Qt, QThread
+from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QComboBox, QDialog, QHBoxLayout, QHeaderView, QLabel,
-    QLineEdit, QMessageBox, QPushButton, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget,
+    QAbstractItemView, QApplication, QComboBox, QDialog, QHBoxLayout,
+    QHeaderView, QLabel, QLineEdit, QMessageBox, QPushButton, QTableWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
-from ..base import _label, _primary_btn, _secondary_btn
+from ..base import _danger_btn, _label, _primary_btn, _secondary_btn
 from .entry_dialog import _EntryDialog, _empty_entry, _STATUS_OPTIONS
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,7 @@ _COLUMNS = ["Company", "Role", "Date Applied", "Status", "Notes", "JD", "Resume"
 ) = range(8)
 
 _JD_PREVIEW_MAX = 80
+_DELETE_SELECTED_LABEL = "🗑  Delete Selected"
 
 
 class TrackerPage(QWidget):
@@ -66,6 +68,14 @@ class TrackerPage(QWidget):
         self._prep_status = QLabel("")
         self._prep_status.setObjectName("status-neutral")
         header_row.addWidget(self._prep_status)
+        self._del_selected_btn = _danger_btn(_DELETE_SELECTED_LABEL, 150)
+        self._del_selected_btn.setEnabled(False)
+        self._del_selected_btn.setToolTip(
+            "Delete every selected application.\n"
+            "Select a range with Shift-click, or pick individual rows with ⌘-click."
+        )
+        self._del_selected_btn.clicked.connect(self._on_delete_selected_clicked)
+        header_row.addWidget(self._del_selected_btn)
         self._prep_btn = _secondary_btn("⚙  Prep All Materials", 170)
         self._prep_btn.clicked.connect(self._on_prep_all_clicked)
         header_row.addWidget(self._prep_btn)
@@ -78,11 +88,20 @@ class TrackerPage(QWidget):
         self._table.setHorizontalHeaderLabels(_COLUMNS)
         self._table.setAlternatingRowColors(True)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.verticalHeader().setVisible(False)
         self._table.setShowGrid(True)
         self._table.setWordWrap(False)
         self._table.cellClicked.connect(self._on_cell_clicked)
+        self._table.itemSelectionChanged.connect(self._on_selection_changed)
+
+        del_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self._table)
+        del_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+        del_shortcut.activated.connect(self._on_delete_selected_clicked)
+        backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self._table)
+        backspace_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+        backspace_shortcut.activated.connect(self._on_delete_selected_clicked)
 
         hdr = self._table.horizontalHeader()
         hdr.setSectionResizeMode(_COL_COMPANY, QHeaderView.ResizeMode.Interactive)
@@ -221,11 +240,76 @@ class TrackerPage(QWidget):
             return
         if not (0 <= row < len(self._rows)):
             return
+        # Shift/⌘-click is the user building a multi-row selection, not asking to edit.
+        mods = QApplication.keyboardModifiers()
+        if mods & (
+            Qt.KeyboardModifier.ShiftModifier
+            | Qt.KeyboardModifier.ControlModifier
+            | Qt.KeyboardModifier.MetaModifier
+        ):
+            return
         dlg = _EntryDialog(self, self._rows[row])
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._rows[row] = {**self._rows[row], **dlg.get_data()}
             self._refresh_row(row)
             self._apply_filter(self._search_edit.text())
+
+    def _selected_rows(self) -> list[int]:
+        """Selected row indices, ascending. Rows hidden by the search filter never count."""
+        model = self._table.selectionModel()
+        if model is None:
+            return []
+        return sorted(
+            idx.row()
+            for idx in model.selectedRows()
+            if not self._table.isRowHidden(idx.row()) and 0 <= idx.row() < len(self._rows)
+        )
+
+    def _on_selection_changed(self):
+        count = len(self._selected_rows())
+        self._del_selected_btn.setEnabled(count > 0)
+        self._del_selected_btn.setText(
+            f"{_DELETE_SELECTED_LABEL} ({count})" if count else _DELETE_SELECTED_LABEL
+        )
+
+    def _on_delete_selected_clicked(self):
+        rows = self._selected_rows()
+        if not rows:
+            return
+
+        names = [
+            " — ".join(p for p in (self._rows[r].get("company"), self._rows[r].get("role")) if p)
+            or "(untitled)"
+            for r in rows
+        ]
+        preview = "\n".join(f"  • {n}" for n in names[:8])
+        if len(names) > 8:
+            preview += f"\n  … and {len(names) - 8} more"
+
+        noun = "application" if len(rows) == 1 else "applications"
+        confirm = QMessageBox.warning(
+            self,
+            "Delete Applications",
+            f"Permanently delete {len(rows)} {noun}?\n\n{preview}\n\nThis cannot be undone.",
+            QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
+        for r in reversed(rows):
+            self._table.removeRow(r)
+            del self._rows[r]
+
+        self._rebind_row_callbacks()
+        self._table.clearSelection()
+        self._on_selection_changed()
+        if self._save_fn:
+            try:
+                self._save_fn()
+            except Exception:
+                logger.exception("Delete selected: save_fn failed")
+        logger.info("Deleted %d application(s) from the tracker", len(rows))
 
     def _remove_row(self, btn: QPushButton):
         for r in range(self._table.rowCount()):
@@ -369,3 +453,4 @@ class TrackerPage(QWidget):
     def clear(self):
         self._table.setRowCount(0)
         self._rows.clear()
+        self._on_selection_changed()

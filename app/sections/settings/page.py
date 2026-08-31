@@ -53,6 +53,10 @@ class SettingsPage(
         outer.addWidget(self._sidebar)
         outer.addWidget(self._stack, 1)
 
+    def cleanup_threads(self) -> None:
+        from .._thread_cleanup import shutdown_threads
+        shutdown_threads(getattr(self, "_preview_threads", []))
+
     def _on_settings_row_changed(self, row: int) -> None:
         if row == 4:
             self._refresh_token_usage()

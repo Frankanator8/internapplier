@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout
 from .base import (
-    CardPage, BulletsWidget, CoursesWidget, make_field, make_line_edit,
+    CardPage, CoursesWidget, make_field, make_line_edit,
     add_remove_footer, attach_fields,
 )
 
@@ -41,16 +41,6 @@ class EducationPage(CardPage):
         row2.addLayout(make_field("GPA", gpa))
         vbox.addLayout(row2)
 
-        bullets = BulletsWidget(
-            data.get("bullets", []),
-            get_context=lambda: {
-                "type": "education",
-                "school": school.text(),
-                "degree": degree.text(),
-            },
-        )
-        vbox.addWidget(bullets)
-
         courses = CoursesWidget(
             data.get("courses", []),
             get_common_skills=self.get_common_skills,
@@ -62,6 +52,6 @@ class EducationPage(CardPage):
         attach_fields(card, {
             "school": school, "degree": degree,
             "start": start, "end": end, "gpa": gpa,
-            "bullets": bullets, "courses": courses,
+            "courses": courses,
         })
         self._cards_layout.addWidget(card)

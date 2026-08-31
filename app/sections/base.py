@@ -325,6 +325,12 @@ class BulletsWidget(QWidget):
 
 
 class CoursesWidget(QWidget):
+    """Coursework editor — two lines per course: name/grade, then skill tags.
+
+    Rows live in a plain layout rather than a QListWidget so each one keeps its
+    own size hint; a list item's hint is frozen at insertion and clips the row.
+    """
+
     def __init__(
         self,
         courses: list[dict] | None = None,
@@ -336,7 +342,7 @@ class CoursesWidget(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 4, 0, 0)
-        layout.setSpacing(4)
+        layout.setSpacing(6)
 
         header = QHBoxLayout()
         header.setSpacing(8)
@@ -346,11 +352,17 @@ class CoursesWidget(QWidget):
         header.addWidget(add_btn)
         layout.addLayout(header)
 
-        self.list_widget = QListWidget()
-        self.list_widget.setObjectName("courses-list")
-        self.list_widget.setMaximumHeight(260)
-        self.list_widget.setSpacing(2)
-        layout.addWidget(self.list_widget)
+        self._rows_layout = QVBoxLayout()
+        self._rows_layout.setContentsMargins(0, 0, 0, 0)
+        self._rows_layout.setSpacing(6)
+        layout.addLayout(self._rows_layout)
+
+        self._empty = _label(
+            "No coursework yet — add the courses most relevant to your target roles.",
+            "field-sublabel",
+        )
+        self._empty.setWordWrap(True)
+        layout.addWidget(self._empty)
 
         add_btn.clicked.connect(lambda: self._add_item())
 
@@ -360,51 +372,66 @@ class CoursesWidget(QWidget):
                 c.get("grade", ""),
                 c.get("skills", []),
             )
+        self._sync_empty()
 
     def _add_item(self, name: str = "", grade: str = "", skills: list[str] | None = None):
-        row = QWidget()
-        row_layout = QHBoxLayout(row)
-        row_layout.setContentsMargins(4, 2, 4, 2)
-        row_layout.setSpacing(6)
+        row = QFrame()
+        row.setObjectName("course-row")
+        row_v = QVBoxLayout(row)
+        row_v.setContentsMargins(0, 8, 0, 8)
+        row_v.setSpacing(6)
+
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        top.setSpacing(8)
 
         name_edit = QLineEdit(name)
         name_edit.setPlaceholderText("CS 189: Machine Learning")
         grade_edit = QLineEdit(grade)
-        grade_edit.setPlaceholderText("A")
-        grade_edit.setFixedWidth(60)
+        grade_edit.setPlaceholderText("Grade")
+        grade_edit.setFixedWidth(72)
+        remove_btn = _icon_btn("✕")
+        remove_btn.setToolTip("Remove this course")
+
+        top.addWidget(name_edit, 1)
+        top.addWidget(grade_edit, 0)
+        top.addWidget(remove_btn, 0)
+        row_v.addLayout(top)
+
         chips = ChipsWidget(
             items=skills or [],
             label="Skills",
             get_common_skills=self._get_common_skills,
+            compact=True,
         )
-        remove_btn = _icon_btn("✕")
-
-        row_layout.addWidget(name_edit, 3)
-        row_layout.addWidget(grade_edit, 0)
-        row_layout.addWidget(chips, 2)
-        row_layout.addWidget(remove_btn, 0)
-
-        item = QListWidgetItem()
-        item.setSizeHint(row.sizeHint())
-        self.list_widget.addItem(item)
-        self.list_widget.setItemWidget(item, row)
+        row_v.addWidget(chips)
 
         row.setProperty("_name", name_edit)
         row.setProperty("_grade", grade_edit)
         row.setProperty("_skills", chips)
 
-        remove_btn.clicked.connect(lambda: self._remove_item(item))
+        remove_btn.clicked.connect(lambda: self._remove_row(row))
 
-    def _remove_item(self, item: QListWidgetItem):
-        self.list_widget.takeItem(self.list_widget.row(item))
+        self._rows_layout.addWidget(row)
+        self._sync_empty()
+
+    def _remove_row(self, row: QFrame):
+        self._rows_layout.removeWidget(row)
+        row.deleteLater()
+        self._sync_empty()
+
+    def _sync_empty(self):
+        self._empty.setVisible(self._rows_layout.count() == 0)
+
+    def _iter_rows(self):
+        for i in range(self._rows_layout.count()):
+            row = self._rows_layout.itemAt(i).widget()
+            if row is not None:
+                yield row
 
     def get_courses(self) -> list[dict]:
         result = []
-        for i in range(self.list_widget.count()):
-            item = self.list_widget.item(i)
-            row = self.list_widget.itemWidget(item)
-            if row is None:
-                continue
+        for row in self._iter_rows():
             name_edit: QLineEdit = row.property("_name")
             grade_edit: QLineEdit = row.property("_grade")
             chips: ChipsWidget = row.property("_skills")
@@ -426,27 +453,30 @@ class ChipsWidget(QWidget):
         on_add: Callable[[str], None] | None = None,
         label: str = "Skills",
         get_common_skills: Callable[[], list[str]] | None = None,
+        compact: bool = False,
         parent=None,
     ):
         super().__init__(parent)
         self._on_add = on_add
         self._get_common_skills = get_common_skills
         self._items: list[str] = []
+        self._compact = compact
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 4, 0, 0)
+        layout.setContentsMargins(0, 0 if compact else 4, 0, 0)
         layout.setSpacing(4)
 
-        header = QHBoxLayout()
-        header.setSpacing(8)
-        header.addWidget(_label(label, "bullets-label"))
-        header.addStretch()
-        layout.addLayout(header)
+        if not compact:
+            header = QHBoxLayout()
+            header.setSpacing(8)
+            header.addWidget(_label(label, "bullets-label"))
+            header.addStretch()
+            layout.addLayout(header)
 
-        input_row = QHBoxLayout()
-        input_row.setSpacing(6)
         self._input = QLineEdit()
-        self._input.setPlaceholderText("Add a skill and press Enter…")
+        self._input.setPlaceholderText(
+            "Add skill…" if compact else "Add a skill and press Enter…"
+        )
         self._input.returnPressed.connect(self._add_from_input)
 
         self._completer_model = QStringListModel([], self)
@@ -457,26 +487,51 @@ class ChipsWidget(QWidget):
         completer.activated.connect(self._on_completer_activated)
         self._input.setCompleter(completer)
         self._input.textEdited.connect(lambda _t: self._refresh_completer())
-        input_row.addWidget(self._input)
-        layout.addLayout(input_row)
 
         self._chips_host = QWidget()
         self._chips_layout = QHBoxLayout(self._chips_host)
         self._chips_layout.setContentsMargins(0, 2, 0, 2)
         self._chips_layout.setSpacing(6)
-        self._chips_layout.addStretch()
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setFixedHeight(44)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setWidget(self._chips_host)
-        layout.addWidget(scroll)
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll.setFixedHeight(30 if compact else 44)
+        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.setWidget(self._chips_host)
+
+        if compact:
+            # Chips and their input share one bordered field so a course's skills
+            # read as a single tag control: [ (chip) (chip) type-here… ].
+            self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            self._input.setObjectName("tag-field-input")
+            self._input.setMinimumWidth(120)
+            self._chips_layout.addWidget(self._input, 1)
+            # Once chips overflow the strip, keep the entry field in view. The
+            # scroll range only grows after the layout pass, so react to that.
+            self._scroll_to_end = False
+            self._scroll.horizontalScrollBar().rangeChanged.connect(self._flush_scroll_to_end)
+
+            field = QFrame()
+            field.setObjectName("tag-field")
+            field_row = QHBoxLayout(field)
+            field_row.setContentsMargins(6, 0, 6, 0)
+            field_row.addWidget(self._scroll)
+            layout.addWidget(field)
+        else:
+            self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            self._chips_layout.addStretch()
+            layout.addWidget(self._input)
+            layout.addWidget(self._scroll)
 
         for s in (items or []):
             self._add_chip(s, fire_callback=False)
+
+    def _flush_scroll_to_end(self, _minimum: int, maximum: int):
+        if not self._scroll_to_end:
+            return
+        self._scroll_to_end = False
+        self._scroll.horizontalScrollBar().setValue(maximum)
 
     def _add_from_input(self):
         text = self._input.text().strip()
@@ -517,10 +572,15 @@ class ChipsWidget(QWidget):
         chip_layout.addWidget(lbl)
         chip_layout.addWidget(remove)
 
+        # Last slot is the input (compact) or a stretch — chips go before it.
         insert_at = self._chips_layout.count() - 1
         self._chips_layout.insertWidget(insert_at, chip)
 
         remove.clicked.connect(lambda: self._remove_chip(chip, text))
+
+        if self._compact:
+            chip.show()
+            self._scroll_to_end = True
 
         if fire_callback and self._on_add:
             self._on_add(text)

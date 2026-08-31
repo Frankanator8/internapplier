@@ -190,6 +190,20 @@ def pick_template(user_template: str | None) -> str:
     return DEFAULT_TEMPLATE
 
 
+def render_with(template_src: str, resume: dict) -> str:
+    """Render `resume` through `template_src` with no fallback.
+
+    Unlike :func:`render_resume`, a Jinja error in the template propagates to
+    the caller — used by the template preview, where surfacing the error is
+    the whole point.
+    """
+    tmpl = _env.from_string(template_src)
+    return tmpl.render(
+        header=resume.get("header") or {},
+        sections=resume.get("sections") or [],
+    )
+
+
 def render_resume(resume: dict, template: str | None = None) -> str:
     """Render `resume` (validated JSON-shaped dict) to LaTeX source."""
     tmpl_src = pick_template(template)

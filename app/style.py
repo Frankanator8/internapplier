@@ -420,6 +420,30 @@ QListWidget#bullets-list {
 QListWidget#bullets-list::item { border: none; background: transparent; }
 QListWidget#bullets-list::item:selected { background: transparent; }
 
+/* ── Coursework row ─────────────────────────────────────────── */
+QFrame#course-row {
+    background: transparent;
+    border: none;
+    border-top: 1px solid $border;
+    border-radius: 0;
+}
+
+/* ── Inline tag field (chips + entry in one control) ────────── */
+QFrame#tag-field {
+    background: $surface_input;
+    border: 1px solid $border_input;
+    border-radius: 6px;
+}
+QLineEdit#tag-field-input {
+    background: transparent;
+    border: none;
+    padding: 2px 2px;
+}
+QLineEdit#tag-field-input:focus {
+    background: transparent;
+    border: none;
+}
+
 /* ── Skills list ────────────────────────────────────────────── */
 QListWidget#skills-list {
     background: $surface_card;

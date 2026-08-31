@@ -1,12 +1,14 @@
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QListWidget,
     QStackedWidget, QStatusBar, QToolBar, QListWidgetItem, QLabel,
-    QFileDialog, QMessageBox, QTabWidget, QSizePolicy,
+    QFileDialog, QMessageBox, QTabWidget, QSizePolicy, QDialog,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QObject, QThread
 from PyQt6.QtGui import QAction, QFont
 
-from api import data_store, linkedin_import
+from api import data_store, linkedin_import, resume_pdf_import
+from .import_review_dialog import ImportReviewDialog
+from .resume_pdf_worker import ResumePdfImportWorker
 from .sections.general_info import GeneralInfoPage
 from .sections.experience import ExperiencePage
 from .sections.projects import ProjectsPage
@@ -58,6 +60,14 @@ class MainWindow(QMainWindow):
         import_action.setShortcut("Ctrl+I")
         import_action.triggered.connect(self._import_linkedin)
         toolbar.addAction(import_action)
+
+        self._import_pdf_action = QAction("📄  Import from Resume PDF", self)
+        self._import_pdf_action.setShortcut("Ctrl+Shift+I")
+        self._import_pdf_action.triggered.connect(self._import_resume_pdf)
+        toolbar.addAction(self._import_pdf_action)
+
+        self._import_threads: list[QThread] = []
+        self._import_workers: list[QObject] = []
 
         save_action = QAction("💾  Save", self)
         save_action.setShortcut("Ctrl+S")
@@ -319,27 +329,49 @@ class MainWindow(QMainWindow):
             cat_box.exec()
             import_category = "other" if cat_box.clickedButton() is other_btn else "relevant"
 
-        if mode == "replace":
-            self._experience_page.clear()
-            self._projects_page.clear()
-            self._education_page.clear()
-            self._awards_page.clear()
-            self._skills_page.load([])
-
         for entry in data["experience"]:
-            self._experience_page.add_entry(entry, category=import_category)
-        for entry in data["projects"]:
-            self._projects_page.add_entry(entry)
-        for entry in data["education"]:
-            self._education_page.add_entry(entry)
-        for entry in data.get("awards", []):
-            self._awards_page.add_entry(entry)
+            entry["category"] = import_category
+        self._apply_imported_to_widgets(data, mode)
 
-        if mode == "replace":
-            self._skills_page.load(data["skills"])
-        else:
-            for s in data["skills"]:
-                self._skills_page._add_item(s)
+        self.status_bar.showMessage(f"✓  Imported from LinkedIn — {summary}", 5000)
+
+    def _apply_imported_to_widgets(self, data: dict, mode: str) -> None:
+        """Push an imported profile dict into the live section widgets.
+
+        Shared by every importer. Nothing is persisted here — the user still
+        has to Save (or close the window), same as any hand edit.
+        Sections absent from ``data`` are left alone even in replace mode.
+        """
+        for key, page in (
+            ("experience", self._experience_page),
+            ("projects", self._projects_page),
+            ("education", self._education_page),
+            ("awards", self._awards_page),
+        ):
+            if key not in data:
+                continue
+            if mode == "replace":
+                page.clear()
+            for entry in data.get(key) or []:
+                page.add_entry(entry)
+
+        for key, page in (
+            ("skills", self._skills_page),
+            ("hobbies", self._hobbies_page),
+        ):
+            if key not in data:
+                continue
+            items = data.get(key) or []
+            if mode == "replace":
+                page.load(items)
+            else:
+                # Dedupe case-insensitively, matching profile_merge — the list
+                # widgets happily accept the same skill twice.
+                existing = {s.lower() for s in page.get_data()}
+                for item in items:
+                    if item.lower() not in existing:
+                        page._add_item(item)
+                        existing.add(item.lower())
 
         imported_general = data.get("general_info") or {}
         if imported_general:
@@ -353,7 +385,118 @@ class MainWindow(QMainWindow):
                         merged[k] = v
             self._general_info_page.load(merged)
 
-        self.status_bar.showMessage(f"✓  Imported from LinkedIn — {summary}", 5000)
+    def _import_resume_pdf(self):
+        if self._import_threads:
+            return
+
+        from api import ai_provider
+        if not (ai_provider.get_openrouter_api_key() or "").strip():
+            QMessageBox.warning(
+                self, "API key required",
+                "Importing a resume PDF uses the AI to read it.\n\n"
+                "Add an OpenRouter API key in Settings → AI Model, then try again.",
+            )
+            return
+
+        pdf_path, _ = QFileDialog.getOpenFileName(
+            self, "Select your resume PDF", "", "PDF files (*.pdf)"
+        )
+        if not pdf_path:
+            return
+
+        self._import_pdf_action.setEnabled(False)
+        self.status_bar.showMessage("Reading resume PDF…")
+
+        worker = ResumePdfImportWorker(pdf_path)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+
+        def on_finished(data: dict):
+            # Quit first: the review dialog spins a nested event loop, and the
+            # worker thread must not still be alive underneath it.
+            thread.quit()
+            self._import_pdf_action.setEnabled(True)
+            self.status_bar.clearMessage()
+            self._review_and_apply_pdf_import(data)
+
+        def on_error(msg: str):
+            thread.quit()
+            self._import_pdf_action.setEnabled(True)
+            self.status_bar.clearMessage()
+            QMessageBox.critical(self, "Import failed", msg)
+
+        def on_thread_finished():
+            if worker in self._import_workers:
+                self._import_workers.remove(worker)
+            if thread in self._import_threads:
+                self._import_threads.remove(thread)
+
+        worker.progress.connect(self.status_bar.showMessage)
+        worker.finished.connect(on_finished)
+        worker.error.connect(on_error)
+        thread.started.connect(worker.run)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(on_thread_finished)
+        self._import_threads.append(thread)
+        self._import_workers.append(worker)
+        thread.start()
+
+    def _review_and_apply_pdf_import(self, data: dict):
+        if resume_pdf_import.is_empty(data):
+            QMessageBox.warning(
+                self, "Nothing to import",
+                "The PDF was read successfully but the AI found no resume "
+                "content in it.\n\nDouble-check you picked the right file.",
+            )
+            return
+
+        dlg = ImportReviewDialog(data, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            self.status_bar.showMessage("Import cancelled.", 3000)
+            return
+
+        accepted = dlg.accepted_data()
+        if resume_pdf_import.is_empty(accepted):
+            self.status_bar.showMessage("Import cancelled — nothing selected.", 3000)
+            return
+
+        has_existing = bool(
+            {k: v for k, v in self._general_info_page.get_data().items() if v}
+            or self._experience_page.get_data()
+            or self._projects_page.get_data()
+            or self._education_page.get_data()
+            or self._awards_page.get_data()
+            or self._skills_page.get_data()
+            or self._hobbies_page.get_data()
+        )
+
+        mode = "replace"
+        if has_existing:
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Icon.Question)
+            box.setWindowTitle("Import resume PDF")
+            box.setText(
+                f"Importing: {resume_pdf_import.summarize(accepted)}.\n\n"
+                "How should we merge with your existing data?"
+            )
+            # "Replace sections", not "Replace all": general_info is overlaid
+            # rather than cleared, here and in every other importer.
+            replace_btn = box.addButton("Replace sections", QMessageBox.ButtonRole.DestructiveRole)
+            append_btn = box.addButton("Append", QMessageBox.ButtonRole.AcceptRole)
+            cancel_btn = box.addButton(QMessageBox.StandardButton.Cancel)
+            box.setDefaultButton(append_btn)
+            box.exec()
+            clicked = box.clickedButton()
+            if clicked is cancel_btn:
+                self.status_bar.showMessage("Import cancelled.", 3000)
+                return
+            mode = "replace" if clicked is replace_btn else "append"
+
+        self._apply_imported_to_widgets(accepted, mode)
+        self.status_bar.showMessage(
+            f"✓  Imported from resume PDF — {resume_pdf_import.summarize(accepted)}",
+            5000,
+        )
 
     def _refresh_applications(self):
         on_disk = data_store.load().get("applications") or []
@@ -399,7 +542,10 @@ class MainWindow(QMainWindow):
     def _shutdown_all_threads(self):
         from .sections._thread_cleanup import shutdown_threads
         from .sections.base import BulletsWidget
-        for page in (self._applier_page, self._interviews_page, self._applications_page):
+        for page in (
+            self._applier_page, self._interviews_page, self._applications_page,
+            self._settings_page,
+        ):
             try:
                 page.cleanup_threads()
             except Exception:
@@ -409,3 +555,7 @@ class MainWindow(QMainWindow):
                 shutdown_threads(bw._threads)
             except Exception:
                 pass
+        try:
+            shutdown_threads(self._import_threads)
+        except Exception:
+            pass

@@ -26,7 +26,9 @@ the only outbound traffic is to whichever LLM you point it at.
   history, and generated PDFs never leave your machine. LLM calls go to
   OpenRouter under your own API key — pick Gemini, GPT-4o, Claude, or anything
   else they front.
-- **LinkedIn data-export import** to skip the boring part of profile setup.
+- **Resume PDF and LinkedIn data-export import** to skip the boring part of
+  profile setup. The PDF route reads your existing resume with AI and lets you
+  review every entry before it lands.
 
 ## Features
 
@@ -39,7 +41,11 @@ experience, projects, skills, awards, and hobbies
 ([`app/sections/`](app/sections/)). Everything is stored as JSON locally and
 re-used by every other feature. The resume layout itself is a LaTeX template
 you can edit from inside Settings — swap in your own format, change fonts,
-add a sidebar — and every generated resume is rendered through it.
+add a sidebar — and every generated resume is rendered through it. The editor
+sits beside a live PDF preview: hit **Compile Preview** to render the template
+you're editing with built-in sample resume data, so you can iterate on the
+layout without spending an AI generation. LaTeX and template errors show up in
+the same pane with the compiler log.
 
 ### AI resume generator
 
@@ -182,8 +188,9 @@ On first launch you'll go through an onboarding wizard
 3. Pick the models you want for the fast / basic / powerful tiers.
 4. Pick or paste a LaTeX resume template.
 5. Paste a writing sample so generated answers sound like you.
-6. (Optional) Import your LinkedIn data export ZIP — parses the CSVs into
-   your profile so you don't have to retype everything.
+6. (Optional) Import your profile so you don't have to retype everything —
+   either an existing resume PDF (read by the AI, reviewable entry by entry)
+   or a LinkedIn data export ZIP (parsed from the CSVs).
 7. Instructions for loading the Firefox extension.
 
 After this the wizard won't show again.
