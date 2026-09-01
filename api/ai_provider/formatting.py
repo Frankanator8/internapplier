@@ -82,9 +82,12 @@ def _format_tool_event(name: str, round_idx: int, args: dict, result: dict) -> s
         fill = result.get("fill")
         cap = result.get("page_cap")
         try:
-            parts.append(f"  → fill={float(fill):.3f} / page_cap={cap}")
+            fill_line = f"  → fill={float(fill):.3f} / page_cap={cap}"
         except (TypeError, ValueError):
-            parts.append(f"  → fill={fill} / page_cap={cap}")
+            fill_line = f"  → fill={fill} / page_cap={cap}"
+        if result.get("done"):
+            fill_line += " — accepted"
+        parts.append(fill_line)
     elif ok:
         parts.append("  → ok")
     else:

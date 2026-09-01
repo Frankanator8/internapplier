@@ -57,6 +57,21 @@ class TestDetectShortBullets:
         assert len(out) == 1
 
 
+class TestFillAccepts:
+    def test_in_range(self):
+        assert agent_tools.fill_accepts(0.9, 1, 0.9)
+        assert agent_tools.fill_accepts(1.0, 1, 0.9)
+        assert agent_tools.fill_accepts(0.95, 1, 0.9)
+
+    def test_overflow_and_underfill(self):
+        assert not agent_tools.fill_accepts(1.001, 1, 0.9)
+        assert not agent_tools.fill_accepts(0.89, 1, 0.9)
+
+    def test_invalid_values(self):
+        assert not agent_tools.fill_accepts("n/a", 1, 0.9)
+        assert not agent_tools.fill_accepts(None, 1, 0.9)
+
+
 class TestPageLengthTool:
     def test_empty_latex_returns_error(self):
         out = agent_tools.page_length(latex="")
@@ -88,16 +103,72 @@ class TestPageLengthTool:
         )
         mocker.patch(
             "api.generate_resume.agent_tools.pdf_page_metrics",
-            return_value={"fill": 0.875, "lines": []},
+            return_value={"fill": 0.95, "lines": []},
         )
         out = agent_tools.page_length(
             latex=r"\documentclass{article}\begin{document}hi\end{document}",
         )
         assert out["ok"] is True
-        assert out["fill"] == 0.875
+        assert out["fill"] == 0.95
         assert out["page_cap"] == 1  # default
         assert out["target_fill"] == agent_tools.RESUME_TARGET_FILL
+        assert out["done"] is True
         assert out["short_bullets"] == []
+
+    def test_overflow_is_not_done(self, mocker, tmp_path):
+        fake_pdf = tmp_path / "x.pdf"
+        fake_pdf.write_bytes(b"%PDF")
+        mocker.patch(
+            "api.generate_resume.agent_tools.compile_latex",
+            return_value=fake_pdf,
+        )
+        mocker.patch(
+            "api.generate_resume.agent_tools.pdf_page_metrics",
+            return_value={"fill": 1.073, "lines": []},
+        )
+        out = agent_tools.page_length(
+            latex=r"\documentclass{article}\begin{document}hi\end{document}",
+        )
+        assert out["ok"] is True
+        assert out["done"] is False
+
+    def test_underfill_is_not_done(self, mocker, tmp_path):
+        fake_pdf = tmp_path / "x.pdf"
+        fake_pdf.write_bytes(b"%PDF")
+        mocker.patch(
+            "api.generate_resume.agent_tools.compile_latex",
+            return_value=fake_pdf,
+        )
+        mocker.patch(
+            "api.generate_resume.agent_tools.pdf_page_metrics",
+            return_value={"fill": 0.5, "lines": []},
+        )
+        out = agent_tools.page_length(
+            latex=r"\documentclass{article}\begin{document}hi\end{document}",
+        )
+        assert out["done"] is False
+
+    def test_done_suppresses_short_bullets(self, mocker, tmp_path):
+        fake_pdf = tmp_path / "x.pdf"
+        fake_pdf.write_bytes(b"%PDF")
+        mocker.patch(
+            "api.generate_resume.agent_tools.compile_latex",
+            return_value=fake_pdf,
+        )
+        mocker.patch(
+            "api.generate_resume.agent_tools.pdf_page_metrics",
+            return_value={"fill": 1.0, "lines": [[{"text": "x"}]]},
+        )
+        detect = mocker.patch(
+            "api.generate_resume.agent_tools.detect_short_bullets",
+            return_value=[{"text": "wasted", "lines": 2, "last_line_fill": 0.1}],
+        )
+        out = agent_tools.page_length(
+            latex=r"\documentclass{article}\begin{document}hi\end{document}",
+        )
+        assert out["done"] is True
+        assert out["short_bullets"] == []
+        detect.assert_not_called()
 
     def test_snippet_without_documentclass_is_wrapped(self, mocker, tmp_path):
         fake_pdf = tmp_path / "x.pdf"

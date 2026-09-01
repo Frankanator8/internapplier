@@ -86,10 +86,9 @@ OPENROUTER_STREAM_RETRY_BACKOFF = 2.0
 # --- Resume generation ---
 DEFAULT_RESUME_SCORE_THRESHOLD = 9.5
 # Target `fill` (see api.generate_resume.compile.pdf_page_metrics) for the
-# generator to aim for. Kept below 1.0 because the geometric fill measure
-# reads a genuinely full page much closer to 1.0 than the old line-density
-# measure did, so a lower target keeps the same practical "good enough" bar.
-RESUME_TARGET_FILL = 0.75
+# generator to aim for. The accepted window is [RESUME_TARGET_FILL, page_cap]
+# (0.9–1.0 on a one-page resume).
+RESUME_TARGET_FILL = 0.9
 AGENT_MAX_LOG_EXCERPT = 1500
 
 # --- Applications heatmap ---

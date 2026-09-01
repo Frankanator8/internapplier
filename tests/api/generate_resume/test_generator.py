@@ -169,7 +169,7 @@ class TestBuildFeedback:
         assert "Old Job @ Corp" in out
 
     def test_not_underfilled_when_at_or_above_target(self):
-        out = _build_feedback(None, 0.75, True, 1, [], None, True)
+        out = _build_feedback(None, 0.9, True, 1, [], None, True)
         assert out is None
 
     def test_underfill_skipped_on_page_overflow(self):

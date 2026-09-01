@@ -37,6 +37,21 @@ RETRYABLE_STREAM_ERRORS = (
 )
 
 
+def _latex_from_tool_call(tc: dict) -> str | None:
+    """Pull a non-empty ``latex`` argument off an assembled tool call."""
+    try:
+        raw = (tc.get("function") or {}).get("arguments") or "{}"
+        args = json.loads(raw)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+    if not isinstance(args, dict):
+        return None
+    latex = args.get("latex")
+    if isinstance(latex, str) and latex.strip():
+        return latex
+    return None
+
+
 def _format_throughput(
     log_label: str,
     completion_t,
@@ -359,7 +374,9 @@ class OpenRouterHTTPClient:
         accumulates streamed ``tool_calls``, dispatches them against
         :data:`agent_tools.TOOL_HANDLERS`, appends the assistant + tool
         messages, and re-issues the request until the model finishes with
-        a normal stop or ``max_tool_rounds`` is reached.
+        a normal stop, a tool result sets ``done``, or ``max_tool_rounds``
+        is reached. ``max_tool_rounds`` is a hard cap: further tool calls
+        are ignored (``tool_choice`` is also set to ``none``).
 
         Tool-call activity is surfaced as out-of-band chunks prefixed with
         :data:`TOOL_EVENT_PREFIX`; downstream collectors strip these so they
@@ -398,6 +415,23 @@ class OpenRouterHTTPClient:
                     yield content
                 return
 
+            if rounds_used >= max_tool_rounds:
+                # Model ignored tool_choice=none. Do not compile again.
+                logger.info(
+                    "%s — max_tool_rounds=%d reached; ignoring further tool calls",
+                    log_label, max_tool_rounds,
+                )
+                if content:
+                    yield content
+                else:
+                    assembled = self._assemble_tool_calls(tool_calls)
+                    for tc in assembled:
+                        latex = _latex_from_tool_call(tc)
+                        if latex:
+                            yield latex
+                            break
+                return
+
             if content.strip():
                 yield TOOL_EVENT_PREFIX + (
                     f"[reasoning] round {rounds_used + 1}:\n{content}\n"
@@ -411,6 +445,7 @@ class OpenRouterHTTPClient:
                 "tool_calls": assembled,
             })
 
+            accepted_latex: str | None = None
             for tc in assembled:
                 result, event = self._dispatch_tool_call(
                     tc, tool_overrides=tool_overrides,
@@ -422,6 +457,18 @@ class OpenRouterHTTPClient:
                     "tool_call_id": tc["id"],
                     "content": json.dumps(result),
                 })
+                if result.get("done"):
+                    latex = _latex_from_tool_call(tc)
+                    if latex:
+                        accepted_latex = latex
+
+            if accepted_latex:
+                logger.info(
+                    "%s — tool result done=true; accepting latex (%d chars)",
+                    log_label, len(accepted_latex),
+                )
+                yield accepted_latex
+                return
 
     def post_json(
         self,

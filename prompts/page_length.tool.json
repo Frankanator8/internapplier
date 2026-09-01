@@ -2,7 +2,7 @@
   "type": "function",
   "function": {
     "name": "page_length",
-    "description": "Compile a complete LaTeX document and return {ok, fill, page_cap, target_fill, short_bullets}. `fill` is a decimal: 1.0 == exactly one page; 1.25 == 25% into a second page; 0.8 == 80% of one page. `target_fill` is the fill you should optimize toward (below page_cap, since a genuinely full page reads close to 1.0). On compile failure returns {ok: false, log_excerpt} with the pdflatex error. `short_bullets` lists bullets whose final wrapped line is mostly empty — each entry is {text, lines, last_line_fill}. Use this to fix compile errors and to decide whether to add, tighten, or drop content.",
+    "description": "Compile a complete LaTeX document and return {ok, fill, page_cap, target_fill, done, short_bullets}. `fill` is a decimal: 1.0 == exactly one page; 1.25 == 25% into a second page; 0.8 == 80% of one page. `target_fill` is the fill you should optimize toward (below page_cap). `done` is true when fill is already in [target_fill, page_cap] — stop immediately and return this latex; do not call again to chase short_bullets or a rounder fill. On compile failure returns {ok: false, log_excerpt} with the pdflatex error. `short_bullets` lists bullets whose final wrapped line is mostly empty (only when the draft is not yet done).",
     "parameters": {
       "type": "object",
       "properties": {

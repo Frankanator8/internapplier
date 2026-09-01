@@ -286,6 +286,85 @@ class TestToolOverridesPrecedence:
         assert called == {"global": False, "override": True}
 
 
+class TestDoneStopsToolLoop:
+    def test_done_result_yields_latex_and_skips_further_rounds(
+            self, provider, mock_openrouter, sse_factory):
+        latex = r"\documentclass{article}\begin{document}ok\end{document}"
+        mock_openrouter.queue_stream([
+            sse_factory.delta(tool_calls=[
+                _tool_call_event(0, "c1", "page_length", json.dumps({"latex": latex})),
+            ]),
+            sse_factory.delta(finish_reason="tool_calls"),
+        ])
+
+        out = _drain(provider._stream_chat_completion(
+            messages=[{"role": "u", "content": "x"}],
+            tier="powerful", log_label="t",
+            tools=_make_tools(),
+            tool_overrides={"page_length": lambda **kw: {
+                "ok": True, "done": True, "fill": 1.0, "page_cap": 1,
+            }},
+        ))
+        text = "".join(c for c in out if not c.startswith(TOOL_EVENT_PREFIX))
+        assert text == latex
+        assert len(mock_openrouter.calls()) == 1
+
+    def test_not_done_continues_to_next_round(
+            self, provider, mock_openrouter, sse_factory):
+        mock_openrouter.queue_stream([
+            sse_factory.delta(tool_calls=[
+                _tool_call_event(0, "c1", "page_length", '{"latex":"draft"}'),
+            ]),
+            sse_factory.delta(finish_reason="tool_calls"),
+        ])
+        mock_openrouter.queue_stream([
+            sse_factory.delta(content="final"),
+            sse_factory.delta(finish_reason="stop"),
+        ])
+        out = _drain(provider._stream_chat_completion(
+            messages=[{"role": "u", "content": "x"}],
+            tier="powerful", log_label="t",
+            tools=_make_tools(),
+            tool_overrides={"page_length": lambda **kw: {
+                "ok": True, "done": False, "fill": 1.07, "page_cap": 1,
+            }},
+        ))
+        text = "".join(c for c in out if not c.startswith(TOOL_EVENT_PREFIX))
+        assert text == "final"
+        assert len(mock_openrouter.calls()) == 2
+
+
+class TestMaxRoundsHardStop:
+    def test_further_tool_calls_are_not_dispatched(
+            self, provider, mock_openrouter, sse_factory):
+        latex = r"\documentclass{article}\begin{document}last\end{document}"
+        for _ in range(2):
+            mock_openrouter.queue_stream([
+                sse_factory.delta(tool_calls=[
+                    _tool_call_event(0, "c1", "echo", "{}")]),
+                sse_factory.delta(finish_reason="tool_calls"),
+            ])
+        mock_openrouter.queue_stream([
+            sse_factory.delta(tool_calls=[
+                _tool_call_event(0, "c2", "echo", json.dumps({"latex": latex})),
+            ]),
+            sse_factory.delta(finish_reason="tool_calls"),
+        ])
+
+        invoked = []
+        out = _drain(provider._stream_chat_completion(
+            messages=[{"role": "u", "content": "x"}],
+            tier="powerful", log_label="t",
+            tools=_make_tools(),
+            max_tool_rounds=2,
+            tool_overrides={"echo": lambda **kw: invoked.append(1) or {"ok": True}},
+        ))
+        assert invoked == [1, 1]
+        assert len(mock_openrouter.calls()) == 3
+        text = "".join(c for c in out if not c.startswith(TOOL_EVENT_PREFIX))
+        assert text == latex
+
+
 class TestContentBufferingWhenTools:
     def test_content_not_yielded_mid_tool_loop_but_at_end(
             self, provider, mock_openrouter, sse_factory):

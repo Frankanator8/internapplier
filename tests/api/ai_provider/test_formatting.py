@@ -72,6 +72,14 @@ class TestFormatToolEvent:
         assert "✓" in out and "page_length" in out
         assert "fill=0.950 / page_cap=1" in out
         assert "latex=3 chars" in out
+        assert "accepted" not in out
+
+    def test_ok_page_length_marks_accepted_when_done(self):
+        out = _format_tool_event(
+            "page_length", 1, {"latex": "abc"},
+            {"ok": True, "fill": 1.0, "page_cap": 1, "done": True},
+        )
+        assert "fill=1.000 / page_cap=1 — accepted" in out
 
     def test_ok_non_page_length_summary(self):
         out = _format_tool_event("other", 2, {}, {"ok": True})

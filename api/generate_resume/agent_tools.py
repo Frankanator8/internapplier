@@ -51,6 +51,21 @@ def _truncate(text: str, limit: int = AGENT_MAX_LOG_EXCERPT) -> str:
 SHORT_TAIL_THRESHOLD = 0.45
 
 
+def fill_accepts(
+    fill: Any,
+    page_cap: Any,
+    target_fill: Any = RESUME_TARGET_FILL,
+) -> bool:
+    """True when ``fill`` is in ``[target_fill, page_cap]`` (inclusive)."""
+    try:
+        fill_f = float(fill)
+        cap_f = float(page_cap)
+        target_f = float(target_fill) if target_fill is not None else 0.0
+    except (TypeError, ValueError):
+        return False
+    return target_f - 1e-6 <= fill_f <= cap_f + 1e-6
+
+
 def _norm_ws(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "").strip()).casefold()
 
@@ -170,13 +185,20 @@ def page_length(latex: Any = None, **_) -> dict[str, Any]:
     except Exception as e:
         logger.exception("page_length — pdf_page_metrics failed")
         return {"ok": False, "page_cap": page_cap, "log_excerpt": f"pdf_page_metrics error: {e}"}
-    fill = metrics["fill"]
-    short_bullets = detect_short_bullets(latex, metrics.get("lines") or [])
+    fill = round(float(metrics["fill"]), 4)
+    done = fill_accepts(fill, page_cap, RESUME_TARGET_FILL)
+    # Once the page already fits, extra short-tail hints just tempt the
+    # model into another edit/compile cycle. Only surface them when the
+    # draft still needs to grow or shrink.
+    short_bullets = (
+        [] if done else detect_short_bullets(latex, metrics.get("lines") or [])
+    )
     return {
         "ok": True,
-        "fill": round(float(fill), 4),
+        "fill": fill,
         "page_cap": page_cap,
         "target_fill": RESUME_TARGET_FILL,
+        "done": done,
         "short_bullets": short_bullets,
     }
 
