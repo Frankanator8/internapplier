@@ -7,6 +7,18 @@ import pathlib
 
 import pytest
 
+_SAMPLE_LATEX = r"""\documentclass{article}
+\begin{document}
+\section*{Experience}
+\textbf{X @ C}
+\begin{itemize}
+\item b
+\end{itemize}
+\end{document}
+"""
+
+_SAMPLE_RESUME_TEXT = "Experience\nX @ C\n- b"
+
 from api.generate_resume import generator as gen_mod
 from api.generate_resume import persist as persist_mod
 from api.generate_resume.generator import (
@@ -128,7 +140,7 @@ class TestBuildHeader:
 
 class TestBuildFeedback:
     def test_no_problems_returns_none(self):
-        assert _build_feedback(None, 0.5, True, 1, [], None, True) is None
+        assert _build_feedback(None, 0.9, True, 1, [], None, True) is None
 
     def test_compile_error_included(self):
         out = _build_feedback("bad", None, False, 1, [], None, False)
@@ -142,9 +154,29 @@ class TestBuildFeedback:
 
     def test_grader_feedback_when_score_low(self):
         grade = {"feedback": "needs work", "score": 5}
-        out = _build_feedback(None, 0.5, True, 1, [], grade, False)
+        out = _build_feedback(None, 0.9, True, 1, [], grade, False)
         assert "GRADER FEEDBACK" in out
         assert "needs work" in out
+
+    def test_underfilled_when_below_target(self):
+        out = _build_feedback(None, 0.5, True, 1, [], None, True)
+        assert "UNDERFILLED" in out
+        assert "0.50" in out
+
+    def test_underfilled_suggests_restoring_drops(self):
+        out = _build_feedback(None, 0.5, True, 1, ["Old Job @ Corp"], None, True)
+        assert "UNDERFILLED" in out
+        assert "Old Job @ Corp" in out
+
+    def test_not_underfilled_when_at_or_above_target(self):
+        out = _build_feedback(None, 0.75, True, 1, [], None, True)
+        assert out is None
+
+    def test_underfill_skipped_on_page_overflow(self):
+        # Overflow message should win; underfill branch must not also fire.
+        out = _build_feedback(None, 1.4, False, 1, [], None, False)
+        assert "PAGE OVERFLOW" in out
+        assert "UNDERFILLED" not in out
 
 
 class TestPersistPdf:
@@ -177,27 +209,14 @@ class TestPersistPdf:
 
 class TestResumeGeneratorIntegration:
     def test_succeeds_first_attempt(self, mocker, sample_profile, sample_jd, tmp_path):
-        # Stub all external calls
-        mocker.patch(
-            "api.ai_provider.keyword_extractor.extract_jd_keywords",
-            return_value={"keywords": [], "excerpts": []},
-        )
-        mocker.patch(
-            "api.ai_provider.keyword_extractor.format_jd_signals",
-            return_value="signals",
-        )
-
-        resume_json = {
-            "sections": [{"kind": "experience", "items": [
-                {"role": "X", "company": "C", "bullets": ["b"]},
-            ]}],
-        }
+        grade_calls: list[str] = []
 
         class FakeProv:
             def generate_resume_stream(self, *args, **kwargs):
-                yield json.dumps(resume_json)
+                yield _SAMPLE_LATEX
 
-            def grade_resume_stream(self, *args, **kwargs):
+            def grade_resume_stream(self, resume_text, *args, **kwargs):
+                grade_calls.append(resume_text)
                 yield json.dumps({"score": 9.9, "feedback": "great", "drops": []})
 
         # Stub compile + metrics
@@ -207,6 +226,9 @@ class TestResumeGeneratorIntegration:
         mocker.patch.object(
             gen_mod, "pdf_page_metrics",
             return_value={"fill": 0.5, "lines": [[]]},
+        )
+        mocker.patch.object(
+            gen_mod, "pdf_plain_text", return_value=_SAMPLE_RESUME_TEXT,
         )
 
         # Stub settings to keep loop short
@@ -222,21 +244,11 @@ class TestResumeGeneratorIntegration:
         assert result["chosen_attempt"] == 1
         assert result["grade"]["score"] == 9.9
         assert result["pdf"] is not None
+        # The grader must receive the extracted plain text, not the LaTeX source.
+        assert grade_calls == [_SAMPLE_RESUME_TEXT]
 
     def test_feedback_fed_into_second_attempt(
             self, mocker, sample_profile, sample_jd, tmp_path):
-        mocker.patch(
-            "api.ai_provider.keyword_extractor.extract_jd_keywords",
-            return_value={"keywords": [], "excerpts": []},
-        )
-        mocker.patch(
-            "api.ai_provider.keyword_extractor.format_jd_signals",
-            return_value="signals",
-        )
-
-        resume_json = {"sections": [{"kind": "experience", "items": [
-            {"role": "X", "company": "C", "bullets": ["b"]}]}]}
-
         provider_calls: list[dict] = []
 
         class FakeProv:
@@ -244,12 +256,12 @@ class TestResumeGeneratorIntegration:
                 self._scores = iter([5.0, 9.9])
 
             def generate_resume_stream(self, profile, jd, feedback=None,
-                                       previous_resume=None, today=None,
+                                       previous_latex=None, today=None,
                                        company_research=None):
                 provider_calls.append({
-                    "feedback": feedback, "previous_resume": previous_resume,
+                    "feedback": feedback, "previous_latex": previous_latex,
                 })
-                yield json.dumps(resume_json)
+                yield _SAMPLE_LATEX
 
             def grade_resume_stream(self, *a, **kw):
                 score = next(self._scores)
@@ -261,6 +273,9 @@ class TestResumeGeneratorIntegration:
         mocker.patch.object(
             gen_mod, "pdf_page_metrics",
             return_value={"fill": 0.5, "lines": [[]]},
+        )
+        mocker.patch.object(
+            gen_mod, "pdf_plain_text", return_value=_SAMPLE_RESUME_TEXT,
         )
         mocker.patch.object(gen_mod, "get_resume_page_cap", return_value=1)
         mocker.patch.object(gen_mod, "get_max_generation_attempts", return_value=2)
@@ -276,25 +291,13 @@ class TestResumeGeneratorIntegration:
         assert provider_calls[0]["feedback"] is None
         assert provider_calls[1]["feedback"] is not None
         assert "fix it" in provider_calls[1]["feedback"]
-        assert provider_calls[1]["previous_resume"] == resume_json
+        assert provider_calls[1]["previous_latex"].rstrip() == _SAMPLE_LATEX.rstrip()
 
     def test_returns_best_attempt_when_max_exhausted(
             self, mocker, sample_profile, sample_jd, tmp_path):
-        mocker.patch(
-            "api.ai_provider.keyword_extractor.extract_jd_keywords",
-            return_value={"keywords": [], "excerpts": []},
-        )
-        mocker.patch(
-            "api.ai_provider.keyword_extractor.format_jd_signals",
-            return_value="signals",
-        )
-
-        resume_json = {"sections": [{"kind": "experience", "items": [
-            {"role": "X", "company": "C", "bullets": ["b"]}]}]}
-
         class FakeProv:
             def generate_resume_stream(self, *a, **kw):
-                yield json.dumps(resume_json)
+                yield _SAMPLE_LATEX
 
             def grade_resume_stream(self, *a, **kw):
                 yield json.dumps({"score": 6.0, "feedback": "meh", "drops": []})
@@ -305,6 +308,9 @@ class TestResumeGeneratorIntegration:
         mocker.patch.object(
             gen_mod, "pdf_page_metrics",
             return_value={"fill": 0.5, "lines": [[]]},
+        )
+        mocker.patch.object(
+            gen_mod, "pdf_plain_text", return_value=_SAMPLE_RESUME_TEXT,
         )
         mocker.patch.object(gen_mod, "get_resume_page_cap", return_value=1)
         mocker.patch.object(gen_mod, "get_max_generation_attempts", return_value=2)
@@ -319,23 +325,11 @@ class TestResumeGeneratorIntegration:
         assert result["grade"]["score"] == 6.0
         assert len(result["attempts"]) == 2
 
-    def test_strips_code_fence_from_resume_json(
+    def test_strips_code_fence_from_latex(
             self, mocker, sample_profile, sample_jd, tmp_path):
-        mocker.patch(
-            "api.ai_provider.keyword_extractor.extract_jd_keywords",
-            return_value={"keywords": [], "excerpts": []},
-        )
-        mocker.patch(
-            "api.ai_provider.keyword_extractor.format_jd_signals",
-            return_value="signals",
-        )
-
-        resume_json = {"sections": [{"kind": "experience", "items": [
-            {"role": "X", "company": "C", "bullets": ["b"]}]}]}
-
         class FakeProv:
             def generate_resume_stream(self, *a, **kw):
-                yield "```json\n" + json.dumps(resume_json) + "\n```"
+                yield "```latex\n" + _SAMPLE_LATEX + "\n```"
 
             def grade_resume_stream(self, *a, **kw):
                 yield json.dumps({"score": 9.9, "feedback": "ok", "drops": []})
@@ -347,6 +341,9 @@ class TestResumeGeneratorIntegration:
             gen_mod, "pdf_page_metrics",
             return_value={"fill": 0.5, "lines": [[]]},
         )
+        mocker.patch.object(
+            gen_mod, "pdf_plain_text", return_value=_SAMPLE_RESUME_TEXT,
+        )
         mocker.patch.object(gen_mod, "get_resume_page_cap", return_value=1)
         mocker.patch.object(gen_mod, "get_max_generation_attempts", return_value=1)
         mocker.patch.object(gen_mod, "get_resume_score_threshold", return_value=9.0)
@@ -357,3 +354,34 @@ class TestResumeGeneratorIntegration:
         gen = ResumeGenerator(sample_profile, sample_jd, {}, provider=FakeProv())
         result = gen.generate_latex()
         assert result["chosen_attempt"] == 1
+
+    def test_compile_failure_skips_grading(
+            self, mocker, sample_profile, sample_jd, tmp_path):
+        """No PDF means no ATS-extractable text, so the grader is never called
+        — there's nothing meaningful to grade."""
+        grade_calls: list[str] = []
+
+        class FakeProv:
+            def generate_resume_stream(self, *a, **kw):
+                yield _SAMPLE_LATEX
+
+            def grade_resume_stream(self, resume_text, *a, **kw):
+                grade_calls.append(resume_text)
+                yield json.dumps({"score": 9.9, "feedback": "ok", "drops": []})
+
+        mocker.patch.object(
+            gen_mod, "compile_latex",
+            side_effect=gen_mod.LatexCompileError("boom", log_excerpt="! boom"),
+        )
+        mocker.patch.object(gen_mod, "get_resume_page_cap", return_value=1)
+        mocker.patch.object(gen_mod, "get_max_generation_attempts", return_value=1)
+        mocker.patch.object(gen_mod, "get_resume_score_threshold", return_value=9.0)
+        mocker.patch("api.ai_provider.get_resume_template", return_value="")
+        mocker.patch.object(persist_mod, "get_resume_output_dir",
+                            return_value=tmp_path / "outdir")
+
+        gen = ResumeGenerator(sample_profile, sample_jd, {}, provider=FakeProv())
+        result = gen.generate_latex()
+        assert grade_calls == []
+        assert result["grade"] is None
+        assert result["pdf"] is None

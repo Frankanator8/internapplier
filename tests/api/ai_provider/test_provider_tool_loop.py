@@ -10,8 +10,11 @@ from api.ai_provider.formatting import TOOL_EVENT_PREFIX
 from api.ai_provider.provider import OpenRouterProvider
 
 
+pytestmark = pytest.mark.usefixtures("isolated_app_dir")
+
+
 @pytest.fixture
-def provider(fake_api_key):
+def provider(fake_api_key, isolated_app_dir):
     return OpenRouterProvider()
 
 

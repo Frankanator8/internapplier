@@ -18,11 +18,61 @@ import requests
 
 from .formatting import TOOL_EVENT_PREFIX, _format_tool_event
 from .settings import _load_model_config
+from ..constants import (
+    OPENROUTER_PROVIDER,
+    OPENROUTER_STREAM_MAX_RETRIES,
+    OPENROUTER_STREAM_RETRY_BACKOFF,
+    OPENROUTER_STREAM_TIMEOUT,
+)
 from ..token_usage import record_usage
 
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+RETRYABLE_STREAM_ERRORS = (
+    requests.exceptions.Timeout,
+    requests.exceptions.ConnectionError,
+    requests.exceptions.ChunkedEncodingError,
+)
+
+
+def _format_throughput(
+    log_label: str,
+    completion_t,
+    elapsed_s,
+    *,
+    prompt_t=0,
+) -> str:
+    """Human-readable tok/s line for the console and the log."""
+    try:
+        completion = float(completion_t or 0)
+    except (TypeError, ValueError):
+        completion = 0.0
+    try:
+        elapsed = float(elapsed_s or 0)
+    except (TypeError, ValueError):
+        elapsed = 0.0
+    try:
+        prompt = int(prompt_t or 0)
+    except (TypeError, ValueError):
+        prompt = 0
+    if elapsed < 1e-3:
+        rate = "n/a tok/s"
+    else:
+        rate = f"{completion / elapsed:.1f} tok/s"
+    return (
+        f"[throughput] {log_label} — {rate} "
+        f"({int(completion)} completion / {elapsed:.2f}s) prompt={prompt}"
+    )
+
+
+def _emit_throughput(log_label: str, completion_t, elapsed_s, *, prompt_t=0) -> str:
+    line = _format_throughput(
+        log_label, completion_t, elapsed_s, prompt_t=prompt_t,
+    )
+    print(line, flush=True)
+    return line
 
 
 class OpenRouterHTTPClient:
@@ -63,10 +113,14 @@ class OpenRouterHTTPClient:
         return headers
 
     def _record_token_usage(
-        self, log_label: str, tier: str, usage: dict | None, *, model: str
+        self, log_label: str, tier: str, usage: dict | None, *,
+        model: str, elapsed_s: float | None = None,
     ) -> None:
         if not isinstance(usage, dict):
             logger.warning("%s — no usage block received (model=%s)", log_label, model)
+            if elapsed_s is not None:
+                line = _emit_throughput(log_label, 0, elapsed_s, prompt_t=0)
+                logger.info("%s", line)
             return
         prompt_t = usage.get("prompt_tokens", 0)
         completion_t = usage.get("completion_tokens", 0)
@@ -80,6 +134,11 @@ class OpenRouterHTTPClient:
             "%s — usage tier=%s prompt=%s completion=%s cache_read=%s cache_write=%s",
             log_label, tier, prompt_t, completion_t, cache_read, cache_write,
         )
+        if elapsed_s is not None:
+            line = _emit_throughput(
+                log_label, completion_t, elapsed_s, prompt_t=prompt_t,
+            )
+            logger.info("%s", line)
         try:
             record_usage(tier, prompt_t, completion_t)
         except Exception:
@@ -100,6 +159,7 @@ class OpenRouterHTTPClient:
             "stream": True,
             "messages": messages,
             "usage": {"include": True},
+            "provider": OPENROUTER_PROVIDER,
         }
         if tools:
             payload["tools"] = tools
@@ -185,72 +245,98 @@ class OpenRouterHTTPClient:
     ) -> Iterator[str]:
         """Stream a single completion request. Yields content chunks when
         ``emit_content`` is True. Returns ``(content, tool_calls, finish, usage)``
-        via ``StopIteration.value`` (i.e. ``return`` from this generator)."""
-        accumulated: list[str] = []
-        tool_calls_acc: dict[int, dict] = {}
-        finish_reason: str | None = None
-        final_usage: dict | None = None
-        chunk_count = 0
-        t0 = time.perf_counter()
-        try:
-            with requests.post(
-                BASE_URL,
-                headers=self._headers(sse=True),
-                json=payload,
-                stream=True,
-                timeout=timeout,
-            ) as response:
-                response.raise_for_status()
-                response.encoding = "utf-8"
-                for line in response.iter_lines(decode_unicode=True):
-                    if not line or line.startswith(": ") or not line.startswith("data: "):
-                        continue
-                    raw = line[6:].strip()
-                    if raw == "[DONE]":
-                        break
-                    try:
-                        data = json.loads(raw)
-                    except json.JSONDecodeError:
-                        logger.debug("%s — skipping non-JSON line: %r", log_label, raw[:120])
-                        continue
-                    if isinstance(data.get("usage"), dict):
-                        final_usage = data["usage"]
-                    choices = data.get("choices") or []
-                    if not choices:
-                        continue
-                    choice = choices[0]
-                    delta = choice.get("delta") or {}
-                    content = delta.get("content")
-                    if content:
-                        chunk_count += 1
-                        accumulated.append(content)
-                        if emit_content:
-                            yield content
-                    for tc in delta.get("tool_calls") or []:
-                        idx = tc.get("index", 0)
-                        entry = tool_calls_acc.setdefault(
-                            idx, {"id": None, "name": None, "arguments": ""},
-                        )
-                        if tc.get("id"):
-                            entry["id"] = tc["id"]
-                        fn = tc.get("function") or {}
-                        if fn.get("name"):
-                            entry["name"] = fn["name"]
-                        if fn.get("arguments"):
-                            entry["arguments"] += fn["arguments"]
-                    if choice.get("finish_reason"):
-                        finish_reason = choice["finish_reason"]
-            logger.info(
-                "%s — stream done in %.2fs, %d chunks, finish=%s, tool_calls=%d",
-                log_label, time.perf_counter() - t0, chunk_count, finish_reason,
-                len(tool_calls_acc),
-            )
-            self._record_token_usage(log_label, tier, final_usage, model=model)
-        except Exception:
-            logger.exception("%s — stream failed", log_label)
-            raise
+        via ``StopIteration.value`` (i.e. ``return`` from this generator).
 
-        return "".join(accumulated), tool_calls_acc, finish_reason, final_usage
+        Transport failures (timeouts, dropped connections) are retried up to
+        :data:`OPENROUTER_STREAM_MAX_RETRIES` times, but only while nothing has
+        been handed to the caller yet — once a chunk is yielded a retry would
+        duplicate it downstream."""
+        attempt = 0
+        while True:
+            accumulated: list[str] = []
+            tool_calls_acc: dict[int, dict] = {}
+            finish_reason: str | None = None
+            final_usage: dict | None = None
+            chunk_count = 0
+            yielded = False
+            t0 = time.perf_counter()
+            try:
+                with requests.post(
+                    BASE_URL,
+                    headers=self._headers(sse=True),
+                    json=payload,
+                    stream=True,
+                    timeout=timeout,
+                ) as response:
+                    response.raise_for_status()
+                    response.encoding = "utf-8"
+                    for line in response.iter_lines(decode_unicode=True):
+                        if not line or line.startswith(": ") or not line.startswith("data: "):
+                            continue
+                        raw = line[6:].strip()
+                        if raw == "[DONE]":
+                            break
+                        try:
+                            data = json.loads(raw)
+                        except json.JSONDecodeError:
+                            logger.debug("%s — skipping non-JSON line: %r", log_label, raw[:120])
+                            continue
+                        if isinstance(data.get("usage"), dict):
+                            final_usage = data["usage"]
+                        choices = data.get("choices") or []
+                        if not choices:
+                            continue
+                        choice = choices[0]
+                        delta = choice.get("delta") or {}
+                        content = delta.get("content")
+                        if content:
+                            chunk_count += 1
+                            accumulated.append(content)
+                            if emit_content:
+                                yielded = True
+                                yield content
+                        for tc in delta.get("tool_calls") or []:
+                            idx = tc.get("index", 0)
+                            entry = tool_calls_acc.setdefault(
+                                idx, {"id": None, "name": None, "arguments": ""},
+                            )
+                            if tc.get("id"):
+                                entry["id"] = tc["id"]
+                            fn = tc.get("function") or {}
+                            if fn.get("name"):
+                                entry["name"] = fn["name"]
+                            if fn.get("arguments"):
+                                entry["arguments"] += fn["arguments"]
+                        if choice.get("finish_reason"):
+                            finish_reason = choice["finish_reason"]
+                elapsed_s = time.perf_counter() - t0
+                logger.info(
+                    "%s — stream done in %.2fs, %d chunks, finish=%s, tool_calls=%d",
+                    log_label, elapsed_s, chunk_count, finish_reason,
+                    len(tool_calls_acc),
+                )
+                self._record_token_usage(
+                    log_label, tier, final_usage, model=model, elapsed_s=elapsed_s,
+                )
+            except RETRYABLE_STREAM_ERRORS as exc:
+                elapsed_s = time.perf_counter() - t0
+                if yielded or attempt >= OPENROUTER_STREAM_MAX_RETRIES:
+                    logger.exception("%s — stream failed", log_label)
+                    raise
+                attempt += 1
+                delay = OPENROUTER_STREAM_RETRY_BACKOFF * (2 ** (attempt - 1))
+                logger.warning(
+                    "%s — stream died after %.2fs (%s: %s); retry %d/%d in %.1fs",
+                    log_label, elapsed_s, type(exc).__name__, exc,
+                    attempt, OPENROUTER_STREAM_MAX_RETRIES, delay,
+                )
+                time.sleep(delay)
+                continue
+            except Exception:
+                logger.exception("%s — stream failed", log_label)
+                raise
+
+            return "".join(accumulated), tool_calls_acc, finish_reason, final_usage
 
     # ── Public entry points ─────────────────────────────────────────────────
 
@@ -260,7 +346,7 @@ class OpenRouterHTTPClient:
         *,
         tier: str,
         log_label: str,
-        timeout: tuple[float, float] = (10.0, 30.0),
+        timeout: tuple[float, float] = OPENROUTER_STREAM_TIMEOUT,
         tools: list[dict] | None = None,
         max_tool_rounds: int = 4,
         tool_overrides: dict | None = None,
@@ -354,7 +440,11 @@ class OpenRouterHTTPClient:
             "%s — POST %s tier=%s model=%s timeout=%s",
             log_label, BASE_URL, tier, model, timeout,
         )
-        payload: dict = {"model": model, "messages": messages}
+        payload: dict = {
+            "model": model,
+            "messages": messages,
+            "provider": OPENROUTER_PROVIDER,
+        }
         if response_format:
             payload["response_format"] = response_format
 
@@ -366,9 +456,10 @@ class OpenRouterHTTPClient:
                 json=payload,
                 timeout=timeout,
             )
+            elapsed_s = time.perf_counter() - t0
             logger.info(
                 "%s — HTTP %s in %.2fs",
-                log_label, response.status_code, time.perf_counter() - t0,
+                log_label, response.status_code, elapsed_s,
             )
             logger.debug("%s — raw response: %s", log_label, response.text[:300])
             response.raise_for_status()
@@ -380,6 +471,6 @@ class OpenRouterHTTPClient:
         self._record_token_usage(
             log_label, tier,
             response_json.get("usage") if isinstance(response_json, dict) else None,
-            model=model,
+            model=model, elapsed_s=elapsed_s,
         )
         return response_json["choices"][0]["message"]["content"].strip()

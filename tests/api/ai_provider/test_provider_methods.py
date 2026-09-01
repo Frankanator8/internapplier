@@ -50,12 +50,15 @@ class TestAnalyzeBullet:
         assert "temperature" not in payload
 
 
+_SAMPLE_RESUME_TEXT = "Ada Lovelace\nSoftware Engineer @ Acme\n- Built a thing"
+
+
 class TestGradeResume:
     def test_tier_fast_no_tools(self, provider, mock_openrouter, sse_factory,
-                                sample_resume_json, sample_jd):
+                                sample_jd):
         mock_openrouter.queue_stream(_stop_event(sse_factory))
         list(provider.grade_resume_stream(
-            sample_resume_json, sample_jd, fill=0.92, page_cap=1.0,
+            _SAMPLE_RESUME_TEXT, sample_jd, fill=0.92, page_cap=1.0,
             today="2026-01-01",
         ))
         payload = mock_openrouter.last_payload()
@@ -65,21 +68,26 @@ class TestGradeResume:
         assert "2026-01-01" in user_msg
         assert "fill=0.92" in user_msg
         assert sample_jd.strip() in user_msg
+        assert "<resume>" in user_msg
+        assert _SAMPLE_RESUME_TEXT in user_msg
+        # The grader must never be asked to read LaTeX source.
+        assert "Resume LaTeX:" not in user_msg
+        assert "\\documentclass" not in user_msg
 
     def test_omits_page_status_when_fill_none(
-            self, provider, mock_openrouter, sse_factory, sample_resume_json, sample_jd):
+            self, provider, mock_openrouter, sse_factory, sample_jd):
         mock_openrouter.queue_stream(_stop_event(sse_factory))
         list(provider.grade_resume_stream(
-            sample_resume_json, sample_jd, today="2026-01-01",
+            _SAMPLE_RESUME_TEXT, sample_jd, today="2026-01-01",
         ))
         user_msg = mock_openrouter.last_payload()["messages"][1]["content"]
         assert "page_status" not in user_msg
 
     def test_includes_research_block(
-            self, provider, mock_openrouter, sse_factory, sample_resume_json, sample_jd):
+            self, provider, mock_openrouter, sse_factory, sample_jd):
         mock_openrouter.queue_stream(_stop_event(sse_factory))
         list(provider.grade_resume_stream(
-            sample_resume_json, sample_jd,
+            _SAMPLE_RESUME_TEXT, sample_jd,
             company_research={"summary": "Acme is great"},
             today="2026-01-01",
         ))
@@ -90,13 +98,8 @@ class TestGradeResume:
 
 class TestGenerateResume:
     def test_tier_powerful_with_tools(
-            self, provider, mock_openrouter, sse_factory, monkeypatch,
+            self, provider, mock_openrouter, sse_factory,
             sample_profile, sample_jd):
-        # Stub the KeyBERT extractor — no model load in tests
-        monkeypatch.setattr(
-            "api.ai_provider.keyword_extractor.extract_jd_keywords",
-            lambda jd, top_n=30: {"keywords": [], "excerpts": []},
-        )
         mock_openrouter.queue_stream(_stop_event(sse_factory))
         list(provider.generate_resume_stream(
             sample_profile, sample_jd, today="2026-01-01",
@@ -107,6 +110,39 @@ class TestGenerateResume:
         assert payload["tools"]
         assert payload["tools"][0]["function"]["name"] == "page_length"
         assert payload["tool_choice"] == "auto"
+        user_msg = _text(payload["messages"][1]["content"])
+        assert "<job_description>" in user_msg
+        assert sample_jd in user_msg
+        assert "<jd_signals>" not in user_msg
+        assert "<template_note>" not in user_msg
+        assert "<header>" in user_msg
+        assert "Ada Lovelace" in user_msg
+
+    def test_sends_raw_latex_template_not_jinja(
+            self, provider, mock_openrouter, sse_factory, monkeypatch,
+            sample_profile, sample_jd):
+        monkeypatch.setattr(
+            "api.ai_provider.provider.get_resume_template",
+            lambda: r"\documentclass{article}\begin{document}NAME\end{document}",
+        )
+        mock_openrouter.queue_stream(_stop_event(sse_factory))
+        list(provider.generate_resume_stream(
+            sample_profile, sample_jd, today="2026-01-01",
+        ))
+        user_msg = _text(mock_openrouter.last_payload()["messages"][1]["content"])
+        assert "<template>" in user_msg
+        assert r"\documentclass{article}" in user_msg
+
+        monkeypatch.setattr(
+            "api.ai_provider.provider.get_resume_template",
+            lambda: r"((* for s in sections *)) ((( s.title ))) ((* endfor *))",
+        )
+        mock_openrouter.queue_stream(_stop_event(sse_factory))
+        list(provider.generate_resume_stream(
+            sample_profile, sample_jd, today="2026-01-01",
+        ))
+        user_msg = _text(mock_openrouter.last_payload()["messages"][1]["content"])
+        assert "<template>" not in user_msg
 
 
 class TestAnswerQuestion:

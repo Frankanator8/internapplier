@@ -13,6 +13,7 @@ import uuid
 from typing import Any
 
 from ..app_settings import get_resume_output_dir
+from ..constants import RESUME_TARGET_FILL
 from .json_recovery import norm
 
 logger = logging.getLogger(__name__)
@@ -143,6 +144,7 @@ def build_feedback(
     grade: dict | None,
     score_ok: bool,
     short_bullets: list[dict] | None = None,
+    target_fill: float = RESUME_TARGET_FILL,
 ) -> str | None:
     parts: list[str] = []
     if compile_error:
@@ -163,6 +165,24 @@ def build_feedback(
             "Length may drop below the original — but keep the most important "
             "information (lead action verb, primary impact metric, key tools relevant "
             "to the JD); drop secondary clauses first. Never invent facts."
+        )
+    elif (
+        fill is not None
+        and page_ok
+        and target_fill is not None
+        and fill < target_fill - 1e-6
+    ):
+        restore_note = (
+            f" Consider restoring the most relevant of the previously-removed items: "
+            f"{'; '.join(last_drops)}."
+            if last_drops
+            else ""
+        )
+        parts.append(
+            f"UNDERFILLED: previous draft only filled {fill:.2f} of {page_cap} page(s); "
+            f"aim closer to {target_fill:.2f}. You have room for more content —"
+            f"{restore_note} Otherwise strengthen existing bullets with additional "
+            "concrete detail/metric/keyword the profile already supports. Never invent facts."
         )
     if short_bullets:
         lines = [

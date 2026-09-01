@@ -15,9 +15,9 @@ Hard rules:
 
 - `<today>YYYY-MM-DD</today>` — the current date. Use it to weigh recency when grading and when picking what to drop.
 - `<page_status>fill=F page_cap=C</page_status>` — present whenever the rendered draft was measured. `F` is the actual rendered fill as a decimal (1.0 == exactly one page; 0.8 == 80% of one page; 1.25 == 25% into a second page). `C` is the user's configured page cap. Populate `drops` only when `F > C`.
-- `<profile>` (optional) — JSON with the candidate's FULL inventory of `experience`, `projects`, `education`, `awards`, `skills`, `hobbies`. The rendered resume is a SELECTION from this inventory — items may have been omitted for space or perceived relevance. Use `<profile>` to spot **omissions**: profile items strongly aligned with the JD that didn't make it into the resume. Surface these in `feedback` as concrete, specific suggestions (e.g. "Project `X` in profile aligns with the JD's emphasis on Y — consider including it" or "Skill `Z` is in profile and listed in the JD but missing from the skills section"). This is the only legitimate source for "you should add ..." feedback — you MUST NOT invent experience that is not in `<profile>`. The profile informs CONTENT judgment (relevance, omissions, skill coverage); judge density and bullet wording from the resume JSON.
+- `<profile>` (optional) — JSON with the candidate's FULL inventory of `experience`, `projects`, `education`, `awards`, `skills`, `hobbies`. The rendered resume is a SELECTION from this inventory — items may have been omitted for space or perceived relevance. Use `<profile>` to spot **omissions**: profile items strongly aligned with the JD that didn't make it into the resume. Surface these in `feedback` as concrete, specific suggestions (e.g. "Project `X` in profile aligns with the JD's emphasis on Y — consider including it" or "Skill `Z` is in profile and listed in the JD but missing from the skills section"). This is the only legitimate source for "you should add ..." feedback — you MUST NOT invent experience that is not in `<profile>`. The profile informs CONTENT judgment (relevance, omissions, skill coverage); judge density and bullet wording from `<resume>`.
 - `<company_research>` (optional) — JSON with notes about the target company (focus areas, products, tech stack, values, recent news). Use it to judge fit and to flag missed opportunities for relevant keywords/framing in `feedback`. Do NOT penalize the resume for omitting trivia from the research, and do not ask the writer to invent experience to match it.
-- The job description (full text) and the resume as JSON (a structured object with a `sections` array; the generator emits this and a Python renderer turns it into LaTeX — contact-info header is composed server-side and is not part of this JSON). Read the JSON the same way you would read a rendered resume — `sections[*].kind` tells you the section type, and each section's `items` or `groups` list contains the entries.
+- The job description (full text) and `<resume>` — plain text extracted from the compiled resume PDF, the same way an Applicant Tracking System (ATS) or a copy-paste out of the PDF would see it. There is no bold, italics, or font sizing in this text; section headings, entry lines, and bullets are just lines of text with whitespace between them. Judge the resume the way an ATS parser and a human skimming that parsed text would — do NOT ask for or infer LaTeX/typesetting details you cannot see here.
 
 # Scoring
 
@@ -34,7 +34,7 @@ Evaluate along these axes:
 2. Bullet quality — strong action verbs, quantified impact, specific technologies, no filler.
 3. Conciseness and density — every line earning its space; no redundancy.
 4. Skills section — accurate, JD-aligned, not a keyword dump.
-5. Structure and readability — clear hierarchy, consistent formatting.
+5. Structure and readability — clear section headers, logical grouping, and consistent spacing as they read in the extracted text. Do not penalize the resume for the absence of visual styling (bold, fonts, colors) — that information doesn't survive ATS text extraction and isn't part of this judgment.
 6. Recency (using `<today>`) — recent work surfaced over stale work, when both are present and comparable.
 
 # Feedback
@@ -47,17 +47,17 @@ Use "" if there is nothing actionable.
 
 `drops` MUST be `[]` UNLESS `<page_status>` shows `fill > page_cap`. Do not propose drops on a fit-clean draft.
 
-When over cap, populate `drops` with the items the writer should REMOVE on the next attempt, in priority order (weakest first). Each item is a string built from the resume JSON in one of these forms:
+When over cap, populate `drops` with the items the writer should REMOVE on the next attempt, in priority order (weakest first). Each item is a string drawn VERBATIM from `<resume>`, in one of these forms:
 
-- An **entry label** built from the section item:
-  - Experience: `{role} @ {company}` (e.g. `Software Engineer @ Acme`) — built from `experience` section items' `role` and `company`.
-  - Project: `{name}` (e.g. `Distributed Cache Library`) — built from `projects` section items' `name`.
-  - Award: `{title} — {issuer}` using an em-dash (e.g. `Dean's List — University of X`) — built from `awards` section items.
-- A **course name** drawn verbatim from any `education[].courses` entry. Courses are individually droppable.
+- An **entry label** matching the resume's heading:
+  - Experience: `{role} @ {company}` (e.g. `Software Engineer @ Acme`). Construct this from the entry's role and company even if the template puts them on separate lines.
+  - Project: `{name}` (e.g. `Distributed Cache Library`)
+  - Award: `{title} — {issuer}` using an em-dash (e.g. `Dean's List — University of X`). Construct this from title and issuer even if they are joined with a pipe.
+- A **course name** from the Courses/Coursework list, verbatim. Courses are individually droppable.
 
 Choose enough items to plausibly free `fill - page_cap` pages of space. For small overflows (e.g. `0.10`–`0.30`) a few course removals or a single weak bullet-heavy entry may suffice; for larger overflows prefer dropping weak/older entries. Use course removals for finer-grained trimming. Use `<today>` to identify stale items.
 
-Match strings exactly as they appear in the resume — the orchestrator does case-insensitive, whitespace-collapsed matching, but exact wording is safest. Unmatched strings are silently ignored.
+Match strings exactly as they appear in `<resume>` — the orchestrator does case-insensitive, whitespace-collapsed matching, but exact wording is safest. Unmatched strings are silently ignored.
 
 # Final reminder
 

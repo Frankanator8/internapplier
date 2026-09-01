@@ -68,7 +68,7 @@ class OpenRouterProvider:
 
     def grade_resume_stream(
         self,
-        resume_json: dict,
+        resume_text: str,
         job_description: str,
         *,
         fill: float | None = None,
@@ -84,12 +84,9 @@ class OpenRouterProvider:
             )
             if profile else "none"
         )
-        resume_text = (
-            json.dumps(resume_json, separators=(",", ":"))
-            if resume_json is not None else ""
-        )
+        resume_text = resume_text or ""
         logger.info(
-            "grade_resume_stream — jd=%r resume_chars=%d fill=%s page_cap=%s research=%s profile=%s",
+            "grade_resume_stream — jd=%r text_chars=%d fill=%s page_cap=%s research=%s profile=%s",
             job_description[:120], len(resume_text),
             f"{fill:.3f}" if fill is not None else None,
             f"{page_cap:.3f}" if page_cap is not None else None,
@@ -115,7 +112,7 @@ class OpenRouterProvider:
         )
         dynamic_text = (
             f"{page_status}"
-            f"Resume JSON:\n{resume_text}\n\n"
+            f"<resume>\n{resume_text}\n</resume>\n\n"
             "Grade this resume against the job description following the system "
             "instructions exactly."
         )
@@ -150,21 +147,21 @@ class OpenRouterProvider:
         profile: dict,
         job_description: str,
         feedback: str | None = None,
-        previous_resume: dict | None = None,
+        previous_latex: str | None = None,
         today: str | None = None,
         company_research: dict | None = None,
     ) -> Iterator[str]:
         logger.info(
-            "generate_resume_stream — jd=%r feedback=%s previous_resume=%s research=%s",
+            "generate_resume_stream — jd=%r feedback=%s previous_latex=%s research=%s",
             job_description[:120],
             f"{len(feedback)} chars" if feedback else "none",
-            "yes" if previous_resume else "none",
+            f"{len(previous_latex)} chars" if previous_latex else "none",
             f"{len(company_research)} keys" if company_research else "none",
         )
         from ..generate_resume.agent_tools import OPENAI_TOOL_SCHEMAS
 
         messages = self._build_generate_resume_messages(
-            profile, job_description, feedback, previous_resume, today,
+            profile, job_description, feedback, previous_latex, today,
             company_research=company_research,
         )
         yield from self._client.stream_chat_completion(
@@ -179,26 +176,28 @@ class OpenRouterProvider:
         profile: dict,
         job_description: str,
         feedback: str | None,
-        previous_resume: dict | None = None,
+        previous_latex: str | None = None,
         today: str | None = None,
         company_research: dict | None = None,
     ) -> list[dict]:
-        from .keyword_extractor import extract_jd_keywords, format_jd_signals
+        from ..generate_resume.persist import build_header_from_general_info
 
-        signals = extract_jd_keywords(job_description)
         static_sections: list[str] = [
             f"<today>{_today(today)}</today>",
-            f"<jd_signals>\n{format_jd_signals(signals)}\n</jd_signals>",
+            f"<job_description>\n{job_description}\n</job_description>",
         ]
+        header = build_header_from_general_info((profile or {}).get("general_info") or {})
+        if header:
+            static_sections.append(
+                f"<header>\n{json.dumps(header, separators=(',', ':'))}\n</header>"
+            )
         if company_research:
             static_sections.append(
                 f"<company_research>\n{json.dumps(company_research, separators=(',', ':'))}\n</company_research>"
             )
-        if get_resume_template().strip():
-            static_sections.append(
-                "<template_note>\nA Jinja-style LaTeX template is configured server-side. "
-                "You do not interact with it; emit JSON only.\n</template_note>"
-            )
+        template = get_resume_template().strip()
+        if template and "((" not in template:
+            static_sections.append(f"<template>\n{template}\n</template>")
         static_sections.append(f"<profile>\n{_profile_json(profile)}\n</profile>")
 
         user_content: list[dict] = [{
@@ -206,10 +205,10 @@ class OpenRouterProvider:
             "text": "\n\n".join(static_sections),
             "cache_control": {"type": "ephemeral"},
         }]
-        if previous_resume:
+        if previous_latex:
             user_content.append({
                 "type": "text",
-                "text": f"<previous_draft>\n{json.dumps(previous_resume, separators=(',', ':'))}\n</previous_draft>",
+                "text": f"<previous_draft>\n{previous_latex}\n</previous_draft>",
                 "cache_control": {"type": "ephemeral"},
             })
         if feedback:

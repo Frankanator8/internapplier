@@ -5,10 +5,8 @@ Pipeline that turns a job posting + the user's base resume into a tailored resum
 | File | Purpose |
 |---|---|
 | `generator.py` | Top-level orchestrator — runs the full pipeline end to end. |
-| `agent_tools.py` | Tool definitions exposed to the LLM agent (bullet rewriting, ranking, etc.). |
-| `compile.py` | Assembles the final resume from selected bullets/sections. |
-| `render.py` | Renders the compiled resume to its output format. |
-| `preview.py` | Compiles a template to PDF with sample data, for the Settings editor. |
-| `sample_data.py` | Fictional resume used by `preview.py` — covers every section kind. |
+| `agent_tools.py` | Tool definitions exposed to the LLM agent (`page_length` compile + fill check). |
+| `compile.py` | pdflatex compile + page-fill measurement + plain-text extraction for grading. |
+| `preview.py` | Compiles the Settings template editor's LaTeX to PDF as-is; falls back to the bundled default when the editor is empty. |
 | `persist.py` | Saves generated resumes into the on-disk library. |
-| `json_recovery.py` | Salvages malformed JSON from LLM responses. |
+| `json_recovery.py` | Salvages malformed JSON from LLM grader responses. |

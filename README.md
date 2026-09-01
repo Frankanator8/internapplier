@@ -41,11 +41,10 @@ experience, projects, skills, awards, and hobbies
 ([`app/sections/`](app/sections/)). Everything is stored as JSON locally and
 re-used by every other feature. The resume layout itself is a LaTeX template
 you can edit from inside Settings — swap in your own format, change fonts,
-add a sidebar — and every generated resume is rendered through it. The editor
-sits beside a live PDF preview: hit **Compile Preview** to render the template
-you're editing with built-in sample resume data, so you can iterate on the
-layout without spending an AI generation. LaTeX and template errors show up in
-the same pane with the compiler log.
+add a sidebar — and the generator uses it as the structural base. The editor
+sits beside a live PDF preview: hit **Compile Preview** to compile the LaTeX
+you're editing as-is, so you can iterate on the layout without spending an
+AI generation. LaTeX errors show up in the same pane with the compiler log.
 
 ### AI resume generator
 
@@ -57,9 +56,10 @@ multi-step pipeline:
   to extract values, recent work, and culture cues — cached per company so
   repeat applications don't re-pay the cost.
 - Bullet-level scoring of your existing experience against the JD.
-- Resume compilation that picks the strongest bullets, rewrites them for the
-  posting, and enforces a configurable page cap (default: 1 page).
-- LaTeX → PDF render, saved into your resume library and linked to the
+- The model writes tailored LaTeX, checks compile + page fill via a
+  `page_length` tool, and retries until it fits a configurable page cap
+  (default: 1 page).
+- pdflatex → PDF, saved into your resume library and linked to the
   application record.
 
 Every generated resume stays in a browsable library so you can re-open or
@@ -226,7 +226,7 @@ details.
 - **FastAPI** + **Uvicorn** for the local API.
 - **OpenRouter** as the LLM gateway (Gemini, GPT-4o, Claude, etc.).
 - **Playwright** for company-site scraping.
-- **Jinja2** + a LaTeX toolchain for resume rendering.
+- **pdflatex** (a LaTeX toolchain) for resume rendering.
 - **pypdf** for PDF post-processing.
 - **pyobjc** (Speech + AVFoundation) for native macOS speech.
 - **pytest** for the test suite.

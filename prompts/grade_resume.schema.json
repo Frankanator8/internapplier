@@ -18,7 +18,7 @@
     },
     "drops": {
       "type": "array",
-      "description": "Items to REMOVE on the next attempt, in priority order (weakest first). MUST be [] unless the user message includes <page_status> indicating the draft is over the page cap. Each item is drawn verbatim from the resume as either an entry label ({role} @ {company}, project {name}, award {title} — {issuer}) or a course name from the Courses/Coursework list.",
+      "description": "Items to REMOVE on the next attempt, in priority order (weakest first). MUST be [] unless the user message includes <page_status> indicating the draft is over the page cap. Each item is an entry label ({role} @ {company} constructed from the heading even if role and company are on separate lines, project {name}, award {title} — {issuer}) or a course name from the Courses/Coursework list.",
       "items": {
         "type": "string"
       }

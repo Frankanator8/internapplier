@@ -7,103 +7,79 @@ from api.generate_resume import agent_tools
 
 pytestmark = pytest.mark.usefixtures("isolated_app_dir")
 
+_BULLET = "bullet that wraps onto another line short"
+
 
 class TestDetectShortBullets:
     def test_empty_inputs_return_empty(self):
-        assert agent_tools.detect_short_bullets({}, []) == []
-        assert agent_tools.detect_short_bullets({"sections": []}, [[]]) == []
+        assert agent_tools.detect_short_bullets("", []) == []
+        assert agent_tools.detect_short_bullets(r"\item nothing", []) == []
 
     def test_short_tail_detected_when_last_line_underfilled(self):
-        resume = {
-            "sections": [
-                {"kind": "experience", "items": [
-                    {"role": "R", "company": "C",
-                     "bullets": ["bullet that wraps onto another line short"]},
-                ]},
-            ],
-        }
+        latex = r"\begin{itemize}\item " + _BULLET + r"\end{itemize}"
         lines = [[
             {"text": "bullet that wraps onto another", "width_ratio": 1.0,
              "is_last_on_page": False},
             {"text": "line short", "width_ratio": 0.1, "is_last_on_page": False},
             {"text": "footer", "width_ratio": 0.5, "is_last_on_page": True},
         ]]
-        out = agent_tools.detect_short_bullets(resume, lines)
+        out = agent_tools.detect_short_bullets(latex, lines)
         assert len(out) == 1
         assert out[0]["lines"] == 2
         assert out[0]["last_line_fill"] < 0.35
 
     def test_excludes_last_line_on_page(self):
-        resume = {
-            "sections": [
-                {"kind": "experience", "items": [
-                    {"role": "R", "company": "C", "bullets": ["a b c d e"]},
-                ]},
-            ],
-        }
-        # Bullet wraps with short final line, but it's the last on the page
+        latex = r"\item a b c d e"
         lines = [[
             {"text": "a b c", "width_ratio": 0.9, "is_last_on_page": False},
             {"text": "d e", "width_ratio": 0.1, "is_last_on_page": True},
         ]]
-        out = agent_tools.detect_short_bullets(resume, lines)
+        out = agent_tools.detect_short_bullets(latex, lines)
         assert out == []
 
     def test_single_line_bullets_not_flagged(self):
-        resume = {
-            "sections": [
-                {"kind": "experience", "items": [
-                    {"role": "R", "company": "C", "bullets": ["one liner"]},
-                ]},
-            ],
-        }
+        latex = r"\item one liner"
         lines = [[
             {"text": "one liner", "width_ratio": 0.2, "is_last_on_page": False},
             {"text": "trailer", "width_ratio": 0.4, "is_last_on_page": True},
         ]]
-        assert agent_tools.detect_short_bullets(resume, lines) == []
+        assert agent_tools.detect_short_bullets(latex, lines) == []
+
+    def test_strips_textbf_when_matching(self):
+        latex = r"\item \textbf{wraps onto another line short}"
+        lines = [[
+            {"text": "wraps onto another", "width_ratio": 1.0,
+             "is_last_on_page": False},
+            {"text": "line short", "width_ratio": 0.1, "is_last_on_page": False},
+            {"text": "footer", "width_ratio": 0.5, "is_last_on_page": True},
+        ]]
+        out = agent_tools.detect_short_bullets(latex, lines)
+        assert len(out) == 1
 
 
 class TestPageLengthTool:
-    def test_empty_resume_returns_error(self):
-        out = agent_tools.page_length(resume={})
+    def test_empty_latex_returns_error(self):
+        out = agent_tools.page_length(latex="")
         assert out["ok"] is False
-        assert "empty or non-object" in out["log_excerpt"]
+        assert "empty latex" in out["log_excerpt"]
 
-    def test_invalid_shape_returns_schema_error(self):
-        out = agent_tools.page_length(resume={"no_sections": True})
+    def test_non_string_returns_error(self):
+        out = agent_tools.page_length(latex={"sections": []})
         assert out["ok"] is False
-        assert "schema error" in out["log_excerpt"]
-
-    def test_render_error_surfaces(self, mocker):
-        mocker.patch(
-            "api.generate_resume.agent_tools.render_resume",
-            side_effect=RuntimeError("render bug"),
-        )
-        out = agent_tools.page_length(resume={"sections": [{"kind": "experience"}]})
-        assert out["ok"] is False
-        assert "render error" in out["log_excerpt"]
+        assert "empty latex" in out["log_excerpt"]
 
     def test_compile_error_returns_log_excerpt(self, mocker):
-        mocker.patch(
-            "api.generate_resume.agent_tools.render_resume",
-            return_value="\\begin{document}hi\\end{document}",
-        )
         from api.generate_resume.compile import LatexCompileError
         err = LatexCompileError("boom", log_excerpt="line1\nline2")
         mocker.patch(
             "api.generate_resume.agent_tools.compile_latex",
             side_effect=err,
         )
-        out = agent_tools.page_length(resume={"sections": [{"kind": "experience"}]})
+        out = agent_tools.page_length(latex=r"\documentclass{article}\begin{document}x\end{document}")
         assert out["ok"] is False
         assert "line1" in out["log_excerpt"]
 
     def test_success_returns_fill_and_cap(self, mocker, tmp_path):
-        mocker.patch(
-            "api.generate_resume.agent_tools.render_resume",
-            return_value="\\begin{document}hi\\end{document}",
-        )
         fake_pdf = tmp_path / "x.pdf"
         fake_pdf.write_bytes(b"%PDF")
         mocker.patch(
@@ -115,12 +91,29 @@ class TestPageLengthTool:
             return_value={"fill": 0.875, "lines": []},
         )
         out = agent_tools.page_length(
-            resume={"sections": [{"kind": "experience"}]},
+            latex=r"\documentclass{article}\begin{document}hi\end{document}",
         )
         assert out["ok"] is True
         assert out["fill"] == 0.875
         assert out["page_cap"] == 1  # default
+        assert out["target_fill"] == agent_tools.RESUME_TARGET_FILL
         assert out["short_bullets"] == []
+
+    def test_snippet_without_documentclass_is_wrapped(self, mocker, tmp_path):
+        fake_pdf = tmp_path / "x.pdf"
+        fake_pdf.write_bytes(b"%PDF")
+        compile_mock = mocker.patch(
+            "api.generate_resume.agent_tools.compile_latex",
+            return_value=fake_pdf,
+        )
+        mocker.patch(
+            "api.generate_resume.agent_tools.pdf_page_metrics",
+            return_value={"fill": 0.5, "lines": []},
+        )
+        agent_tools.page_length(latex=r"\section*{X}")
+        sent = compile_mock.call_args[0][0]
+        assert r"\documentclass" in sent
+        assert r"\section*{X}" in sent
 
 
 class TestRegistry:
@@ -128,6 +121,8 @@ class TestRegistry:
         assert "page_length" in agent_tools.TOOL_HANDLERS
 
     def test_openai_tool_schemas_has_page_length(self):
-        schema = agent_tools.OPENAI_TOOL_SCHEMAS["page_length"]
-        # It's a parsed JSON schema from page_length.tool.json
+        from api.ai_provider import load_schema
+        schema = load_schema("page_length.tool.json")
         assert isinstance(schema, dict)
+        assert schema["function"]["name"] == "page_length"
+        assert schema["function"]["parameters"]["required"] == ["latex"]

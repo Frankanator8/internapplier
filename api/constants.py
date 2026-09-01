@@ -70,8 +70,26 @@ DEFAULT_AUTO_RESYNC_PROMPTS = False
 OPENROUTER_KEY_INFO_URL = "https://openrouter.ai/api/v1/auth/key"
 OPENROUTER_KEY_INFO_TIMEOUT = 3.0
 
+# OpenRouter's default routing is price-weighted load balancing. Throughput
+# sort picks the currently fastest endpoint instead; it does not opt into
+# priority-tier pricing (that's `:nitro` on the model slug).
+OPENROUTER_PROVIDER = {"sort": "throughput"}
+
+# (connect, read) for SSE streams. The read budget is per-socket-read, so it
+# only trips on silence: reasoning models routinely withhold the response
+# headers for minutes while prefilling a large tool-loop transcript.
+OPENROUTER_STREAM_TIMEOUT = (10.0, 180.0)
+# Retries for a stream that dies before emitting anything to the caller.
+OPENROUTER_STREAM_MAX_RETRIES = 2
+OPENROUTER_STREAM_RETRY_BACKOFF = 2.0
+
 # --- Resume generation ---
 DEFAULT_RESUME_SCORE_THRESHOLD = 9.5
+# Target `fill` (see api.generate_resume.compile.pdf_page_metrics) for the
+# generator to aim for. Kept below 1.0 because the geometric fill measure
+# reads a genuinely full page much closer to 1.0 than the old line-density
+# measure did, so a lower target keeps the same practical "good enough" bar.
+RESUME_TARGET_FILL = 0.75
 AGENT_MAX_LOG_EXCERPT = 1500
 
 # --- Applications heatmap ---

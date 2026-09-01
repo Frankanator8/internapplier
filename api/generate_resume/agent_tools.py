@@ -1,20 +1,43 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Callable
 
 from ..ai_provider import load_schema
-from ..constants import AGENT_MAX_LOG_EXCERPT
-import re
+from ..constants import AGENT_MAX_LOG_EXCERPT, RESUME_TARGET_FILL
 
 from .compile import (
     LatexCompileError,
     compile_latex,
     pdf_page_metrics,
 )
-from .render import render_resume, validate_resume_shape
 
 logger = logging.getLogger(__name__)
+
+
+_MINIMAL_PREAMBLE = r"""\documentclass[11pt]{article}
+\usepackage[margin=0.75in]{geometry}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\begin{document}
+"""
+_MINIMAL_POSTAMBLE = "\n\\end{document}\n"
+
+_ITEM_RE = re.compile(r"\\item\b\s*(.*?)(?=\\item\b|\\end\{|\Z)", re.DOTALL)
+_TEX_WRAP_RE = re.compile(
+    r"\\(?:textbf|textit|emph|texttt|underline|textsc)\*?\{([^{}]*)\}"
+)
+_HREF_RE = re.compile(r"\\href\{[^{}]*\}\{([^{}]*)\}")
+_TEX_CMD_RE = re.compile(r"\\[a-zA-Z]+\*?(?:\[[^\]]*\])?")
+_TEX_COMMENT_RE = re.compile(r"(?<!\\)%[^\n]*")
+
+
+def _wrap_if_snippet(latex: str) -> str:
+    if "\\documentclass" in latex:
+        return latex
+    return _MINIMAL_PREAMBLE + latex + _MINIMAL_POSTAMBLE
 
 
 def _truncate(text: str, limit: int = AGENT_MAX_LOG_EXCERPT) -> str:
@@ -25,45 +48,48 @@ def _truncate(text: str, limit: int = AGENT_MAX_LOG_EXCERPT) -> str:
     return text[:limit] + f"\n…[truncated {len(text) - limit} chars]"
 
 
-SHORT_TAIL_THRESHOLD = 0.35
+SHORT_TAIL_THRESHOLD = 0.45
 
 
 def _norm_ws(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "").strip()).casefold()
 
 
-def _iter_resume_bullets(resume: dict):
-    """Yield every bullet string the renderer will draw, in document order."""
-    for section in resume.get("sections") or []:
-        kind = section.get("kind")
-        if kind in ("experience", "projects"):
-            for item in section.get("items") or []:
-                for bullet in item.get("bullets") or []:
-                    if isinstance(bullet, str) and bullet.strip():
-                        yield bullet
-        elif kind == "awards":
-            for item in section.get("items") or []:
-                title = (item.get("title") or "").strip()
-                issuer = (item.get("issuer") or "").strip()
-                combined = " ".join(p for p in (title, issuer) if p)
-                if combined:
-                    yield combined
+def _strip_tex(s: str) -> str:
+    s = _TEX_COMMENT_RE.sub("", s)
+    s = _HREF_RE.sub(r"\1", s)
+    for _ in range(4):
+        nxt = _TEX_WRAP_RE.sub(r"\1", s)
+        if nxt == s:
+            break
+        s = nxt
+    s = _TEX_CMD_RE.sub("", s)
+    s = s.replace("{", "").replace("}", "")
+    return _norm_ws(s)
 
 
-def detect_short_bullets(resume: dict, lines_by_page: list[list[dict]]) -> list[dict]:
+def _iter_resume_bullets(latex: str):
+    """Yield visible bullet text from ``\\item`` lines, in document order."""
+    if not latex:
+        return
+    for match in _ITEM_RE.finditer(latex):
+        text = _strip_tex(match.group(1))
+        if text:
+            yield text
+
+
+def detect_short_bullets(latex: str, lines_by_page: list[list[dict]]) -> list[dict]:
     """Identify bullets whose final wrapped line is mostly empty.
 
-    Matches each bullet's normalized text against the concatenation of
+    Matches each ``\\item``'s normalized text against the concatenation of
     reconstructed PDF lines (also normalized). Records bullets that span
     >=2 lines and whose last line's ``width_ratio`` is below
     :data:`SHORT_TAIL_THRESHOLD`, excluding the last line on each page
     (which is short for an unrelated reason).
     """
-    if not lines_by_page:
+    if not latex or not lines_by_page:
         return []
 
-    # Flatten lines across pages with metadata; also build a single
-    # normalized-text stream with char-offset → line-index mapping.
     flat: list[dict] = []
     for page in lines_by_page:
         for ln in page:
@@ -71,9 +97,8 @@ def detect_short_bullets(resume: dict, lines_by_page: list[list[dict]]) -> list[
     if not flat:
         return []
 
-    # Build cumulative normalized text and offset table.
     norm_parts: list[str] = []
-    line_offsets: list[tuple[int, int]] = []  # (start, end) per line
+    line_offsets: list[tuple[int, int]] = []
     cursor = 0
     for ln in flat:
         norm = _norm_ws(ln["text"])
@@ -94,13 +119,12 @@ def detect_short_bullets(resume: dict, lines_by_page: list[list[dict]]) -> list[
 
     findings: list[dict] = []
     search_from = 0
-    for bullet in _iter_resume_bullets(resume):
+    for bullet in _iter_resume_bullets(latex):
         needle = _norm_ws(bullet)
         if not needle:
             continue
         idx = haystack.find(needle, search_from)
         if idx < 0:
-            # Fall back to global search to tolerate ordering drift.
             idx = haystack.find(needle)
             if idx < 0:
                 continue
@@ -128,26 +152,16 @@ def detect_short_bullets(resume: dict, lines_by_page: list[list[dict]]) -> list[
     return findings[:6]
 
 
-def page_length(resume: Any = None, **_) -> dict[str, Any]:
-    """Render `resume` JSON through the configured Jinja template, compile,
-    and return its fill, page cap, and any short-tail bullets."""
-    # Imported lazily to avoid a circular import (ai_provider <-> agent_tools).
-    from api.ai_provider import get_resume_page_cap, get_resume_template
+def page_length(latex: Any = None, **_) -> dict[str, Any]:
+    """Compile `latex` and return fill, page cap, and any short-tail bullets."""
+    from api.ai_provider import get_resume_page_cap
 
     page_cap = get_resume_page_cap()
-    if not isinstance(resume, dict) or not resume:
-        return {"ok": False, "page_cap": page_cap, "log_excerpt": "empty or non-object resume argument"}
+    if not isinstance(latex, str) or not latex.strip():
+        return {"ok": False, "page_cap": page_cap, "log_excerpt": "empty latex argument"}
+    document = _wrap_if_snippet(latex)
     try:
-        validate_resume_shape(resume)
-    except ValueError as e:
-        return {"ok": False, "page_cap": page_cap, "log_excerpt": f"schema error: {e}"}
-    try:
-        latex = render_resume(resume, get_resume_template())
-    except Exception as e:
-        logger.exception("page_length — render_resume failed")
-        return {"ok": False, "page_cap": page_cap, "log_excerpt": f"render error: {e}"}
-    try:
-        pdf_path = compile_latex(latex)
+        pdf_path = compile_latex(document)
     except LatexCompileError as e:
         excerpt = getattr(e, "log_excerpt", "") or str(e)
         return {"ok": False, "page_cap": page_cap, "log_excerpt": _truncate(excerpt)}
@@ -157,11 +171,12 @@ def page_length(resume: Any = None, **_) -> dict[str, Any]:
         logger.exception("page_length — pdf_page_metrics failed")
         return {"ok": False, "page_cap": page_cap, "log_excerpt": f"pdf_page_metrics error: {e}"}
     fill = metrics["fill"]
-    short_bullets = detect_short_bullets(resume, metrics.get("lines") or [])
+    short_bullets = detect_short_bullets(latex, metrics.get("lines") or [])
     return {
         "ok": True,
         "fill": round(float(fill), 4),
         "page_cap": page_cap,
+        "target_fill": RESUME_TARGET_FILL,
         "short_bullets": short_bullets,
     }
 

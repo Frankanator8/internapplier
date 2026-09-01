@@ -27,7 +27,7 @@ def _mono_font() -> QFont:
 
 
 class _TemplatePreviewWorker(QObject):
-    """Renders a template with sample resume data and compiles it to PDF."""
+    """Compiles a template to PDF."""
 
     finished = pyqtSignal(str, str)  # (pdf path, note — '' when none)
     error = pyqtSignal(str, str)     # (message, log excerpt)
@@ -38,15 +38,10 @@ class _TemplatePreviewWorker(QObject):
 
     def run(self):
         from api.generate_resume.compile import LatexCompileError
-        from api.generate_resume.preview import (
-            TemplateRenderError, compile_template_preview,
-        )
+        from api.generate_resume.preview import compile_template_preview
         try:
             pdf, note = compile_template_preview(self._template)
             self.finished.emit(str(pdf), note or "")
-        except TemplateRenderError as exc:
-            logger.info("_TemplatePreviewWorker.run — template error")
-            self.error.emit(str(exc), "")
         except LatexCompileError as exc:
             logger.info("_TemplatePreviewWorker.run — latex error")
             self.error.emit(str(exc), exc.log_excerpt)
@@ -298,7 +293,7 @@ class ResumeMixin:
             QDesktopServices.openUrl(QUrl.fromLocalFile(self._preview_pdf_path))
 
     def _load_default_template(self) -> None:
-        from api.generate_resume.render import DEFAULT_TEMPLATE
+        from api.ai_provider import default_prompt
 
         if self._resume_template_edit.toPlainText().strip():
             confirm = QMessageBox.question(
@@ -311,7 +306,7 @@ class ResumeMixin:
             )
             if confirm != QMessageBox.StandardButton.Yes:
                 return
-        self._resume_template_edit.setPlainText(DEFAULT_TEMPLATE)
+        self._resume_template_edit.setPlainText(default_prompt("resume_template.txt"))
 
     # ---------- shared ----------
 

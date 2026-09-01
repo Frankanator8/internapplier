@@ -7,6 +7,7 @@ import json
 import pytest
 import requests
 
+from api.ai_provider.http_client import _format_throughput
 from api.ai_provider.provider import OpenRouterProvider
 
 
@@ -112,6 +113,7 @@ class TestRequestPayload:
         assert payload["messages"] == [{"role": "user", "content": "hi"}]
         assert payload["model"]  # whatever tier maps to
         assert payload["usage"] == {"include": True}
+        assert payload["provider"] == {"sort": "throughput"}
 
     def test_response_format_only_when_provided(
             self, provider, mock_openrouter, sse_factory):
@@ -156,6 +158,26 @@ class TestRequestPayload:
         assert headers["Authorization"] == "Bearer test-key-abcdef"
 
 
+class TestFormatThroughput:
+    def test_rate_from_completion_over_elapsed(self):
+        line = _format_throughput("gen", 100, 2.0, prompt_t=50)
+        assert line.startswith("[throughput] gen —")
+        assert "50.0 tok/s" in line
+        assert "(100 completion / 2.00s)" in line
+        assert "prompt=50" in line
+
+    def test_near_zero_elapsed_is_na(self):
+        line = _format_throughput("gen", 10, 0.0)
+        assert "n/a tok/s" in line
+        assert "10 completion" in line
+
+    def test_bad_numbers_are_tolerated(self):
+        line = _format_throughput("gen", "x", "y", prompt_t="z")
+        assert "n/a tok/s" in line
+        assert "0 completion" in line
+        assert "prompt=0" in line
+
+
 class TestUsageRecording:
     def test_usage_block_triggers_record_usage(
             self, provider, mock_openrouter, sse_factory, mocker):
@@ -171,8 +193,26 @@ class TestUsageRecording:
         ))
         rec.assert_called_once_with("fast", 42, 7)
 
+    def test_prints_throughput_when_usage_present(
+            self, provider, mock_openrouter, sse_factory, mocker, capsys):
+        mocker.patch("api.ai_provider.http_client.record_usage")
+        mock_openrouter.queue_stream([
+            sse_factory.delta(content="x"),
+            sse_factory.delta(usage={"prompt_tokens": 42, "completion_tokens": 7},
+                              finish_reason="stop"),
+        ])
+        _drain(provider._stream_chat_completion(
+            messages=[{"role": "u", "content": "y"}],
+            tier="fast", log_label="gen",
+        ))
+        printed = capsys.readouterr().out
+        assert "[throughput] gen —" in printed
+        assert "7 completion" in printed
+        assert "prompt=42" in printed
+        assert "tok/s" in printed
+
     def test_missing_usage_logs_warning_no_raise(
-            self, provider, mock_openrouter, sse_factory, mocker, caplog):
+            self, provider, mock_openrouter, sse_factory, mocker, caplog, capsys):
         rec = mocker.patch("api.ai_provider.http_client.record_usage")
         mock_openrouter.queue_stream([
             sse_factory.delta(content="x"),
@@ -184,6 +224,9 @@ class TestUsageRecording:
         ))
         assert "".join(out) == "x"
         rec.assert_not_called()
+        printed = capsys.readouterr().out
+        assert "[throughput] warn_test —" in printed
+        assert "0 completion" in printed
 
 
 class TestErrors:
@@ -194,6 +237,95 @@ class TestErrors:
                 messages=[{"role": "u", "content": "x"}],
                 tier="basic", log_label="t",
             ))
+
+    def test_http_error_is_not_retried(self, provider, mock_openrouter):
+        mock_openrouter.queue_raw(["data: [DONE]"], status_code=500)
+        with pytest.raises(requests.HTTPError):
+            _drain(provider._stream_chat_completion(
+                messages=[{"role": "u", "content": "x"}],
+                tier="basic", log_label="t",
+            ))
+        assert len(mock_openrouter.calls()) == 1
+
+
+class TestStreamRetries:
+    @pytest.fixture(autouse=True)
+    def _no_sleep(self, mocker):
+        return mocker.patch("api.ai_provider.http_client.time.sleep")
+
+    def test_timeout_before_first_byte_is_retried(
+            self, provider, mock_openrouter, sse_factory):
+        mock_openrouter.queue_error(requests.exceptions.ReadTimeout("headers"))
+        mock_openrouter.queue_stream([
+            sse_factory.delta(content="recovered"),
+            sse_factory.delta(finish_reason="stop"),
+        ])
+        out = _drain(provider._stream_chat_completion(
+            messages=[{"role": "u", "content": "x"}],
+            tier="powerful", log_label="t",
+        ))
+        assert "".join(out) == "recovered"
+        assert len(mock_openrouter.calls()) == 2
+
+    def test_gives_up_after_max_retries(self, provider, mock_openrouter):
+        from api.constants import OPENROUTER_STREAM_MAX_RETRIES
+
+        for _ in range(OPENROUTER_STREAM_MAX_RETRIES + 1):
+            mock_openrouter.queue_error(requests.exceptions.ReadTimeout("headers"))
+        with pytest.raises(requests.exceptions.ReadTimeout):
+            _drain(provider._stream_chat_completion(
+                messages=[{"role": "u", "content": "x"}],
+                tier="powerful", log_label="t",
+            ))
+        assert len(mock_openrouter.calls()) == OPENROUTER_STREAM_MAX_RETRIES + 1
+
+    def test_no_retry_once_content_was_yielded(
+            self, provider, mock_openrouter, sse_factory):
+        class _DiesMidStream(mock_openrouter.FakeResponse):
+            def iter_lines(self, decode_unicode=True):
+                yield f"data: {json.dumps(sse_factory.delta(content='partial'))}"
+                raise requests.exceptions.ConnectionError("dropped")
+
+        mock_openrouter.queue_response(_DiesMidStream([]))
+        out: list[str] = []
+        with pytest.raises(requests.exceptions.ConnectionError):
+            for chunk in provider._stream_chat_completion(
+                messages=[{"role": "u", "content": "x"}],
+                tier="basic", log_label="t",
+            ):
+                out.append(chunk)
+        assert out == ["partial"]
+        assert len(mock_openrouter.calls()) == 1
+
+    def test_tool_round_retries_even_after_a_dropped_stream(
+            self, provider, mock_openrouter, sse_factory):
+        """With tools the round buffers instead of yielding, so a mid-stream
+        drop is still safe to retry."""
+        tool = {
+            "type": "function",
+            "function": {
+                "name": "page_length",
+                "description": "measure",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+
+        class _DiesMidStream(mock_openrouter.FakeResponse):
+            def iter_lines(self, decode_unicode=True):
+                yield f"data: {json.dumps(sse_factory.delta(content='half'))}"
+                raise requests.exceptions.ReadTimeout("silence")
+
+        mock_openrouter.queue_response(_DiesMidStream([]))
+        mock_openrouter.queue_stream([
+            sse_factory.delta(content="final answer"),
+            sse_factory.delta(finish_reason="stop"),
+        ])
+        out = _drain(provider._stream_chat_completion(
+            messages=[{"role": "u", "content": "x"}],
+            tier="powerful", log_label="t", tools=[tool],
+        ))
+        assert "".join(out) == "final answer"
+        assert len(mock_openrouter.calls()) == 2
 
 
 class TestModelTierMapping:

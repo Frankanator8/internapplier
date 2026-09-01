@@ -17,6 +17,10 @@
       "type": "integer",
       "description": "User's configured page-count limit."
     },
+    "target_fill": {
+      "type": "number",
+      "description": "Recommended fill to aim for (below page_cap) — optimize toward this value, not just under page_cap. Present only when ok is true."
+    },
     "log_excerpt": {
       "type": "string",
       "description": "Truncated LaTeX compile-log excerpt. Present only when ok is false."

@@ -93,6 +93,7 @@ class TestExtractResume:
         payload = post.call_args.kwargs["json"]
         from api.ai_provider.settings import _load_model_config
         assert payload["model"] == _load_model_config()["fast"]
+        assert payload["provider"] == {"sort": "throughput"}
         schema = payload["response_format"]["json_schema"]
         assert schema["strict"] is True
         assert schema["name"] == "import_resume_output"

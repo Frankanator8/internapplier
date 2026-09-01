@@ -180,7 +180,10 @@ def mock_openrouter(mocker, fake_api_key):
         state["calls"].append({"url": url, **kwargs})
         if not state["responses"]:
             return _FakeResponse(["data: [DONE]"])
-        return state["responses"].pop(0)
+        nxt = state["responses"].pop(0)
+        if isinstance(nxt, BaseException):
+            raise nxt
+        return nxt
 
     mocker.patch("api.ai_provider.http_client.requests.post", side_effect=_fake_post)
 
@@ -198,6 +201,16 @@ def mock_openrouter(mocker, fake_api_key):
         @staticmethod
         def queue_json(body: dict, status_code: int = 200):
             state["responses"].append(_FakeResponse([json.dumps(body)], status_code=status_code))
+
+        @staticmethod
+        def queue_error(exc: BaseException):
+            """Make the next ``requests.post`` raise instead of responding."""
+            state["responses"].append(exc)
+
+        @staticmethod
+        def queue_response(response):
+            """Queue a caller-built response object (e.g. one that dies mid-stream)."""
+            state["responses"].append(response)
 
         @staticmethod
         def calls():

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime
-import json
 import logging
 import pathlib
 from typing import Callable
@@ -13,9 +12,16 @@ from ..ai_provider import (
     get_provider,
     get_resume_page_cap,
     get_resume_score_threshold,
+    strip_code_fence,
 )
 from .agent_tools import detect_short_bullets
-from .compile import LatexCompileError, compile_latex, pdf_page_metrics
+from .compile import (
+    LatexCompileError,
+    compile_latex,
+    extract_document,
+    pdf_page_metrics,
+    pdf_plain_text,
+)
 from .json_recovery import (
     extract_json_object as _extract_json_object,
     norm as _norm,
@@ -34,7 +40,6 @@ from .persist import (
     persist_pdf,
     persist_pdf as _persist_pdf,
 )
-from .render import render_resume, validate_resume_shape
 
 logger = logging.getLogger(__name__)
 
@@ -75,9 +80,6 @@ class ResumeGenerator:
         self.job_description = job_description or ""
         self.company_research = company_research or {}
         self.provider: OpenRouterProvider = provider or get_provider()
-        self._header = build_header_from_general_info(
-            self.profile.get("general_info") or {}
-        )
 
     # ---------- public API ----------
 
@@ -92,7 +94,7 @@ class ResumeGenerator:
         """Generate, compile, and grade the resume.
 
         The AI receives the full profile and decides what to include. When
-        the rendered draft exceeds the page cap, the grader returns a
+        the compiled draft exceeds the page cap, the grader returns a
         `drops` array of entry labels and/or course names; the orchestrator
         removes those from the profile and regenerates.
         """
@@ -106,79 +108,73 @@ class ResumeGenerator:
         feedback: str | None = None
         attempts: list[dict] = []
 
-        from ..ai_provider import get_resume_template
-        from ..ai_provider.keyword_extractor import extract_jd_keywords, format_jd_signals
-        template = get_resume_template()
-
-        signals = extract_jd_keywords(self.job_description)
-        _emit(
-            stream_cb, "jd-keywords",
-            "[jd-keywords] extracted from job description:\n" + format_jd_signals(signals),
-        )
-
         for attempt in range(1, max_attempts + 1):
             logger.info("generate_latex — attempt %d/%d", attempt, max_attempts)
             profile_for_attempt = apply_label_drops(self.profile, omitted_labels)
             if progress_cb:
-                progress_cb(f"Attempt {attempt}/{max_attempts}: generating resume JSON…")
-            previous_resume = attempts[-1]["resume"] if attempts else None
+                progress_cb(f"Attempt {attempt}/{max_attempts}: generating LaTeX…")
+            previous_latex = attempts[-1]["latex"] if attempts else None
             try:
-                resume_json = self._generate_resume_json(
-                    profile_for_attempt, feedback, previous_resume, today, stream_cb
+                latex = self._generate_resume_text(
+                    profile_for_attempt, feedback, previous_latex, today, stream_cb
                 )
             except Exception:
                 logger.exception("generate_latex — provider.generate_resume failed on attempt %d", attempt)
                 raise
 
-            try:
-                resume_pretty = json.dumps(resume_json, indent=2)
-            except Exception:
-                resume_pretty = repr(resume_json)
             _emit(
-                stream_cb, "generate-json",
-                f"[generate-json] attempt {attempt} resume JSON:\n{resume_pretty}",
+                stream_cb, "generate-latex",
+                f"[generate-latex] attempt {attempt} ({len(latex)} chars):\n{latex}",
             )
 
             if progress_cb:
-                progress_cb(f"Attempt {attempt}: rendering + compiling…")
-            latex, pdf_path, compile_error = self._render_and_compile(
-                resume_json, template, attempt, stream_cb
+                progress_cb(f"Attempt {attempt}: compiling…")
+            latex, pdf_path, compile_error = self._compile_attempt(
+                latex, attempt, stream_cb
             )
             if pdf_path is not None:
                 metrics = pdf_page_metrics(pdf_path)
                 fill = metrics["fill"]
                 short_bullets = detect_short_bullets(
-                    {**resume_json, "header": self._header},
-                    metrics.get("lines") or [],
+                    latex, metrics.get("lines") or [],
                 )
+                resume_text = pdf_plain_text(pdf_path)
             else:
                 fill = None
                 short_bullets = []
+                resume_text = ""
 
             page_ok = fill is not None and fill <= page_cap + 1e-6
 
             grade: dict | None = None
-            if progress_cb:
-                progress_cb(f"Attempt {attempt}: grading…")
-            for grade_try in (1, 2):
-                try:
-                    grade = self._grade_resume_text(
-                        resume_json, fill, page_cap, today, profile_for_attempt, stream_cb
-                    )
-                    break
-                except ValueError:
-                    logger.warning(
-                        "generate_latex — grade parse failed on attempt %d (try %d/2)",
-                        attempt, grade_try,
-                    )
-                    if grade_try == 2:
+            if resume_text:
+                if progress_cb:
+                    progress_cb(f"Attempt {attempt}: grading…")
+                for grade_try in (1, 2):
+                    try:
+                        grade = self._grade_resume_text(
+                            resume_text, fill, page_cap, today, profile_for_attempt, stream_cb
+                        )
+                        break
+                    except ValueError:
+                        logger.warning(
+                            "generate_latex — grade parse failed on attempt %d (try %d/2)",
+                            attempt, grade_try,
+                        )
+                        if grade_try == 2:
+                            grade = None
+                    except Exception:
+                        logger.exception(
+                            "generate_latex — grade_resume failed on attempt %d", attempt
+                        )
                         grade = None
-                except Exception:
-                    logger.exception(
-                        "generate_latex — grade_resume failed on attempt %d", attempt
-                    )
-                    grade = None
-                    break
+                        break
+            else:
+                logger.info(
+                    "generate_latex — attempt %d: no extractable resume text "
+                    "(compile_error=%s); skipping grade",
+                    attempt, compile_error is not None,
+                )
             if progress_cb and grade is not None:
                 progress_cb(
                     f"Attempt {attempt}: graded {grade['score']:.2f}/10"
@@ -187,7 +183,6 @@ class ResumeGenerator:
             score_ok = grade is not None and grade["score"] >= score_threshold
 
             attempts.append({
-                "resume": resume_json,
                 "latex": latex,
                 "pdf": pdf_path,
                 "fill": fill,
@@ -272,51 +267,48 @@ class ResumeGenerator:
             "chosen_attempt": best.get("attempt"),
         }
 
-    def _generate_resume_json(
+    def _generate_resume_text(
         self,
         profile: dict,
         feedback: str | None,
-        previous_resume: dict | None,
+        previous_latex: str | None,
         today: str,
         stream_cb: Callable[[str, str], None] | None,
-    ) -> dict:
-        raw = _collect_stream(
-            "generate",
-            self.provider.generate_resume_stream(
-                profile, self.job_description, feedback=feedback,
-                previous_resume=previous_resume, today=today,
-                company_research=self.company_research,
+    ) -> str:
+        raw = strip_code_fence(
+            _collect_stream(
+                "generate",
+                self.provider.generate_resume_stream(
+                    profile, self.job_description, feedback=feedback,
+                    previous_latex=previous_latex, today=today,
+                    company_research=self.company_research,
+                ),
+                stream_cb,
             ),
-            stream_cb,
+            lang_hints=("latex", "tex"),
         )
-        obj = parse_lenient_json(raw, log_label="_generate_resume_json")
-        validate_resume_shape(obj)
-        try:
-            logger.info(
-                "_generate_resume_json — resume JSON (%d chars):\n%s",
-                len(raw), json.dumps(obj, indent=2),
+        extracted = extract_document(raw)
+        if extracted is None:
+            logger.warning(
+                "_generate_resume_text — output missing \\documentclass{...} "
+                "(%d chars); passing raw output to compiler",
+                len(raw),
             )
-        except Exception:
-            logger.info("_generate_resume_json — resume JSON keys=%s", list(obj.keys()))
-        return obj
+            return raw
+        if extracted != raw:
+            logger.info(
+                "_generate_resume_text — trimmed %d chars of surrounding prose",
+                len(raw) - len(extracted),
+            )
+        logger.info("_generate_resume_text — latex (%d chars)", len(extracted))
+        return extracted
 
-    def _render_and_compile(
+    def _compile_attempt(
         self,
-        resume_json: dict,
-        template: str,
+        latex: str,
         attempt: int,
         stream_cb: Callable[[str, str], None] | None,
     ) -> tuple[str, pathlib.Path | None, str | None]:
-        resume_json = {**resume_json, "header": self._header}
-        try:
-            latex = render_resume(resume_json, template)
-        except Exception as e:
-            logger.exception("_render_and_compile — render failed")
-            _emit(
-                stream_cb, "render-error",
-                f"[render-error] attempt {attempt}: {e}",
-            )
-            return "", None, f"render error: {e}"
         try:
             pdf_path = compile_latex(latex)
             return latex, pdf_path, None
@@ -325,13 +317,13 @@ class ResumeGenerator:
             _emit(
                 stream_cb, "compile-error",
                 f"[compile-error] attempt {attempt}: LaTeX failed to compile "
-                f"— grading anyway\n{err}",
+                f"— skipping grade\n{err}",
             )
             return latex, None, err
 
     def _grade_resume_text(
         self,
-        resume_json: dict,
+        resume_text: str,
         fill: float | None,
         page_cap: float,
         today: str,
@@ -341,7 +333,7 @@ class ResumeGenerator:
         raw = _collect_stream(
             "grade",
             self.provider.grade_resume_stream(
-                resume_json, self.job_description,
+                resume_text, self.job_description,
                 fill=fill, page_cap=page_cap, today=today,
                 company_research=self.company_research,
                 profile=profile,

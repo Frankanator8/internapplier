@@ -33,7 +33,11 @@ def test_default_prompt_reads_from_source_not_user_dir():
     assert p.default_prompt("analyze_bullet.txt") != "user override"
 
 
-def test_list_prompt_files_sorted_by_group():
+def test_resume_template_default_is_jakes_latex():
+    text = p.default_prompt("resume_template.txt")
+    assert r"\resumeSubheading" in text
+    assert r"\begin{document}" in text
+    assert "((" not in text
     files = p.list_prompt_files()
     # Plain .txt files come before .schema.json which come before .tool.json
     txt_idx = max(i for i, n in enumerate(files) if n.endswith(".txt"))
