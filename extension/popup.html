@@ -3,335 +3,33 @@
   <head>
     <meta charset="utf-8">
     <title>InternApplier Autofill</title>
-    <style>
-      :root {
-        --bg:                #ffffff;
-        --text:              #1f2937;
-        --text-muted:        #374151;
-        --text-faint:        #6b7280;
-        --border:            #d1d5db;
-        --border-soft:       #e5e7eb;
-        --border-row:        #f3f4f6;
-        --accent:            #2563eb;
-        --accent-hover:      #1d4ed8;
-        --accent-soft-bg:    #eff6ff;
-        --button-bg:         #2563eb;
-        --button-disabled:   #9ca3af;
-        --dot:               #9ca3af;
-        --dot-ok:            #10b981;
-        --dot-err:           #ef4444;
-        --secondary-bg:      #ffffff;
-        --secondary-hover:   #f3f4f6;
-        --input-bg:          #ffffff;
-        --card-bg:           #f9fafb;
-        --card-text:         #1f2937;
-        --chip-bg:           #eff6ff;
-        --chip-text:         #1e3a8a;
-        --chip-border:       #bfdbfe;
-        --badge-bg:          #fef3c7;
-        --badge-text:        #92400e;
-        --badge-border:      #fde68a;
-      }
-      body.dark {
-        --bg:                #1b1f23;
-        --text:              #e6e6e6;
-        --text-muted:        #e6e6e6;
-        --text-faint:        #a8b3c0;
-        --border:            #3a4148;
-        --border-soft:       #3a4148;
-        --border-row:        #2d343c;
-        --accent:            #0a66c2;
-        --accent-hover:      #3380d4;
-        --accent-soft-bg:    #1d2a3a;
-        --button-bg:         #0a66c2;
-        --button-disabled:   #3a4148;
-        --dot:               #6b7280;
-        --dot-ok:            #10b981;
-        --dot-err:           #ef4444;
-        --secondary-bg:      #242a31;
-        --secondary-hover:   #2d343c;
-        --input-bg:          #242a31;
-        --card-bg:           #242a31;
-        --card-text:         #e6e6e6;
-        --chip-bg:           #1d2a3a;
-        --chip-text:         #cfe0f5;
-        --chip-border:       #274a6b;
-        --badge-bg:          #3a2e15;
-        --badge-text:        #f5d28a;
-        --badge-border:      #5c4a1f;
-      }
-      body {
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        min-width: 280px;
-        margin: 0;
-        padding: 14px 16px;
-        background: var(--bg);
-        color: var(--text);
-      }
-      h1 { font-size: 14px; margin: 0 0 10px; }
-      .status { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-bottom: 8px; }
-      .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dot); }
-      .dot.ok { background: var(--dot-ok); }
-      .dot.err { background: var(--dot-err); }
-      .name { font-size: 13px; margin-bottom: 12px; color: var(--text-muted); }
-      button {
-        width: 100%;
-        padding: 8px 10px;
-        font-size: 13px;
-        background: var(--button-bg);
-        color: white;
-        border: none;
-        border-radius: 6px;
-        cursor: pointer;
-      }
-      button:hover { background: var(--accent-hover); }
-      button:disabled { background: var(--button-disabled); cursor: not-allowed; }
-      button.secondary {
-        background: var(--secondary-bg);
-        color: var(--text-muted);
-        border: 1px solid var(--border);
-      }
-      button.secondary:hover { background: var(--secondary-hover); }
-      .stack > * + * { margin-top: 8px; }
-      .result { font-size: 12px; margin-top: 8px; color: var(--text-faint); min-height: 1em; }
-      .hidden { display: none; }
-      label.field { display: block; font-size: 11px; color: var(--text-faint); margin-bottom: 2px; }
-      .row { margin-bottom: 8px; }
-      .row input, .row select, .row textarea {
-        width: 100%;
-        box-sizing: border-box;
-        font-size: 12px;
-        padding: 6px 8px;
-        background: var(--input-bg);
-        color: var(--text);
-        border: 1px solid var(--border);
-        border-radius: 4px;
-        font-family: inherit;
-      }
-      .row textarea { min-height: 90px; resize: vertical; }
-      .row .row-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        margin-bottom: 2px;
-      }
-      .pick-btn {
-        width: auto;
-        padding: 2px 8px;
-        font-size: 11px;
-        background: var(--secondary-bg);
-        color: var(--accent);
-        border: 1px solid var(--accent);
-        border-radius: 4px;
-        cursor: pointer;
-      }
-      .pick-btn:hover { background: var(--accent-soft-bg); }
-      .form-actions { display: flex; gap: 8px; }
-      .form-actions button { flex: 1; }
-      .section {
-        margin-top: 14px;
-        padding-top: 10px;
-        border-top: 1px solid var(--border-soft);
-      }
-      .section-title {
-        font-size: 11px;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-        color: var(--text-faint);
-        margin-bottom: 8px;
-      }
-      details.tree {
-        font-size: 12px;
-        margin: 2px 0;
-        padding-left: 4px;
-      }
-      details.tree > summary {
-        cursor: pointer;
-        padding: 2px 0;
-        color: var(--text-muted);
-        user-select: none;
-      }
-      details.tree > summary:hover { color: var(--accent); }
-      .tree-body {
-        padding: 4px 0 4px 12px;
-        border-left: 1px solid var(--border-soft);
-        margin-left: 4px;
-      }
-      .chip {
-        display: inline-block;
-        max-width: 100%;
-        padding: 3px 8px;
-        margin: 2px 4px 2px 0;
-        background: var(--chip-bg);
-        color: var(--chip-text);
-        border: 1px solid var(--chip-border);
-        border-radius: 10px;
-        font-size: 11px;
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        cursor: grab;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        vertical-align: middle;
-      }
-      .chip:active { cursor: grabbing; }
-      .chip-label {
-        display: inline-block;
-        font-family: -apple-system, sans-serif;
-        color: var(--text-faint);
-        margin-right: 4px;
-      }
-      .chip-row {
-        display: flex;
-        align-items: baseline;
-        margin: 2px 0;
-        gap: 4px;
-      }
-      .chip-row .field-name {
-        font-size: 10px;
-        color: var(--text-faint);
-        min-width: 70px;
-        flex-shrink: 0;
-      }
-      .chip-button {
-        width: auto;
-        padding: 3px 10px;
-        font-size: 11px;
-        border-radius: 10px;
-      }
-      .chip[hidden], .chip-button[hidden] { display: none; }
-      .answer-card {
-        border: 1px solid var(--border);
-        border-radius: 6px;
-        padding: 8px;
-        margin-bottom: 8px;
-        background: var(--card-bg);
-        font-size: 12px;
-      }
-      .answer-card .question {
-        font-weight: 600;
-        color: var(--text-muted);
-        margin-bottom: 4px;
-        font-size: 11px;
-      }
-      .answer-card .answer-text {
-        color: var(--card-text);
-        white-space: pre-wrap;
-        cursor: grab;
-        padding: 4px;
-        background: var(--input-bg);
-        border: 1px dashed var(--border);
-        border-radius: 4px;
-        max-height: 200px;
-        overflow-y: auto;
-      }
-      .answer-card .answer-text:active { cursor: grabbing; }
-      .answer-card .answer-actions {
-        display: flex;
-        gap: 6px;
-        margin-top: 6px;
-      }
-      .answer-card .answer-actions button {
-        width: auto;
-        padding: 3px 8px;
-        font-size: 11px;
-      }
-      .answer-card .spinner {
-        color: var(--text-faint);
-        font-style: italic;
-      }
-      .scan-toolbar {
-        display: flex;
-        gap: 6px;
-        align-items: center;
-        margin: 6px 0 8px;
-      }
-      .scan-toolbar button {
-        width: auto;
-        padding: 3px 8px;
-        font-size: 11px;
-      }
-      .scan-summary { font-size: 12px; color: var(--text-muted); flex: 1; }
-      #scan-list {
-        max-height: 360px;
-        overflow-y: auto;
-        background: var(--card-bg);
-        border: 1px solid var(--border-soft);
-        border-radius: 4px;
-        padding: 4px;
-      }
-      .scan-row {
-        display: flex;
-        align-items: flex-start;
-        gap: 6px;
-        padding: 4px 4px;
-        font-size: 12px;
-        border-bottom: 1px solid var(--border-row);
-      }
-      .scan-row:last-child { border-bottom: none; }
-      .scan-row.dup { opacity: 0.55; }
-      .scan-row input[type=checkbox] { margin-top: 3px; flex-shrink: 0; }
-      .scan-row .scan-main { flex: 1; min-width: 0; }
-      .scan-row .scan-title {
-        color: var(--text);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      .scan-row .scan-sub {
-        font-size: 10px;
-        color: var(--text-faint);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      details.master-section > summary {
-        cursor: pointer;
-        user-select: none;
-        list-style: none;
-        display: flex;
-        align-items: center;
-        gap: 6px;
-      }
-      details.master-section > summary::-webkit-details-marker { display: none; }
-      details.master-section > summary::before {
-        content: "▸";
-        font-size: 10px;
-        color: var(--text-faint);
-      }
-      details.master-section[open] > summary::before { content: "▾"; }
-      .scan-row .badge {
-        font-size: 10px;
-        background: var(--badge-bg);
-        color: var(--badge-text);
-        border: 1px solid var(--badge-border);
-        border-radius: 8px;
-        padding: 1px 6px;
-        flex-shrink: 0;
-        align-self: center;
-      }
-    </style>
+    <link rel="stylesheet" href="styles/popup.css">
   </head>
   <body>
-    <div id="main-view">
-      <h1>InternApplier Autofill</h1>
-      <div class="status">
-        <span id="dot" class="dot"></span>
-        <span id="status-text">Checking server…</span>
+    <header class="app-header">
+      <div class="header-row">
+        <h1 id="app-title" tabindex="-1">InternApplier</h1>
+        <span id="status-pill" class="status-pill">
+          <span id="dot" class="dot"></span>
+          <span id="status-text">Checking server…</span>
+        </span>
       </div>
       <div id="name" class="name"></div>
+      <p id="offline-help" class="offline-help hidden">
+        Can't reach InternApplier. Start the desktop app (<code>python main.py</code>), then retry.
+      </p>
+      <button id="retry-btn" class="secondary retry-btn hidden" type="button">Retry</button>
+    </header>
 
-      <details class="section master-section" id="new-app-section" open>
-        <summary class="section-title">New Application</summary>
-        <div class="stack">
-          <button id="create-btn" disabled>Make New Application</button>
-          <button id="scan-btn" class="secondary" disabled>Scan page for jobs</button>
+    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+    <div id="main-view">
+      <section class="panel" id="autofill-section">
+        <h2 class="section-title">Autofill</h2>
+        <div id="apps-empty" class="empty-state hidden">
+          No applications yet. Create one from this page or scan a job list.
         </div>
-      </details>
-
-      <details class="section master-section" id="autofill-section" open>
-        <summary class="section-title">Autofill</summary>
-        <div class="stack">
+        <div id="autofill-controls" class="stack">
           <div class="row" style="margin-bottom: 0;">
             <label class="field" for="load-target">Application</label>
             <select id="load-target"></select>
@@ -343,16 +41,23 @@
               <span class="chip-label">📄</span>
               <span id="resume-chip-name">Resume.pdf</span>
             </span>
-            <button id="resume-generate-btn" class="secondary chip-button" hidden>
+            <button id="resume-generate-btn" class="secondary chip-button" type="button" hidden>
               Generate Resume
             </button>
           </div>
-          <button id="load-btn" disabled>Autofill Application</button>
-          <button id="ask-btn" class="secondary" disabled>Ask AI about a question on page</button>
+          <button id="load-btn" type="button" disabled>Autofill Application</button>
+          <button id="ask-btn" class="secondary" type="button" disabled>Ask AI about a question on page</button>
+        </div>
+        <div id="autofill-report" class="autofill-report hidden"></div>
+      </section>
+
+      <details class="section master-section" id="new-app-section" open>
+        <summary class="section-title">New Application</summary>
+        <div class="stack">
+          <button id="create-btn" type="button" disabled>Make New Application</button>
+          <button id="scan-btn" class="secondary" type="button" disabled>Scan page for jobs</button>
         </div>
       </details>
-
-      <div id="result" class="result"></div>
 
       <div id="answers-section" class="section hidden">
         <div class="section-title">AI Answers</div>
@@ -362,19 +67,20 @@
       <div id="profile-section" class="section hidden">
         <div class="section-title">Profile — drag fields into the page</div>
         <div class="row">
+          <label class="field" for="profile-search">Search profile</label>
           <input id="profile-search" type="search" placeholder="Search profile…" autocomplete="off">
         </div>
         <div id="profile-tree"></div>
-        <div id="profile-empty" class="result hidden">No matches.</div>
+        <div id="profile-empty" class="empty-state hidden">No matches for that search.</div>
       </div>
     </div>
 
     <div id="scan-view" class="hidden">
-      <h1>Scan page for jobs</h1>
+      <h2 class="view-title" id="scan-title" tabindex="-1">Scan page for jobs</h2>
       <div class="scan-toolbar">
         <span id="scan-summary" class="scan-summary">Scanning…</span>
       </div>
-      <div id="scan-scope" class="scan-toolbar hidden" style="font-size: 11px; color: #6b7280;">
+      <div id="scan-scope" class="scan-toolbar scan-scope hidden">
         <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
           Scoped to: <code id="scan-scope-selector"></code>
         </span>
@@ -387,14 +93,13 @@
       </div>
       <div id="scan-list"></div>
       <div class="form-actions" style="margin-top: 10px;">
-        <button id="scan-back" class="secondary">Back</button>
-        <button id="scan-add">Add Selected</button>
+        <button id="scan-back" class="secondary" type="button">Back</button>
+        <button id="scan-add" type="button">Add Selected</button>
       </div>
-      <div id="scan-result" class="result"></div>
     </div>
 
     <div id="form-view" class="hidden">
-      <h1>New Application</h1>
+      <h2 class="view-title" id="form-title" tabindex="-1">New Application</h2>
       <div class="row">
         <div class="row-header">
           <label class="field" for="f-company">Company</label>
@@ -442,15 +147,17 @@
         <textarea id="f-description"></textarea>
       </div>
       <div class="form-actions">
-        <button id="cancel-btn" class="secondary">Cancel</button>
-        <button id="save-btn">Save</button>
+        <button id="cancel-btn" class="secondary" type="button">Cancel</button>
+        <button id="save-btn" type="button">Save</button>
       </div>
-      <div id="form-result" class="result"></div>
     </div>
 
     <script src="src/shared/constants.js"></script>
     <script src="src/popup/ui/dom-refs.js"></script>
     <script src="src/popup/ui/theme.js"></script>
+    <script src="src/popup/ui/toast.js"></script>
+    <script src="src/popup/state/session.js"></script>
+    <script src="src/popup/ui/page.js"></script>
     <script src="src/popup/ui/views.js"></script>
     <script src="src/popup/form/inputs.js"></script>
     <script src="src/popup/applications/statuses.js"></script>

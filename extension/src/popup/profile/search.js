@@ -49,4 +49,7 @@ function applyProfileFilter() {
   profileEmpty.classList.toggle("hidden", !query || visibleRows || visibleDetails);
 }
 
-profileSearch.addEventListener("input", applyProfileFilter);
+profileSearch.addEventListener("input", () => {
+  applyProfileFilter();
+  patchSession({ profileQuery: profileSearch.value }).catch(() => {});
+});

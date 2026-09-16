@@ -5,8 +5,8 @@ from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWebEngineCore import QWebEngineSettings
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMessageBox,
-    QScrollArea, QSplitter, QStackedWidget, QVBoxLayout, QWidget,
+    QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMessageBox,
+    QSplitter, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from ..base import _label, _secondary_btn

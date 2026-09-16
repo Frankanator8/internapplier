@@ -18,10 +18,12 @@ function stopPicker(result) {
 }
 
 function startPicker(field) {
-  if (_pickerState) return;
+  if (_pickerState) {
+    return { ok: false, reason: "Already picking an element. Press Esc to cancel." };
+  }
   const styleEl = document.createElement("style");
   styleEl.textContent =
-    ".__ia_picker_hover { outline: 2px solid #2563eb !important; " +
+    ".__ia_picker_hover { outline: 2px solid #0D9488 !important; " +
     "outline-offset: -2px !important; cursor: crosshair !important; }";
   document.head.appendChild(styleEl);
 
@@ -81,4 +83,5 @@ function startPicker(field) {
   document.addEventListener("mousemove", state.onMove, true);
   document.addEventListener("click", state.onClick, true);
   document.addEventListener("keydown", state.onKey, true);
+  return { ok: true };
 }

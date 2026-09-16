@@ -11,7 +11,7 @@ function applyPicked(picked) {
   input.value = picked.value || "";
   input.dispatchEvent(new Event("input", { bubbles: true }));
   saveDraft();
-  formResult.textContent = `Picked ${picked.field}.`;
+  showToast(`Picked ${picked.field}.`, { kind: "ok" });
 }
 
 async function loadDraftOrExtract() {
@@ -27,12 +27,21 @@ async function loadDraftOrExtract() {
     showForm();
     return;
   }
-  formResult.textContent = "Reading page…";
+  showToast("Reading page…", { persist: true });
   let meta = {};
   try {
     const reply = await browser.runtime.sendMessage({ type: "EXTRACT_PAGE_META" });
-    if (reply && reply.ok) meta = reply.meta || {};
-  } catch (_) {}
+    if (reply && reply.needsRefresh) {
+      showNeedsRefresh(reply.reason);
+    } else if (reply && reply.ok) {
+      meta = reply.meta || {};
+      clearToast();
+    } else {
+      showToast((reply && reply.reason) || "Could not read the page.", { kind: "warn" });
+    }
+  } catch (_) {
+    showToast("Could not read the page.", { kind: "warn" });
+  }
   writeForm({
     company: meta.company || "",
     role: meta.role || "",
@@ -42,14 +51,13 @@ async function loadDraftOrExtract() {
     notes: "",
     description: meta.description || "",
   });
-  formResult.textContent = "";
   await saveDraft();
   showForm();
 }
 
 createBtn.addEventListener("click", () => {
   loadDraftOrExtract().catch((e) => {
-    resultEl.textContent = `Error: ${e.message}`;
+    showToast(`Error: ${e.message}`, { kind: "error" });
   });
 });
 
@@ -57,29 +65,27 @@ document.querySelectorAll(".pick-btn").forEach((btn) => {
   btn.addEventListener("click", async () => {
     const field = btn.getAttribute("data-pick-field") || "description";
     await saveDraft();
-    try {
-      await browser.runtime.sendMessage({ type: "START_PICKER", field });
-      formResult.textContent = `Click an element on the page to set ${field} (Esc to cancel).`;
-    } catch (e) {
-      formResult.textContent = `Error: ${e.message}`;
-    }
+    await startPagePicker(
+      field,
+      `Click an element on the page to set ${field} (Esc to cancel).`
+    );
   });
 });
 
 cancelBtn.addEventListener("click", async () => {
   await browser.storage.local.remove([DRAFT_KEY, PICKED_KEY]);
-  formResult.textContent = "";
+  clearToast();
   showMain();
 });
 
 saveBtn.addEventListener("click", async () => {
   const entry = readForm();
   if (!entry.company && !entry.role) {
-    formResult.textContent = "Company or Role required.";
+    showToast("Company or Role required.", { kind: "warn" });
     return;
   }
   saveBtn.disabled = true;
-  formResult.textContent = "Saving…";
+  showToast("Saving…", { persist: true });
   const payload = { ...entry };
   const linkVal = (payload.link || "").trim();
   delete payload.link;
@@ -91,16 +97,15 @@ saveBtn.addEventListener("click", async () => {
     });
     if (reply && reply.ok) {
       await browser.storage.local.remove([DRAFT_KEY, PICKED_KEY]);
-      formResult.textContent = "";
-      resultEl.textContent = "Application saved.";
+      showToast("Application saved.", { kind: "ok" });
       showMain();
       await populateLoadDropdown();
     } else {
       const detail = reply && (reply.error || (reply.body && JSON.stringify(reply.body)) || `HTTP ${reply.status}`);
-      formResult.textContent = `Save failed: ${detail || "unknown error"}`;
+      showToast(`Save failed: ${detail || "unknown error"}`, { kind: "error" });
     }
   } catch (e) {
-    formResult.textContent = `Error: ${e.message}`;
+    showToast(`Error: ${e.message}`, { kind: "error" });
   } finally {
     saveBtn.disabled = false;
   }

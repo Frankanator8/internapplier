@@ -76,7 +76,7 @@ class ResearchMixin:
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._research_results_content = QWidget()
-        self._research_results_content.setStyleSheet("background: transparent;")
+        self._research_results_content.setObjectName("scroll-inner")
         self._research_results_layout = QVBoxLayout(self._research_results_content)
         self._research_results_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self._research_results_layout.setSpacing(10)

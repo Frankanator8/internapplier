@@ -4,11 +4,12 @@ from PyQt6.QtWidgets import (
     QFileDialog, QMessageBox, QTabWidget, QSizePolicy, QDialog,
 )
 from PyQt6.QtCore import Qt, QObject, QThread
-from PyQt6.QtGui import QAction, QFont
+from PyQt6.QtGui import QAction
 
 from api import data_store, linkedin_import, resume_pdf_import
 from .import_review_dialog import ImportReviewDialog
 from .resume_pdf_worker import ResumePdfImportWorker
+from .theme import current_palette
 from .sections.general_info import GeneralInfoPage
 from .sections.experience import ExperiencePage
 from .sections.projects import ProjectsPage
@@ -56,12 +57,12 @@ class MainWindow(QMainWindow):
         self._heatmap = ApplicationsHeatmap()
         toolbar.addWidget(self._heatmap)
 
-        import_action = QAction("📥  Import from LinkedIn", self)
+        import_action = QAction("Import from LinkedIn", self)
         import_action.setShortcut("Ctrl+I")
         import_action.triggered.connect(self._import_linkedin)
         toolbar.addAction(import_action)
 
-        self._import_pdf_action = QAction("📄  Import from Resume PDF", self)
+        self._import_pdf_action = QAction("Import from Resume PDF", self)
         self._import_pdf_action.setShortcut("Ctrl+Shift+I")
         self._import_pdf_action.triggered.connect(self._import_resume_pdf)
         toolbar.addAction(self._import_pdf_action)
@@ -69,12 +70,18 @@ class MainWindow(QMainWindow):
         self._import_threads: list[QThread] = []
         self._import_workers: list[QObject] = []
 
-        save_action = QAction("💾  Save", self)
+        save_action = QAction("Save", self)
         save_action.setShortcut("Ctrl+S")
         save_action.triggered.connect(self._save)
         toolbar.addAction(save_action)
+        save_btn = toolbar.widgetForAction(save_action)
+        if save_btn is not None:
+            save_btn.setObjectName("primary")
+            style = save_btn.style()
+            style.unpolish(save_btn)
+            style.polish(save_btn)
 
-        refresh_action = QAction("🔄  Refresh", self)
+        refresh_action = QAction("Refresh", self)
         refresh_action.setShortcut("Ctrl+R")
         refresh_action.triggered.connect(self._refresh_applications)
         toolbar.addAction(refresh_action)
@@ -185,6 +192,7 @@ class MainWindow(QMainWindow):
             "projects": self._projects_page.get_data(),
             "education": self._education_page.get_data(),
             "awards": self._awards_page.get_data(),
+            "skills": self._skills_page.get_data(),
             "hobbies": self._hobbies_page.get_data(),
         }
 
@@ -209,6 +217,7 @@ class MainWindow(QMainWindow):
         )
         self._interviews_page.load_template(data_store.load_interview_template())
         self._refresh_heatmap()
+        self._applier_page._refresh_builder_palette()
 
     def _refresh_heatmap(self):
         try:
@@ -235,7 +244,7 @@ class MainWindow(QMainWindow):
             "within ~10 minutes.</li>"
             "<li>Download the ZIP, then click <b>Choose ZIP…</b> below to import it.</li>"
             "</ol>"
-            "<p style='color:#666; margin-top:8px;'>"
+            f"<p style='color:{current_palette()['text_muted']}; margin-top:8px;'>"
             "Tip: you can re-run this any time. Existing data won't be overwritten "
             "unless you choose <i>Replace all</i> on the next screen.</p>"
         )

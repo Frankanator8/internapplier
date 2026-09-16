@@ -1,35 +1,31 @@
 async function askQuestion(question) {
   const trimmed = (question || "").replace(/\s+/g, " ").trim();
   if (!trimmed) {
-    resultEl.textContent = "No question text picked.";
+    showToast("No question text picked.", { kind: "warn" });
     return;
   }
-  const { card, body } = renderAnswerCard(trimmed);
-  const appUuid = selectedApplicationUuid();
   try {
     const reply = await browser.runtime.sendMessage({
       type: "ANSWER_QUESTION",
       question: trimmed,
-      application_uuid: appUuid,
+      application_uuid: selectedApplicationUuid(),
     });
-    if (reply && reply.ok && reply.answer) {
-      finalizeAnswerCard(card, body, reply.answer);
-      resultEl.textContent = "Answer ready — copied to clipboard.";
-      try { await navigator.clipboard.writeText(reply.answer); } catch (_) {}
-    } else {
-      failAnswerCard(card, body, (reply && reply.error) || "no answer");
-      resultEl.textContent = "AI answer failed.";
+    if (reply && reply.entry) upsertAnswerCard(reply.entry);
+    else if (reply && reply.id) {
+      upsertAnswerCard({
+        id: reply.id,
+        question: trimmed,
+        status: "pending",
+        answer: "",
+        error: "",
+      });
     }
+    showToast("Thinking…", { persist: true });
   } catch (e) {
-    failAnswerCard(card, body, e.message);
+    showToast(`Error: ${e.message}`, { kind: "error" });
   }
 }
 
 askBtn.addEventListener("click", async () => {
-  resultEl.textContent = "Click a question on the page (Esc to cancel)…";
-  try {
-    await browser.runtime.sendMessage({ type: "START_PICKER", field: "question" });
-  } catch (e) {
-    resultEl.textContent = `Error: ${e.message}`;
-  }
+  await startPagePicker("question", "Click a question on the page (Esc to cancel)…");
 });

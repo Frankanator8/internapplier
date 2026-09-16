@@ -81,7 +81,7 @@ class InterviewChatPage(QWidget):
         self._transcript_scroll.setWidgetResizable(True)
         self._transcript_scroll.setFrameShape(QFrame.Shape.NoFrame)
         transcript_host = QWidget()
-        transcript_host.setStyleSheet("background: transparent;")
+        transcript_host.setObjectName("scroll-inner")
         self._transcript_layout = QVBoxLayout(transcript_host)
         self._transcript_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self._transcript_layout.setSpacing(10)
@@ -136,7 +136,7 @@ class InterviewChatPage(QWidget):
         self._cards_scroll.setWidgetResizable(True)
         self._cards_scroll.setFrameShape(QFrame.Shape.NoFrame)
         cards_host = QWidget()
-        cards_host.setStyleSheet("background: transparent;")
+        cards_host.setObjectName("scroll-inner")
         self._cards_layout_v = QVBoxLayout(cards_host)
         self._cards_layout_v.setAlignment(Qt.AlignmentFlag.AlignTop)
         self._cards_layout_v.setSpacing(10)
@@ -174,11 +174,7 @@ class InterviewChatPage(QWidget):
     # ── Camera preview (local display only — never sent to AI) ───
     def _build_camera_preview(self) -> QWidget:
         container = QFrame()
-        container.setObjectName("card")
-        container.setStyleSheet(
-            "QFrame#card { background: #111; border: 1px solid #e0e0e0;"
-            " border-radius: 8px; }"
-        )
+        container.setObjectName("camera-card")
         v = QVBoxLayout(container)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(0)
@@ -205,7 +201,7 @@ class InterviewChatPage(QWidget):
 
         try:
             self._video_widget = QVideoWidget()
-            self._video_widget.setStyleSheet("background: #000;")
+            self._video_widget.setObjectName("camera-video")
             v.addWidget(self._video_widget)
 
             self._camera = QCamera(device)

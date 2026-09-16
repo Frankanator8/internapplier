@@ -4,6 +4,7 @@ from pathlib import Path
 # --- Application paths ---
 APP_DIR = Path.home() / "Library" / "Application Support" / "InternApplier"
 RESUME_DATA_FILE = APP_DIR / "resume.json"
+RESUME_BUILDER_DRAFT_FILE = APP_DIR / "resume_builder_draft.json"
 INTERVIEW_TEMPLATE_FILE = APP_DIR / "interview_template.json"
 INTERVIEW_FEEDBACK_FILE = APP_DIR / "interview_feedback.json"
 MODELS_FILE = APP_DIR / "models.txt"

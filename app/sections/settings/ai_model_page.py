@@ -126,7 +126,7 @@ class AiModelMixin:
         used_for: list[str],
     ) -> QWidget:
         container = QWidget()
-        container.setStyleSheet("background: transparent;")
+        container.setObjectName("scroll-inner")
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)

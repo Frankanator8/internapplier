@@ -4,3 +4,5 @@ const PROFILE_CACHE_KEY = "profile_cache";
 const STATUSES_CACHE_KEY = "statuses_cache";
 const PICKED_KEY = "picked";
 const DRAFT_KEY = "application_draft";
+const SESSION_KEY = "session_state";
+const ANSWERS_KEY = "session_answers";

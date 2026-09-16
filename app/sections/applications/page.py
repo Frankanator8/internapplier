@@ -2,10 +2,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import (
-    QHBoxLayout, QListWidget, QListWidgetItem, QStackedWidget, QWidget,
-)
+from PyQt6.QtWidgets import QVBoxLayout, QWidget
 
 from .tracker_page import TrackerPage
 
@@ -20,32 +17,16 @@ class ApplicationsPage(QWidget):
     ):
         super().__init__(parent)
 
-        outer = QHBoxLayout(self)
+        outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
-
-        self._sidebar = QListWidget()
-        self._sidebar.setObjectName("sidebar")
-        self._sidebar.setFixedWidth(200)
-
-        item = QListWidgetItem("📋  Tracker")
-        item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        self._sidebar.addItem(item)
 
         self._tracker_page = TrackerPage(
             get_profile=get_profile,
             get_research_cache=get_research_cache,
             save_fn=save_fn,
         )
-
-        self._stack = QStackedWidget()
-        self._stack.addWidget(self._tracker_page)
-
-        self._sidebar.currentRowChanged.connect(self._stack.setCurrentIndex)
-        self._sidebar.setCurrentRow(0)
-
-        outer.addWidget(self._sidebar)
-        outer.addWidget(self._stack, 1)
+        outer.addWidget(self._tracker_page)
 
     def add_entry(self, data: dict | None = None):
         self._tracker_page.add_entry(data)

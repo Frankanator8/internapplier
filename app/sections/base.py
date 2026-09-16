@@ -680,7 +680,7 @@ class CardPage(QWidget):
         outer.addWidget(scroll)
 
         self._container = QWidget()
-        self._container.setStyleSheet("background: transparent;")
+        self._container.setObjectName("scroll-inner")
         self._cards_layout = QVBoxLayout(self._container)
         self._cards_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self._cards_layout.setSpacing(14)

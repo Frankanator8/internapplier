@@ -19,6 +19,7 @@
       "src/background/api-client.js",
       "src/background/cache.js",
       "src/background/tab-bridge.js",
+      "src/background/answers.js",
       "src/background/router.js"
     ]
   },

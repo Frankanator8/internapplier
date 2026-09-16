@@ -3,7 +3,6 @@ no real AI calls happen."""
 from __future__ import annotations
 
 import json
-import pathlib
 
 import pytest
 
@@ -21,16 +20,18 @@ _SAMPLE_RESUME_TEXT = "Experience\nX @ C\n- b"
 
 from api.generate_resume import generator as gen_mod
 from api.generate_resume import persist as persist_mod
-from api.generate_resume.generator import (
-    ResumeGenerator,
-    _apply_label_drops,
-    _build_feedback,
-    _build_header_from_general_info,
+from api.generate_resume.generator import ResumeGenerator
+from api.generate_resume.json_recovery import (
+    extract_json_object as _extract_json_object,
+    norm as _norm,
+)
+from api.generate_resume.persist import (
     _build_pdf_filename,
     _clean_for_filename,
-    _extract_json_object,
-    _norm,
-    _persist_pdf,
+    apply_label_drops as _apply_label_drops,
+    build_feedback as _build_feedback,
+    build_header_from_general_info as _build_header_from_general_info,
+    persist_pdf as _persist_pdf,
 )
 
 

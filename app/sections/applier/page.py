@@ -14,12 +14,14 @@ from .answer_question_page import AnswerQuestionMixin
 from .generate_resume_page import GenerateResumeMixin
 from .library_page import LibraryMixin
 from .research_page import ResearchMixin
+from .resume_builder_page import ResumeBuilderMixin
 
 logger = logging.getLogger(__name__)
 
 
 class ApplierPage(
     GenerateResumeMixin,
+    ResumeBuilderMixin,
     ResearchMixin,
     LibraryMixin,
     AnswerQuestionMixin,
@@ -47,13 +49,20 @@ class ApplierPage(
         self._applier_sidebar.setObjectName("sidebar")
         self._applier_sidebar.setFixedWidth(200)
 
-        for label in ("📄  Generate Resume", "🔍  Research Company", "📚  Library", "❓  Answer Question"):
+        for label in (
+            "📄  Generate Resume",
+            "🧩  Resume Builder",
+            "🔍  Research Company",
+            "📚  Library",
+            "❓  Answer Question",
+        ):
             item = QListWidgetItem(label)
             item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             self._applier_sidebar.addItem(item)
 
         self._applier_stack = QStackedWidget()
         self._applier_stack.addWidget(self._build_generate_resume_page())
+        self._applier_stack.addWidget(self._build_resume_builder_page())
         self._applier_stack.addWidget(self._build_research_page())
         self._applier_stack.addWidget(self._build_library_page())
         self._applier_stack.addWidget(self._build_answer_question_page())
@@ -169,10 +178,22 @@ class ApplierPage(
         shutdown_threads(self._threads)
         self._workers.clear()
 
+    def showEvent(self, event):  # noqa: N802 (Qt API)
+        super().showEvent(event)
+        # Applications may have changed elsewhere (e.g. the Applications tab);
+        # refresh whichever Applier sub-section is currently visible.
+        self._on_applier_section_changed(self._applier_sidebar.currentRow())
+
     def _on_applier_section_changed(self, idx: int):
         if idx == 0:
             self._refresh_app_picker()
-        if idx == 2:
-            self._refresh_library()
+        if idx == 1:
+            self._refresh_builder_palette()
+            if not self._builder_did_initial_compile:
+                self._builder_did_initial_compile = True
+                if self._builder_canvas.serialize():
+                    self._builder_compile()
         if idx == 3:
+            self._refresh_library()
+        if idx == 4:
             self._refresh_answer_app_picker()

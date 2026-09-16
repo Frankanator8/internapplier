@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QListWidget, QListWidgetItem,
 )
-from .base import _label, _primary_btn, _secondary_btn, _icon_btn
+from .base import _label, _primary_btn, _icon_btn
 
 
 class SkillsPage(QWidget):

@@ -11,7 +11,7 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFrame, QHBoxLayout,
-    QLabel, QListWidget, QListWidgetItem, QScrollArea, QVBoxLayout, QWidget,
+    QListWidget, QListWidgetItem, QScrollArea, QVBoxLayout, QWidget,
 )
 
 from .sections.base import _label, _secondary_btn, make_card_frame
@@ -131,7 +131,7 @@ class ImportReviewDialog(QDialog):
         outer.addWidget(scroll, stretch=1)
 
         container = QWidget()
-        container.setStyleSheet("background: transparent;")
+        container.setObjectName("scroll-inner")
         self._body = QVBoxLayout(container)
         self._body.setAlignment(Qt.AlignmentFlag.AlignTop)
         self._body.setSpacing(14)

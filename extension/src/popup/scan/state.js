@@ -2,7 +2,24 @@ function normText(s) {
   return (s || "").toString().toLowerCase().replace(/\s+/g, " ").trim();
 }
 
-let _scanState = { jobs: [], duplicates: [], selector: null };
+let _scanState = { jobs: [], duplicates: [], selected: null, selector: null };
+
+function persistScanSession() {
+  const selected = [];
+  scanList.querySelectorAll("input[type=checkbox]:checked").forEach((cb) => {
+    selected.push(parseInt(cb.dataset.idx, 10));
+  });
+  _scanState.selected = selected;
+  patchSession({
+    view: "scan",
+    scan: {
+      jobs: _scanState.jobs,
+      duplicates: _scanState.duplicates,
+      selected,
+      selector: _scanState.selector,
+    },
+  }).catch(() => {});
+}
 
 function updateScanScopeIndicator() {
   if (_scanState.selector) {

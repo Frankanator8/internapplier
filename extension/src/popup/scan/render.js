@@ -2,20 +2,23 @@ function renderScanList() {
   scanList.innerHTML = "";
   if (!_scanState.jobs.length) {
     const empty = document.createElement("div");
-    empty.style.padding = "8px";
-    empty.style.color = "#6b7280";
-    empty.textContent = "No postings detected on this page.";
+    empty.className = "empty-state";
+    empty.textContent = "No postings detected on this page. Try picking a section, or scan a careers listing.";
     scanList.appendChild(empty);
     return;
   }
+  const selectedSet = Array.isArray(_scanState.selected)
+    ? new Set(_scanState.selected)
+    : null;
   _scanState.jobs.forEach((job, i) => {
     const dup = _scanState.duplicates[i];
     const row = document.createElement("label");
     row.className = "scan-row" + (dup ? " dup" : "");
     const cb = document.createElement("input");
     cb.type = "checkbox";
-    cb.checked = !dup;
+    cb.checked = selectedSet ? selectedSet.has(i) : !dup;
     cb.dataset.idx = String(i);
+    cb.addEventListener("change", persistScanSession);
     const main = document.createElement("div");
     main.className = "scan-main";
     const title = document.createElement("div");

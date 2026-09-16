@@ -95,10 +95,7 @@ class GenerateResumeMixin:
         mono.setStyleHint(QFont.StyleHint.Monospace)
         mono.setPointSize(11)
         self._gen_stream_view.setFont(mono)
-        self._gen_stream_view.setStyleSheet(
-            "QPlainTextEdit { background: #1d1d1d; color: #e6e6e6;"
-            " border: 1px solid #333; padding: 8px; }"
-        )
+        self._gen_stream_view.setObjectName("code-stream")
         self._gen_stream_view.setVisible(False)
         self._gen_stream_last_stage: str | None = None
         right_layout.addWidget(self._gen_stream_view, 1)
@@ -109,7 +106,7 @@ class GenerateResumeMixin:
         scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         self._gen_results_content = QWidget()
-        self._gen_results_content.setStyleSheet("background: transparent;")
+        self._gen_results_content.setObjectName("scroll-inner")
         self._gen_results_layout = QVBoxLayout(self._gen_results_content)
         self._gen_results_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self._gen_results_layout.setSpacing(10)

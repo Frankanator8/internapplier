@@ -39,6 +39,7 @@ _PATH_BINDINGS = [
     # (module dotted name, attribute name, relative path under APP_DIR)
     ("api.constants", "APP_DIR", ""),
     ("api.constants", "RESUME_DATA_FILE", "resume.json"),
+    ("api.constants", "RESUME_BUILDER_DRAFT_FILE", "resume_builder_draft.json"),
     ("api.constants", "INTERVIEW_TEMPLATE_FILE", "interview_template.json"),
     ("api.constants", "INTERVIEW_FEEDBACK_FILE", "interview_feedback.json"),
     ("api.constants", "MODELS_FILE", "models.txt"),

@@ -68,6 +68,7 @@ def main():
         ai_provider.resync_all_prompts()
     _start_api_server()
     app = QApplication(sys.argv)
+    app.setStyle("Fusion")
     app.setApplicationName("I*ternship")
     apply_theme(app, app_settings.get_theme_preference())
     install_system_listener(app)

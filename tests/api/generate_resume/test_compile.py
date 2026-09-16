@@ -6,7 +6,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from api.generate_resume import compile as cm
 from api.generate_resume.compile import (
     LatexCompileError,
     _extract_error_excerpt,

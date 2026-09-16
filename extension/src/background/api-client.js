@@ -10,7 +10,7 @@ async function fetchFields() {
   const res = await fetch(`${API_BASE}/autofill/fields`, { cache: "no-store" });
   if (!res.ok) throw new Error(`API ${res.status}`);
   const fields = await res.json();
-  await browser.storage.local.set({ [CACHE_KEY]: fields });
+  await browser.storage.local.set({ [CACHE_KEY]: { fields, fetchedAt: Date.now() } });
   return fields;
 }
 

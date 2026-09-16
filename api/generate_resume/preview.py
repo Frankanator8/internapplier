@@ -60,12 +60,20 @@ def compile_template_preview(template: str) -> tuple[Path, str | None]:
         src = default_prompt("resume_template.txt")
         note = _EMPTY_NOTE
 
-    pdf = compile_latex(src, workdir=_next_pdf_dir())
+    pdf = compile_latex_preview(src)
     logger.info("compile_template_preview — compiled preview at %s", pdf)
     return pdf, note
+
+
+def compile_latex_preview(latex: str) -> Path:
+    """Compile LaTeX to a unique temp PDF path (QWebEngineView cache-safe)."""
+    pdf = compile_latex(latex, workdir=_next_pdf_dir())
+    logger.info("compile_latex_preview — compiled at %s", pdf)
+    return pdf
 
 
 __all__ = [
     "LatexCompileError",
     "compile_template_preview",
+    "compile_latex_preview",
 ]

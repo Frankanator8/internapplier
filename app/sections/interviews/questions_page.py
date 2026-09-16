@@ -123,7 +123,7 @@ class InterviewQuestionsPage(QWidget):
         outer.addWidget(scroll, 1)
 
         self._container = QWidget()
-        self._container.setStyleSheet("background: transparent;")
+        self._container.setObjectName("scroll-inner")
         self._cards_layout = QVBoxLayout(self._container)
         self._cards_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self._cards_layout.setSpacing(14)
@@ -201,10 +201,7 @@ class InterviewQuestionsPage(QWidget):
         header_row.setContentsMargins(0, 0, 0, 0)
         header_row.setSpacing(8)
         linked_label = QLabel("")
-        linked_label.setStyleSheet(
-            "QLabel { color: #6b7280; font-size: 12px; font-weight: 600;"
-            " padding: 2px 8px; border: 1px solid #d1d5db; border-radius: 10px; }"
-        )
+        linked_label.setObjectName("linked-badge")
         linked_label.setVisible(False)
         header_row.addWidget(linked_label, 0, Qt.AlignmentFlag.AlignLeft)
         header_row.addStretch()

@@ -36,7 +36,7 @@ class ExperiencePage(QWidget):
         outer.addWidget(scroll)
 
         container = QWidget()
-        container.setStyleSheet("background: transparent;")
+        container.setObjectName("scroll-inner")
         container_layout = QVBoxLayout(container)
         container_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         container_layout.setContentsMargins(0, 0, 0, 16)

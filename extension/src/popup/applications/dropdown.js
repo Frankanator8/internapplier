@@ -30,6 +30,14 @@ function selectedApplicationUuid() {
   return v;
 }
 
+function setAutofillEmpty(empty, message) {
+  if (appsEmpty) {
+    appsEmpty.classList.toggle("hidden", !empty);
+    if (empty && message) appsEmpty.textContent = message;
+  }
+  if (autofillControls) autofillControls.classList.toggle("hidden", empty);
+}
+
 async function populateLoadDropdown() {
   loadTarget.innerHTML = "";
   let meta = {};
@@ -52,8 +60,12 @@ async function populateLoadDropdown() {
     loadBtn.disabled = true;
     askBtn.disabled = true;
     hideResumeChip();
+    setAutofillEmpty(true, "No applications yet. Create one from this page or scan a job list.");
+    patchSession({ selectedUuid: null }).catch(() => {});
     return;
   }
+
+  setAutofillEmpty(false);
 
   for (const a of apps) {
     const opt = document.createElement("option");
@@ -64,10 +76,21 @@ async function populateLoadDropdown() {
     loadTarget.appendChild(opt);
   }
 
-  let best = pickByLink(apps, meta.url);
-  if (!best) best = pickBestMatch(apps, meta);
-  if (best) loadTarget.value = best;
+  let preferred = "";
+  try {
+    const session = await loadSession();
+    preferred = session.selectedUuid || "";
+  } catch (_) {}
+
+  if (preferred && apps.some((a) => a.uuid === preferred)) {
+    loadTarget.value = preferred;
+  } else {
+    let best = pickByLink(apps, meta.url);
+    if (!best) best = pickBestMatch(apps, meta);
+    if (best) loadTarget.value = best;
+  }
   loadBtn.disabled = false;
   askBtn.disabled = selectedApplicationUuid() == null;
   refreshResumeChip(selectedApplicationUuid());
+  patchSession({ selectedUuid: selectedApplicationUuid() }).catch(() => {});
 }

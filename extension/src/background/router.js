@@ -6,25 +6,52 @@ browser.runtime.onMessage.addListener((msg, _sender) => {
     return getProfile({ forceRefresh: !!msg.forceRefresh });
   }
   if (msg && msg.type === "ANSWER_QUESTION") {
-    return answerQuestion(msg.question, msg.application_uuid);
+    return startAnswerJob(msg.question, msg.application_uuid);
+  }
+  if (msg && msg.type === "RETRY_ANSWER") {
+    return retryAnswer(msg.id);
+  }
+  if (msg && msg.type === "DISMISS_ANSWER") {
+    return dismissAnswer(msg.id);
   }
   if (msg && msg.type === "HEALTH") {
     return checkHealth();
   }
   if (msg && msg.type === "AUTOFILL_ACTIVE_TAB") {
     return (async () => {
-      const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-      if (!tabs[0]) return { ok: false, reason: "no active tab" };
-      const fields = await getFields({ forceRefresh: true });
-      await browser.tabs.sendMessage(tabs[0].id, { type: "AUTOFILL", fields });
-      return { ok: true };
+      let loaded;
+      try {
+        loaded = await loadFieldsForAutofill();
+      } catch (e) {
+        return { ok: false, error: String(e && e.message || e) };
+      }
+      const reply = await sendToActiveTab({ type: "AUTOFILL", fields: loaded.fields });
+      if (reply && reply.needsRefresh) {
+        return { ok: false, needsRefresh: true, error: reply.reason, stale: loaded.stale, fetchedAt: loaded.fetchedAt };
+      }
+      if (reply && reply.ok === false) {
+        return { ok: false, error: reply.reason || "autofill failed", stale: loaded.stale, fetchedAt: loaded.fetchedAt };
+      }
+      return {
+        ok: true,
+        report: {
+          filled: (reply && reply.filled) || [],
+          skipped: (reply && reply.skipped) || [],
+        },
+        stale: loaded.stale,
+        fetchedAt: loaded.fetchedAt,
+      };
     })();
   }
   if (msg && msg.type === "AUTOFILL_WITH_APPLICATION") {
     return (async () => {
-      const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-      if (!tabs[0]) return { ok: false, reason: "no active tab" };
-      const fields = { ...(await getFields({ forceRefresh: true })) };
+      let loaded;
+      try {
+        loaded = await loadFieldsForAutofill();
+      } catch (e) {
+        return { ok: false, error: String(e && e.message || e) };
+      }
+      const fields = { ...loaded.fields };
       try {
         const listed = await listApplications();
         if (listed.ok && Array.isArray(listed.body)) {
@@ -36,8 +63,22 @@ browser.runtime.onMessage.addListener((msg, _sender) => {
           }
         }
       } catch (_) {}
-      await browser.tabs.sendMessage(tabs[0].id, { type: "AUTOFILL", fields });
-      return { ok: true };
+      const reply = await sendToActiveTab({ type: "AUTOFILL", fields });
+      if (reply && reply.needsRefresh) {
+        return { ok: false, needsRefresh: true, error: reply.reason, stale: loaded.stale, fetchedAt: loaded.fetchedAt };
+      }
+      if (reply && reply.ok === false) {
+        return { ok: false, error: reply.reason || "autofill failed", stale: loaded.stale, fetchedAt: loaded.fetchedAt };
+      }
+      return {
+        ok: true,
+        report: {
+          filled: (reply && reply.filled) || [],
+          skipped: (reply && reply.skipped) || [],
+        },
+        stale: loaded.stale,
+        fetchedAt: loaded.fetchedAt,
+      };
     })();
   }
   if (msg && msg.type === "EXTRACT_PAGE_META") {
@@ -45,6 +86,9 @@ browser.runtime.onMessage.addListener((msg, _sender) => {
   }
   if (msg && msg.type === "START_PICKER") {
     return startPicker(msg.field);
+  }
+  if (msg && msg.type === "RELOAD_ACTIVE_TAB") {
+    return reloadActiveTab();
   }
   if (msg && msg.type === "GET_STATUSES") {
     return getStatuses({ forceRefresh: !!msg.forceRefresh });
@@ -71,7 +115,6 @@ browser.runtime.onMessage.addListener((msg, _sender) => {
     return extractJobList(msg.selector);
   }
   if (msg && msg.type === "SCAN_PICKER_RESULT") {
-    // Forward to popup so it can render the scoped scan
     browser.runtime.sendMessage({ type: "SCAN_PICKED", result: msg.result }).catch(() => {});
     return Promise.resolve({ ok: true });
   }
@@ -83,6 +126,13 @@ browser.runtime.onMessage.addListener((msg, _sender) => {
       const payload = { field: msg.result.field, value: msg.result.value || "" };
       browser.storage.local.set({ [PICKED_KEY]: payload }).catch(() => {});
       browser.runtime.sendMessage({ type: "PICKED", picked: payload }).catch(() => {});
+    } else {
+      browser.runtime.sendMessage({
+        type: "PICKED",
+        picked: null,
+        cancelled: !!(msg.result && msg.result.cancelled),
+        result: msg.result || { ok: false },
+      }).catch(() => {});
     }
     return Promise.resolve({ ok: true });
   }
@@ -96,7 +146,6 @@ if (browser.browserAction && browser.browserAction.onClicked) {
   });
 }
 
-// Warm the caches when the extension starts.
 fetchFields().catch(() => {});
 fetchStatuses().catch(() => {});
 fetchProfile().catch(() => {});

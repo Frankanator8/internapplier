@@ -69,7 +69,7 @@ function startResumePolling(uuid) {
     } else if (body && body.status === "error") {
       stopResumePolling();
       showResumeGenerateButton(uuid, { generating: false });
-      if (resultEl) resultEl.textContent = `Resume generation failed: ${body.error || "unknown error"}`;
+      showToast(`Resume generation failed: ${body.error || "unknown error"}`, { kind: "error" });
     } else {
       _resumePollTimer = setTimeout(tick, 3000);
     }
@@ -82,7 +82,7 @@ if (resumeGenerateBtn) {
     const uuid = resumeGenerateBtn.dataset.uuid;
     if (!uuid || loadTarget.value !== uuid) return;
     showResumeGenerateButton(uuid, { generating: true });
-    if (resultEl) resultEl.textContent = "";
+    clearToast();
     let reply = null;
     try {
       reply = await browser.runtime.sendMessage({
@@ -99,7 +99,7 @@ if (resumeGenerateBtn) {
       || (reply && reply.error)
       || (reply && reply.status ? `HTTP ${reply.status}` : "unknown error");
     showResumeGenerateButton(uuid, { generating: false });
-    if (resultEl) resultEl.textContent = `Could not start resume generation: ${detail}`;
+    showToast(`Could not start resume generation: ${detail}`, { kind: "error" });
   });
 }
 
@@ -119,7 +119,7 @@ if (resumeChip) {
         `application/pdf:${file.name}:${_resumeChipObjectUrl}`
       );
     } catch (_) {
-      // Some browsers throw on items.add for cross-origin; fall through silently.
+      showToast("Could not attach the resume file for drag. Try again.", { kind: "error" });
     }
   });
 }

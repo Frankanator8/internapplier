@@ -3,11 +3,12 @@ from __future__ import annotations
 from bisect import bisect_right
 from datetime import date, timedelta
 
-from PyQt6.QtCore import QRect, Qt
+from PyQt6.QtCore import QEvent, QRect, Qt
 from PyQt6.QtGui import QColor, QPainter
 from PyQt6.QtWidgets import QWidget
 
 from api import app_settings
+from app.theme import current_palette
 
 
 _COLUMNS = 7
@@ -15,13 +16,16 @@ _ROWS = 2  # row 0 = weeks, row 1 = days
 _CELL = 12
 _GAP = 3
 
-_PALETTE = [
-    QColor("#ebedf0"),
-    QColor("#cfe2f3"),
-    QColor("#7fb3e6"),
-    QColor("#3d85c6"),
-    QColor("#0a66c2"),
-]
+
+def _heatmap_colors() -> list[QColor]:
+    p = current_palette()
+    return [
+        QColor(p["heatmap_0"]),
+        QColor(p["heatmap_1"]),
+        QColor(p["heatmap_2"]),
+        QColor(p["heatmap_3"]),
+        QColor(p["heatmap_4"]),
+    ]
 
 
 def _bucket(count: int, edges: list[int]) -> int:
@@ -93,14 +97,20 @@ class ApplicationsHeatmap(QWidget):
         for col in range(_COLUMNS):
             start, end = self._week_range_for_col(col)
             week_count = self._week_count(start, end)
-            painter.setBrush(_PALETTE[_bucket(week_count, self._week_edges)])
+            colors = _heatmap_colors()
+            painter.setBrush(colors[_bucket(week_count, self._week_edges)])
             painter.drawRect(self._cell_rect(col, 0))
 
             day = self._day_for_col(col)
             day_count = self._counts.get(day, 0)
-            painter.setBrush(_PALETTE[_bucket(day_count, self._day_edges)])
+            painter.setBrush(colors[_bucket(day_count, self._day_edges)])
             painter.drawRect(self._cell_rect(col, 1))
         painter.end()
+
+    def changeEvent(self, event):
+        if event.type() in (QEvent.Type.StyleChange, QEvent.Type.PaletteChange):
+            self.update()
+        super().changeEvent(event)
 
     def mouseMoveEvent(self, event):
         pos = event.position().toPoint()

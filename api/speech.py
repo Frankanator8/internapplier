@@ -21,7 +21,7 @@ try:
         AVAudioSession,
         AVAudioSessionCategoryRecord,
     )
-    from Foundation import NSLocale, NSObject
+    from Foundation import NSLocale
     from Speech import (
         SFSpeechAudioBufferRecognitionRequest,
         SFSpeechRecognizer,

@@ -79,7 +79,6 @@ class _LinksEditor(QWidget):
     def _remove_row(self, row_widget: QWidget):
         for i, (w, radio, _edit) in enumerate(self._rows):
             if w is row_widget:
-                was_primary = radio.isChecked()
                 self._group.removeButton(radio)
                 self._rows_holder.removeWidget(w)
                 w.deleteLater()

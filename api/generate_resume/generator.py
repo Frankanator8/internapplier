@@ -22,23 +22,12 @@ from .compile import (
     pdf_page_metrics,
     pdf_plain_text,
 )
-from .json_recovery import (
-    extract_json_object as _extract_json_object,
-    norm as _norm,
-    parse_lenient_json,
-)
+from .json_recovery import norm, parse_lenient_json
 from .persist import (
-    _build_pdf_filename,
-    _clean_for_filename,
     apply_label_drops,
-    apply_label_drops as _apply_label_drops,
     attempts_summary,
     build_feedback,
-    build_feedback as _build_feedback,
-    build_header_from_general_info,
-    build_header_from_general_info as _build_header_from_general_info,
     persist_pdf,
-    persist_pdf as _persist_pdf,
 )
 
 logger = logging.getLogger(__name__)
@@ -229,8 +218,7 @@ class ResumeGenerator:
                 for d in grade.get("drops") or []:
                     if not isinstance(d, str):
                         continue
-                    from .json_recovery import norm as _norm
-                    key = _norm(d)
+                    key = norm(d)
                     if key and key not in omitted_labels:
                         omitted_labels.add(key)
                         new_drops.append(d)

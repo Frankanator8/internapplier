@@ -66,7 +66,7 @@ class GeneralInfoPage(QWidget):
         outer.addWidget(scroll)
 
         container = QWidget()
-        container.setStyleSheet("background: transparent;")
+        container.setObjectName("scroll-inner")
         layout = QVBoxLayout(container)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         layout.setSpacing(14)

@@ -1,5 +1,5 @@
 scanBtn.addEventListener("click", () => {
-  runScan().catch((e) => { scanResult.textContent = `Error: ${e.message}`; });
+  runScan().catch((e) => { showToast(`Error: ${e.message}`, { kind: "error" }); });
 });
 
 scanBack.addEventListener("click", () => {
@@ -7,16 +7,14 @@ scanBack.addEventListener("click", () => {
 });
 
 scanPick.addEventListener("click", async () => {
-  scanResult.textContent = "Click an element on the page to scope the scan (Esc to cancel)…";
-  try {
-    await browser.runtime.sendMessage({ type: "START_PICKER", field: "scan_container" });
-  } catch (e) {
-    scanResult.textContent = `Error: ${e.message}`;
-  }
+  await startPagePicker(
+    "scan_container",
+    "Click an element on the page to scope the scan (Esc to cancel)…"
+  );
 });
 
 scanScopeClear.addEventListener("click", () => {
-  runScan(null).catch((e) => { scanResult.textContent = `Error: ${e.message}`; });
+  runScan(null).catch((e) => { showToast(`Error: ${e.message}`, { kind: "error" }); });
 });
 
 scanSelectNew.addEventListener("click", () => {
@@ -24,10 +22,12 @@ scanSelectNew.addEventListener("click", () => {
     const idx = parseInt(cb.dataset.idx, 10);
     cb.checked = !_scanState.duplicates[idx];
   });
+  persistScanSession();
 });
 
 scanDeselect.addEventListener("click", () => {
   scanList.querySelectorAll("input[type=checkbox]").forEach((cb) => { cb.checked = false; });
+  persistScanSession();
 });
 
 scanAdd.addEventListener("click", async () => {
@@ -49,11 +49,11 @@ scanAdd.addEventListener("click", async () => {
     }
   });
   if (!selected.length) {
-    scanResult.textContent = "Nothing selected.";
+    showToast("Nothing selected.", { kind: "warn" });
     return;
   }
   scanAdd.disabled = true;
-  scanResult.textContent = `Adding ${selected.length}…`;
+  showToast(`Adding ${selected.length}…`, { persist: true });
   try {
     const reply = await browser.runtime.sendMessage({
       type: "BULK_CREATE_APPLICATIONS",
@@ -61,18 +61,20 @@ scanAdd.addEventListener("click", async () => {
     });
     if (reply && reply.ok) {
       const added = (reply.body && reply.body.added) || selected.length;
-      scanResult.textContent = `Added ${added} application${added === 1 ? "" : "s"}.`;
+      showToast(`Added ${added} application${added === 1 ? "" : "s"}.`, { kind: "ok" });
       await populateLoadDropdown();
       const apps = (await browser.runtime.sendMessage({ type: "LIST_APPLICATIONS" })) || {};
       const list = (apps.ok && Array.isArray(apps.body)) ? apps.body : [];
       _scanState.duplicates = _scanState.jobs.map((j) => isDuplicate(j, list));
+      _scanState.selected = null;
       renderScanList();
+      persistScanSession();
     } else {
       const detail = reply && (reply.error || (reply.body && JSON.stringify(reply.body)) || `HTTP ${reply.status}`);
-      scanResult.textContent = `Add failed: ${detail || "unknown error"}`;
+      showToast(`Add failed: ${detail || "unknown error"}`, { kind: "error" });
     }
   } catch (e) {
-    scanResult.textContent = `Error: ${e.message}`;
+    showToast(`Error: ${e.message}`, { kind: "error" });
   } finally {
     scanAdd.disabled = false;
   }
