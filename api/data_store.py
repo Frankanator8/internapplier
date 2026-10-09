@@ -6,6 +6,7 @@ from .constants import (
     RESUME_DATA_FILE,
 )
 from .json_store import load_json, save_json
+from .profile_merge import fold_entry_skills
 
 
 class ApplicationNotFound(KeyError):
@@ -52,6 +53,8 @@ def load() -> dict:
     if _cache is not None and _cache_mtime == mtime:
         return _cache
     data = load_json(RESUME_DATA_FILE, _empty_data())
+    if isinstance(data, dict):
+        data = fold_entry_skills(data)
     _cache = data
     _cache_mtime = mtime
     return _cache

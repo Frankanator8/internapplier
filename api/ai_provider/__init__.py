@@ -21,6 +21,7 @@ from .provider import OpenRouterProvider, get_provider
 from .settings import (
     _load_model_config,
     get_max_generation_attempts,
+    get_model_config,
     get_openrouter_api_key,
     get_resume_page_cap,
     get_resume_score_threshold,
@@ -47,6 +48,7 @@ __all__ = [
     "resync_all_prompts",
     "_seed_prompts",
     "_load_model_config",
+    "get_model_config",
     "save_model_config",
     "DEFAULT_BASIC_MODEL",
     "DEFAULT_FAST_MODEL",

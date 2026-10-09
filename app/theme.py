@@ -6,12 +6,13 @@ from PyQt6.QtWidgets import QApplication
 
 from api import app_settings
 
-from .style import PALETTE, build_stylesheet
+from .style import build_stylesheet, palette_for
 
 _applied_mode: str | None = None
 
 
-def current_effective_theme(mode: str) -> str:
+def _effective_theme(mode: str) -> str:
+    """Resolve "system" to the OS appearance."""
     if mode == "dark":
         return "dark"
     if mode == "light":
@@ -27,8 +28,7 @@ def current_effective_theme(mode: str) -> str:
 
 
 def current_palette() -> dict[str, str]:
-    mode = _applied_mode or current_effective_theme(app_settings.get_theme_preference())
-    return PALETTE.get(mode, PALETTE["light"])
+    return palette_for(_applied_mode or _effective_theme(app_settings.get_theme_preference()))
 
 
 def _build_palette(colors: dict[str, str]) -> QPalette:
@@ -45,18 +45,16 @@ def _build_palette(colors: dict[str, str]) -> QPalette:
     pal.setColor(QPalette.ColorRole.PlaceholderText, QColor(colors["placeholder"]))
     pal.setColor(QPalette.ColorRole.ToolTipBase, QColor(colors["surface_card"]))
     pal.setColor(QPalette.ColorRole.ToolTipText, QColor(colors["text"]))
-    pal.setColor(QPalette.ColorRole.Link, QColor(colors["link"]))
+    pal.setColor(QPalette.ColorRole.Link, QColor(colors["accent"]))
     pal.setColor(QPalette.ColorRole.BrightText, QColor(colors["status_error"]))
     return pal
 
 
 def apply_theme(app: QApplication, mode: str) -> None:
     global _applied_mode
-    effective = current_effective_theme(mode)
-    _applied_mode = effective
-    colors = PALETTE.get(effective, PALETTE["light"])
-    app.setPalette(_build_palette(colors))
-    app.setStyleSheet(build_stylesheet(effective))
+    _applied_mode = _effective_theme(mode)
+    app.setPalette(_build_palette(palette_for(_applied_mode)))
+    app.setStyleSheet(build_stylesheet(_applied_mode))
     for widget in app.topLevelWidgets():
         widget.update()
 

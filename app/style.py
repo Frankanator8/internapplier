@@ -10,16 +10,14 @@ PALETTE: dict[str, dict[str, str]] = {
         "bg":                       "#F4F5F8",
         "text":                     "#1A1C1E",
         "text_muted":               "#5C6370",
-        "text_subtle":              "#5C6370",
         "text_faint":               "#8A9099",
         "text_disabled":            "#B0B5BD",
-        # Accent / link
+        # Accent
         "accent":                   "#0D9488",
         "accent_hover":             "#0F766E",
         "accent_pressed":           "#115E59",
         "accent_soft_bg":           "#E6F7F4",
         "accent_soft_pressed_bg":   "#CDEEE8",
-        "link":                     "#0D9488",
         "on_accent":                "#FFFFFF",
         # Status
         "status_ok":                "#0F766E",
@@ -52,7 +50,6 @@ PALETTE: dict[str, dict[str, str]] = {
         "sidebar_text":             "#3D4450",
         "sidebar_hover_bg":         "#ECEEF2",
         # Tabs
-        "tab_bg":                   "#FFFFFF",
         "tab_text":                 "#5C6370",
         "tab_hover_bg":             "#E6F7F4",
         "tab_hover_text":           "#0F766E",
@@ -70,10 +67,6 @@ PALETTE: dict[str, dict[str, str]] = {
         "bubble_user_border":       "#B7E4DC",
         "bubble_ai_bg":             "#FFFFFF",
         "bubble_ai_border":         "#E2E4EA",
-        # Chip
-        "chip_bg":                  "#E6F7F4",
-        "chip_border":              "#B7E4DC",
-        "chip_text":                "#0F766E",
         # Heatmap
         "heatmap_0":                "#E8EEF0",
         "heatmap_1":                "#B8E4DC",
@@ -86,16 +79,14 @@ PALETTE: dict[str, dict[str, str]] = {
         "bg":                       "#12151A",
         "text":                     "#E8EAED",
         "text_muted":               "#A8B0BA",
-        "text_subtle":              "#A8B0BA",
         "text_faint":               "#8A929B",
         "text_disabled":            "#5A6068",
-        # Accent / link
+        # Accent
         "accent":                   "#2DD4BF",
         "accent_hover":             "#5EEAD4",
         "accent_pressed":           "#14B8A6",
         "accent_soft_bg":           "#14332F",
         "accent_soft_pressed_bg":   "#0F2825",
-        "link":                     "#2DD4BF",
         "on_accent":                "#042F2E",
         # Status
         "status_ok":                "#2DD4BF",
@@ -128,7 +119,6 @@ PALETTE: dict[str, dict[str, str]] = {
         "sidebar_text":             "#A8B0BA",
         "sidebar_hover_bg":         "#1E252C",
         # Tabs
-        "tab_bg":                   "#1C2128",
         "tab_text":                 "#A8B0BA",
         "tab_hover_bg":             "#14332F",
         "tab_hover_text":           "#5EEAD4",
@@ -146,10 +136,6 @@ PALETTE: dict[str, dict[str, str]] = {
         "bubble_user_border":       "#1E4A44",
         "bubble_ai_bg":             "#1C2128",
         "bubble_ai_border":         "#2A313A",
-        # Chip
-        "chip_bg":                  "#14332F",
-        "chip_border":              "#1E4A44",
-        "chip_text":                "#99F6E4",
         # Heatmap
         "heatmap_0":                "#2E3842",
         "heatmap_1":                "#164E48",
@@ -366,6 +352,21 @@ QLabel#app-brand {
     font-size: 15px;
     font-weight: 700;
     color: $text;
+    padding: 0 8px;
+}
+
+/* ── Card group heading (grouped forms, import review) ──────── */
+QLabel#card-heading {
+    font-size: 15px;
+    font-weight: 700;
+    color: $text;
+}
+
+/* ── Sub-heading inside a settings card ─────────────────────── */
+QLabel#settings-subheading {
+    font-size: 14px;
+    font-weight: bold;
+    margin-top: 12px;
 }
 
 /* ── Group subtitle (experience section headers) ────────────── */
@@ -385,12 +386,20 @@ QLabel#applier-section-header {
 /* ── Hint / helper text below inputs ────────────────────────── */
 QLabel#hint {
     font-size: 12px;
-    color: $text_subtle;
+    color: $text_muted;
 }
 
 /* ── Muted secondary text (chat author, empty states, etc.) ─── */
 QLabel#muted {
     color: $text_faint;
+}
+QLabel#empty-note {
+    color: $text_faint;
+    padding: 8px 4px;
+}
+QLabel#camera-hint {
+    color: $text_faint;
+    font-size: 12px;
 }
 
 /* ── Status messages (neutral / ok / error) ─────────────────── */
@@ -555,22 +564,6 @@ QFrame#course-row {
     border-radius: 0;
 }
 
-/* ── Inline tag field (chips + entry in one control) ────────── */
-QFrame#tag-field {
-    background: $surface_input;
-    border: 1px solid $border_input;
-    border-radius: 8px;
-}
-QLineEdit#tag-field-input {
-    background: transparent;
-    border: none;
-    padding: 2px 2px;
-}
-QLineEdit#tag-field-input:focus {
-    background: transparent;
-    border: none;
-}
-
 /* ── Skills list ────────────────────────────────────────────── */
 QListWidget#skills-list {
     background: $surface_card;
@@ -620,14 +613,6 @@ QLabel#analyze-quote-title {
     letter-spacing: 0.5px;
 }
 QLabel#analyze-bullet-text {
-    font-size: 13px;
-    color: $text;
-}
-QTextBrowser#analyze-browser {
-    background: $surface_list_subtle;
-    border: 1px solid $border;
-    border-radius: 8px;
-    padding: 8px;
     font-size: 13px;
     color: $text;
 }
@@ -687,20 +672,6 @@ QComboBox QAbstractItemView {
     border: 1px solid $border;
 }
 
-/* ── Tracker status combo ───────────────────────────────────── */
-QComboBox#status-combo {
-    background: $surface_input;
-    border: 1px solid $border_input;
-    border-radius: 8px;
-    padding: 5px 10px;
-    font-size: 13px;
-    color: $text;
-}
-QComboBox#status-combo:focus {
-    border: 1.5px solid $accent;
-    background: $surface_input_focus;
-}
-
 /* ── Application Tracker table ──────────────────────────────── */
 QTableWidget {
     background: $surface_card;
@@ -733,17 +704,6 @@ QTableWidget::item:selected {
 }
 
 /* ── Applier ────────────────────────────────────────────────── */
-QTextEdit#jd-input {
-    background: $surface_card;
-    border: 1px solid $border_input;
-    border-radius: 8px;
-    padding: 10px;
-    font-size: 13px;
-    color: $text;
-}
-QTextEdit#jd-input:focus {
-    border: 1.5px solid $accent;
-}
 QFrame#result-bullet-row {
     background: $surface_card;
     border: 1px solid $border;
@@ -771,17 +731,6 @@ QFrame#capability-chip QLabel {
     background: transparent;
 }
 
-/* ── Chip (skill badge / quick-fill) ────────────────────────── */
-QFrame#chip {
-    background: $chip_bg;
-    border: 1px solid $chip_border;
-    border-radius: 8px;
-}
-QFrame#chip QLabel {
-    color: $chip_text;
-    font-size: 12px;
-}
-
 /* ── Interview chat bubbles ─────────────────────────────────── */
 QFrame#chat-bubble-user {
     background: $bubble_user_bg;
@@ -792,6 +741,31 @@ QFrame#chat-bubble-ai {
     background: $bubble_ai_bg;
     border: 1px solid $bubble_ai_border;
     border-radius: 12px;
+}
+QLabel#chat-who {
+    color: $text_faint;
+    font-size: 11px;
+    font-weight: 600;
+}
+QLabel#chat-body {
+    font-size: 14px;
+}
+QLabel#feedback-status {
+    color: $text_faint;
+    font-size: 10px;
+    font-weight: 700;
+}
+
+/* ── Interview question cards ───────────────────────────────── */
+QLineEdit#question-edit, QLineEdit#question-edit:focus {
+    font-size: 15px;
+    font-weight: 600;
+    border: none;
+    background: transparent;
+    padding: 2px 0;
+}
+QTextEdit#answer-edit {
+    font-size: 15px;
 }
 
 /* ── Camera preview ─────────────────────────────────────────── */
@@ -843,6 +817,10 @@ QLabel#builder-handle {
 """)
 
 
+def palette_for(mode: str) -> dict[str, str]:
+    """Colors for "light" or "dark" (anything else falls back to light)."""
+    return PALETTE.get(mode, PALETTE["light"])
+
+
 def build_stylesheet(mode: str) -> str:
-    palette = PALETTE.get(mode, PALETTE["light"])
-    return _STYLESHEET_TEMPLATE.substitute(palette)
+    return _STYLESHEET_TEMPLATE.substitute(palette_for(mode))

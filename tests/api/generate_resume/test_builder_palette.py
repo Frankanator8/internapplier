@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.sections.applier.builder_widgets import default_section_title, palette_groups
+from app.sections.applier.builder import default_section_title, palette_groups
 
 
 def test_palette_includes_building_blocks_when_profile_empty():
@@ -35,3 +35,4 @@ def test_default_section_titles():
     assert default_section_title("experience", {"category": "other"}) == "Leadership Experience"
     assert default_section_title("project", {}) == "Projects"
     assert default_section_title("section", {}) == "New Section"
+

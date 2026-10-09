@@ -167,9 +167,7 @@ def _courses(value) -> list[dict]:
         name = _s(course.get("name"))
         if not name:
             continue
-        # CoursesWidget expects a skills key even though a resume never
-        # prints skills per course.
-        out.append({"name": name, "grade": _s(course.get("grade")), "skills": []})
+        out.append({"name": name, "grade": _s(course.get("grade"))})
     return out
 
 
@@ -208,7 +206,6 @@ def normalize_extraction(raw: dict) -> dict:
             "start": _s(entry.get("start")),
             "end": _s(entry.get("end")),
             "bullets": _bullets(entry.get("bullets")),
-            "skills": _str_list(entry.get("skills")),
             "category": category if category in ("relevant", "other") else "relevant",
         })
 
@@ -223,7 +220,6 @@ def normalize_extraction(raw: dict) -> dict:
             "start": _s(entry.get("start")),
             "end": _s(entry.get("end")),
             "bullets": _bullets(entry.get("bullets")),
-            "skills": _str_list(entry.get("skills")),
         })
 
     education = []
@@ -250,7 +246,6 @@ def normalize_extraction(raw: dict) -> dict:
             "issuer": _s(entry.get("issuer")),
             "date": _s(entry.get("date")),
             "bullets": _bullets(entry.get("bullets")),
-            "skills": _str_list(entry.get("skills")),
         })
 
     return {

@@ -140,6 +140,11 @@ def _load_model_config() -> dict[str, str]:
     return _model_config_cache
 
 
+def get_model_config() -> dict[str, str]:
+    """The configured {basic, fast, powerful} model ids (a copy)."""
+    return dict(_load_model_config())
+
+
 def save_model_config(basic: str, fast: str, powerful: str) -> None:
     global _model_config_cache
     APP_DIR.mkdir(parents=True, exist_ok=True)

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from api import data_store
-from api.profile_merge import apply_to_store, merge_profile
+from api.profile_merge import apply_to_store, fold_entry_skills, merge_profile
 
 
 def _store(**overrides) -> dict:
@@ -75,3 +75,44 @@ class TestApplyToStore:
         apply_to_store({"experience": [{"company": "B"}]})
         data_store.invalidate()
         assert [e["company"] for e in data_store.load()["experience"]] == ["A", "B"]
+
+
+class TestFoldEntrySkills:
+    def test_folds_every_section_and_course_into_skills(self):
+        store = _store(
+            experience=[{"company": "A", "skills": ["Go"]}],
+            projects=[{"name": "P", "skills": ["Rust"]}],
+            awards=[{"title": "T", "skills": ["LaTeX"]}],
+            education=[{"school": "S", "courses": [{"name": "C", "grade": "A", "skills": ["Proofs"]}]}],
+            skills=["Python"],
+        )
+        out = fold_entry_skills(store)
+        assert out["skills"] == ["Python", "Go", "Rust", "LaTeX", "Proofs"]
+        assert out["experience"] == [{"company": "A"}]
+        assert out["projects"] == [{"name": "P"}]
+        assert out["awards"] == [{"title": "T"}]
+        assert out["education"][0]["courses"] == [{"name": "C", "grade": "A"}]
+
+    def test_dedupes_case_insensitively_and_skips_blanks(self):
+        store = _store(
+            experience=[{"skills": ["python", " ", "Go"]}, {"skills": ["go"]}],
+            skills=["Python"],
+        )
+        assert fold_entry_skills(store)["skills"] == ["Python", "Go"]
+
+    def test_does_not_mutate_input(self):
+        store = _store(experience=[{"company": "A", "skills": ["Go"]}])
+        fold_entry_skills(store)
+        assert store["experience"] == [{"company": "A", "skills": ["Go"]}]
+        assert store["skills"] == []
+
+    def test_clean_data_is_unchanged(self):
+        store = _store(experience=[{"company": "A"}], skills=["Python"])
+        assert fold_entry_skills(store) == store
+
+    def test_load_applies_the_fold(self, isolated_app_dir):
+        data_store.save(_store(projects=[{"name": "P", "skills": ["Rust"]}]))
+        data_store.invalidate()
+        loaded = data_store.load()
+        assert loaded["skills"] == ["Rust"]
+        assert "skills" not in loaded["projects"][0]

@@ -134,14 +134,11 @@ class TestNormalizeExtraction:
         ]})
         assert out["projects"][0]["bullets"] == ["ok", "42"]
 
-    def test_courses_gain_an_empty_skills_list(self):
-        """CoursesWidget reads courses[].skills unconditionally."""
+    def test_courses_keep_name_and_grade_only(self):
         out = normalize_extraction({"education": [
-            {"school": "MIT", "courses": [{"name": "Algorithms", "grade": "A"}]},
+            {"school": "MIT", "courses": [{"name": "Algorithms", "grade": "A", "skills": ["X"]}]},
         ]})
-        assert out["education"][0]["courses"] == [
-            {"name": "Algorithms", "grade": "A", "skills": []}
-        ]
+        assert out["education"][0]["courses"] == [{"name": "Algorithms", "grade": "A"}]
 
     def test_course_without_a_name_is_dropped(self):
         out = normalize_extraction({"education": [

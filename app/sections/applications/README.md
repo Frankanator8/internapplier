@@ -4,9 +4,9 @@ Application tracker — log internships you've applied to and visualize activity
 
 | File | Purpose |
 |---|---|
-| `page.py` | Container that hosts the tracker and heatmap. |
-| `tracker_page.py` | List/table of application entries with status tracking. |
+| `tracker_page.py` | `TrackerPage` — the tab itself: table of applications with status tracking. |
+| `prep_runner.py` | `PrepAllRunner` — generates resumes for every "Added" application, one at a time. |
 | `entry_dialog.py` | Add/edit dialog for a single application. |
-| `heatmap.py` | Calendar-style heatmap of applications-per-day. |
+| `heatmap.py` | Toolbar heatmap of applications per day / week. |
 
-Backed by `api/data_store.py` (UUID-keyed application records).
+Backed by `api/data_store.py`.

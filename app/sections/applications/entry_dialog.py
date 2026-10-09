@@ -9,12 +9,10 @@ from PyQt6.QtWidgets import (
 
 from api.constants import DEFAULT_STATUS, STATUS_OPTIONS
 
-_STATUS_OPTIONS = STATUS_OPTIONS
-
 _ENTRY_FIELDS = ("company", "role", "date", "status", "notes", "description")
 
 
-def _empty_entry() -> dict:
+def empty_entry() -> dict:
     return {k: "" for k in _ENTRY_FIELDS} | {
         "status": DEFAULT_STATUS,
         "links": [],
@@ -105,13 +103,13 @@ class _LinksEditor(QWidget):
         return result
 
 
-class _EntryDialog(QDialog):
+class EntryDialog(QDialog):
     def __init__(self, parent=None, data: dict | None = None):
         super().__init__(parent)
         self.setWindowTitle("Application")
         self.setMinimumWidth(520)
 
-        data = {**_empty_entry(), **(data or {})}
+        data = {**empty_entry(), **(data or {})}
 
         form = QFormLayout()
         self._company = QLineEdit(data["company"])
@@ -122,9 +120,8 @@ class _EntryDialog(QDialog):
             links_value = []
         self._links = _LinksEditor([u for u in links_value if isinstance(u, str)])
         self._status = QComboBox()
-        for s in _STATUS_OPTIONS:
-            self._status.addItem(s)
-        if data["status"] in _STATUS_OPTIONS:
+        self._status.addItems(STATUS_OPTIONS)
+        if data["status"] in STATUS_OPTIONS:
             self._status.setCurrentText(data["status"])
         self._notes = QLineEdit(data["notes"])
         self._description = QTextEdit()

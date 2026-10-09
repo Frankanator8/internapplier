@@ -38,7 +38,7 @@ the only outbound traffic is to whichever LLM you point it at.
 
 Build your profile once in dedicated editors for general info, education,
 experience, projects, skills, awards, and hobbies
-([`app/sections/`](app/sections/)). Everything is stored as JSON locally and
+([`app/sections/profile/`](app/sections/profile/)). Everything is stored as JSON locally and
 re-used by every other feature. The resume layout itself is a LaTeX template
 you can edit from inside Settings — swap in your own format, change fonts,
 add a sidebar — and the generator uses it as the structural base. The editor
@@ -181,7 +181,7 @@ For a bundled `.app` install (instead of running from source), see
 ## First launch
 
 On first launch you'll go through an onboarding wizard
-([`app/onboarding.py`](app/onboarding.py)):
+([`app/dialogs/onboarding.py`](app/dialogs/onboarding.py)):
 
 1. Welcome.
 2. Drop in your OpenRouter API key.

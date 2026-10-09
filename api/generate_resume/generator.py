@@ -200,7 +200,7 @@ class ResumeGenerator:
             if page_ok and score_ok:
                 logger.info("generate_latex — passed on attempt %d", attempt)
                 final_pdf, desired_pdf, collided = persist_pdf(
-                    pdf_path, output_pdf, company, job_title
+                    pdf_path, output_pdf, company, job_title, latex=latex,
                 )
                 return {
                     "latex": latex,
@@ -242,7 +242,8 @@ class ResumeGenerator:
             best["grade"]["score"] if best.get("grade") else None,
         )
         final_pdf, desired_pdf, collided = persist_pdf(
-            best.get("pdf"), output_pdf, company, job_title
+            best.get("pdf"), output_pdf, company, job_title,
+            latex=best.get("latex"),
         )
         return {
             "latex": best["latex"],

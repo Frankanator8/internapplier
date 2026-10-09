@@ -63,6 +63,48 @@ def merge_profile(store: dict, data: dict, mode: str = "append") -> dict:
     return merged
 
 
+def fold_entry_skills(data: dict) -> dict:
+    """Move legacy per-entry ``skills`` into the top-level Skills list.
+
+    Experience, project, award and course entries used to carry their own
+    skill tags. Those fields are gone; this folds whatever an older store
+    still holds into ``skills`` (deduped case-insensitively) and strips the
+    entry keys. Returns a new dict; ``data`` is not mutated.
+    """
+    folded: list[str] = []
+
+    def _strip(entry):
+        if not isinstance(entry, dict) or "skills" not in entry:
+            return entry
+        entry = dict(entry)
+        skills = entry.pop("skills")
+        if isinstance(skills, list):
+            folded.extend(str(s).strip() for s in skills if str(s).strip())
+        return entry
+
+    out = dict(data)
+    for key in ("experience", "projects", "awards"):
+        if isinstance(out.get(key), list):
+            out[key] = [_strip(e) for e in out[key]]
+    if isinstance(out.get("education"), list):
+        education = []
+        for edu in out["education"]:
+            if isinstance(edu, dict) and isinstance(edu.get("courses"), list):
+                edu = {**edu, "courses": [_strip(c) for c in edu["courses"]]}
+            education.append(edu)
+        out["education"] = education
+
+    if folded:
+        skills = list(out.get("skills") or [])
+        seen = {str(x).lower() for x in skills}
+        for value in folded:
+            if value.lower() not in seen:
+                skills.append(value)
+                seen.add(value.lower())
+        out["skills"] = skills
+    return out
+
+
 def apply_to_store(data: dict, mode: str = "append") -> None:
     """Merge ``data`` into the resume store on disk.
 

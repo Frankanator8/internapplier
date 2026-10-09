@@ -228,7 +228,7 @@ def parse_zip(zip_path: str) -> dict:
         if target is None and result["education"]:
             target = result["education"][0]
         if target is not None:
-            target["courses"].append({"name": name, "grade": "", "skills": []})
+            target["courses"].append({"name": name, "grade": ""})
 
     # ── awards ──────────────────────────────────────────────────────────
     for row in honors:
@@ -240,7 +240,6 @@ def parse_zip(zip_path: str) -> dict:
             "issuer": _get(row, "Issuer", "Issued By", "Organization"),
             "date": _get(row, "Issued On", "Date", "Issue Date"),
             "bullets": _bullets_from_description(_get(row, "Description")),
-            "skills": [],
         })
 
     # ── skills (with endorsement fallback) ──────────────────────────────

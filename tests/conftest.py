@@ -45,14 +45,20 @@ _PATH_BINDINGS = [
     ("api.constants", "MODELS_FILE", "models.txt"),
     ("api.constants", "SETTINGS_FILE", "settings.json"),
     ("api.constants", "TOKEN_USAGE_FILE", "token_usage.json"),
+    ("api.constants", "LEETCODE_CARDS_FILE", "leetcode_cards.json"),
+    ("api.constants", "LEETCODE_MEDIA_DIR", "leetcode_media"),
     ("api.constants", "APP_PROMPTS_DIR", "prompts"),
+    ("api.constants", "ENV_FILE", ".env"),
     ("api.data_store", "RESUME_DATA_FILE", "resume.json"),
     ("api.data_store", "INTERVIEW_TEMPLATE_FILE", "interview_template.json"),
     ("api.data_store", "INTERVIEW_FEEDBACK_FILE", "interview_feedback.json"),
     ("api.token_usage", "TOKEN_USAGE_FILE", "token_usage.json"),
+    ("api.leetcode_store", "LEETCODE_CARDS_FILE", "leetcode_cards.json"),
+    ("api.leetcode_store", "LEETCODE_MEDIA_DIR", "leetcode_media"),
     ("api._settings_base", "SETTINGS_FILE", "settings.json"),
     ("api.ai_provider.settings", "APP_DIR", ""),
     ("api.ai_provider.settings", "MODELS_FILE", "models.txt"),
+    ("api.ai_provider.settings", "ENV_FILE", ".env"),
     ("api.ai_provider.prompts", "APP_PROMPTS_DIR", "prompts"),
 ]
 
@@ -84,6 +90,10 @@ def isolated_app_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(data_store, "_cache_mtime", None)
     monkeypatch.setattr(settings_base, "_settings_cache", None)
     monkeypatch.setattr(ap_settings, "_model_config_cache", None)
+
+    import api.leetcode_store as leetcode_store
+    monkeypatch.setattr(leetcode_store, "_cache", None)
+    monkeypatch.setattr(leetcode_store, "_cache_mtime", None)
 
     # Seed prompt files into the isolated dir from the project's PROMPTS_DIR.
     from api.ai_provider.prompts import _seed_prompts

@@ -41,7 +41,7 @@ from PyQt6.QtWidgets import QApplication
 from api import ai_provider, app_settings
 from api.constants import ONBOARDED_FILE
 from app.main_window import MainWindow
-from app.onboarding import OnboardingDialog
+from app.dialogs.onboarding import OnboardingDialog
 from app.theme import apply_theme, install_system_listener
 
 
@@ -59,10 +59,6 @@ def _start_api_server() -> None:
 
 
 def main():
-    for i in range(10):
-        print("STARTING AGAIN")
-    for i in range(10):
-        print()
     ai_provider._seed_prompts()
     if app_settings.get_auto_resync_prompts():
         ai_provider.resync_all_prompts()

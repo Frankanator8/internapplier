@@ -1,554 +1,267 @@
 from __future__ import annotations
 
-import logging
 from typing import Callable
 
-from PyQt6.QtCore import QObject, QThread, Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QDialog, QDialogButtonBox, QFrame, QHBoxLayout, QLabel, QLineEdit,
-    QListWidget, QListWidgetItem, QMessageBox, QPushButton, QScrollArea,
-    QTextEdit, QVBoxLayout, QWidget,
+    QDialog, QFrame, QHBoxLayout, QLineEdit, QMessageBox, QTextEdit,
+    QVBoxLayout, QWidget,
 )
 
 from api.interview_links import (
-    QuestionGroup,
-    default_groups,
-    merge_groups,
-    parse_entries,
-    serialize_groups,
-    unlink_question,
+    QuestionGroup, default_groups, grading_question, merge_groups, parse_entries,
+    serialize_groups, unlink_question,
 )
-from api.interview_parsing import parse_grade_payload
+from app.ui.feedback_panel import FeedbackPanel
+from app.ui.widgets import (
+    BusyButton, button, clear_layout, icon_button, iter_widgets, label, line_edit,
+    page_layout, scroll_area, section_header,
+)
+from app.ui.workers import WorkerPool
 
-from ..base import _icon_btn, _label, _primary_btn, _secondary_btn
-from .workers import _GradeWorker
-
-logger = logging.getLogger(__name__)
+from .grading import GRADE_FORMAT_ERROR, grade_worker, parse_grade
+from .link_picker import LinkPickerDialog
 
 
-class _LinkPickerDialog(QDialog):
-    """Modal dialog to pick another question to link to."""
+class QuestionGroupCard(QFrame):
+    """One or more linked questions sharing a single drafted answer."""
 
-    def __init__(self, candidates: list[tuple[str, str | None]], parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Link to question")
-        self.setMinimumWidth(420)
-        self._selected_index: int | None = None
-        self._candidates = candidates
+    link_requested = pyqtSignal(object)        # source card
+    remove_requested = pyqtSignal(object, int)  # card, question index
+    grade_requested = pyqtSignal(object)
+    edited = pyqtSignal()
+
+    def __init__(self, questions: list[str], answer: str, group_id: str | None):
+        super().__init__()
+        self.setObjectName("card")
+        self.group_id = group_id
+        self._question_edits: list[QLineEdit] = []
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setContentsMargins(20, 18, 20, 16)
         layout.setSpacing(10)
 
-        layout.addWidget(QLabel("Select a question to link with:"))
+        self._linked_badge = label("", "linked-badge")
+        self._linked_badge.setVisible(False)
+        badge_row = QHBoxLayout()
+        badge_row.setContentsMargins(0, 0, 0, 0)
+        badge_row.addWidget(self._linked_badge, 0, Qt.AlignmentFlag.AlignLeft)
+        badge_row.addStretch()
+        layout.addLayout(badge_row)
 
-        self._search = QLineEdit()
-        self._search.setPlaceholderText("Search…")
-        self._search.textChanged.connect(self._refilter)
-        layout.addWidget(self._search)
+        self._rows = QVBoxLayout()
+        self._rows.setContentsMargins(0, 0, 0, 0)
+        self._rows.setSpacing(6)
+        layout.addLayout(self._rows)
 
-        self._list = QListWidget()
-        self._list.itemDoubleClicked.connect(lambda _i: self._accept())
-        layout.addWidget(self._list, 1)
+        answer_row = QHBoxLayout()
+        answer_row.setSpacing(8)
+        self.answer_edit = QTextEdit()
+        self.answer_edit.setObjectName("answer-edit")
+        self.answer_edit.setPlaceholderText("Draft your answer here…")
+        self.answer_edit.setPlainText(answer or "")
+        self.answer_edit.setMinimumHeight(160)
+        answer_row.addWidget(self.answer_edit, 1)
+        self.grade_btn = BusyButton("✦ AI Feedback", "…", "secondary", 110)
+        self.grade_btn.setToolTip("Get AI feedback on your answer")
+        self.grade_btn.clicked.connect(lambda: self.grade_requested.emit(self))
+        answer_row.addWidget(self.grade_btn, 0, Qt.AlignmentFlag.AlignTop)
+        layout.addLayout(answer_row)
 
-        self._populate("")
+        self.feedback = FeedbackPanel(with_title=True)
+        layout.addWidget(self.feedback)
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self._accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        for q in questions or [""]:
+            self._add_question_row(q)
+        self._refresh_badge()
 
-    def _populate(self, query: str):
-        self._list.clear()
-        q = query.strip().lower()
-        for idx, (text, group_label) in enumerate(self._candidates):
-            display = text if text else "(empty question)"
-            if group_label:
-                display = f"{display}   · {group_label}"
-            if q and q not in text.lower():
-                continue
-            item = QListWidgetItem(display)
-            item.setData(Qt.ItemDataRole.UserRole, idx)
-            self._list.addItem(item)
+    def _add_question_row(self, text: str) -> None:
+        edit = line_edit("Question…", text)
+        edit.setObjectName("question-edit")
+        edit.textChanged.connect(self.edited.emit)
+        link_btn = icon_button("🔗", tooltip="Link to another question")
+        link_btn.clicked.connect(lambda: self.link_requested.emit(self))
+        remove_btn = icon_button(tooltip="Remove / unlink question")
+        remove_btn.clicked.connect(lambda: self.remove_requested.emit(self, self._question_edits.index(edit)))
 
-    def _refilter(self, text: str):
-        self._populate(text)
+        row = QWidget()
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(8)
+        row_layout.addWidget(edit, 1)
+        row_layout.addWidget(link_btn, 0, Qt.AlignmentFlag.AlignTop)
+        row_layout.addWidget(remove_btn, 0, Qt.AlignmentFlag.AlignTop)
+        self._rows.addWidget(row)
+        self._question_edits.append(edit)
 
-    def _accept(self):
-        item = self._list.currentItem()
-        if item is None:
-            return
-        self._selected_index = item.data(Qt.ItemDataRole.UserRole)
-        self.accept()
+    def _refresh_badge(self) -> None:
+        n = len(self._question_edits)
+        self._linked_badge.setText(f"Linked · {n}")
+        self._linked_badge.setVisible(n >= 2)
+        if n < 2:
+            self.group_id = None
 
-    def selected_index(self) -> int | None:
-        return self._selected_index
+    def questions(self) -> list[str]:
+        return [e.text() for e in self._question_edits]
+
+    def answer(self) -> str:
+        return self.answer_edit.toPlainText()
+
+    def snapshot(self) -> QuestionGroup:
+        return QuestionGroup(group_id=self.group_id, questions=self.questions(), answer=self.answer())
+
+    def matches(self, query: str) -> bool:
+        return query in "\n".join([*self.questions(), self.answer()]).lower()
 
 
 class InterviewQuestionsPage(QWidget):
+    """Editable bank of interview questions with drafted answers and AI grading.
+
+    Questions that share an answer can be linked into one card. Data is the
+    ``api.interview_links`` entry list.
+    """
+
     def __init__(
         self,
-        get_profile: Callable[[], dict] | None = None,
+        get_profile: Callable[[], dict],
         get_job_context: Callable[[], dict | None] | None = None,
         parent=None,
     ):
         super().__init__(parent)
-        self._get_profile = get_profile or (lambda: {})
+        self._get_profile = get_profile
         self._get_job_context = get_job_context
-        self._threads: list[QThread] = []
-        self._workers: list[QObject] = []
+        self._pool = WorkerPool(self)
 
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(28, 24, 28, 16)
-        outer.setSpacing(14)
-
-        header_row = QHBoxLayout()
-        header_row.addWidget(_label("Interview Questions", "section-title"))
-        header_row.addStretch()
-        self._search_edit = QLineEdit()
-        self._search_edit.setPlaceholderText("Search questions…")
+        outer = page_layout(self)
+        self._search_edit = line_edit("Search questions…")
         self._search_edit.setFixedWidth(240)
         self._search_edit.textChanged.connect(self._apply_filter)
-        header_row.addWidget(self._search_edit)
-        top_add_btn = _primary_btn("+ Add Question")
+        top_add_btn = button("+ Add Question")
         top_add_btn.clicked.connect(self._add_blank)
-        header_row.addWidget(top_add_btn)
-        outer.addLayout(header_row)
+        outer.addLayout(section_header("Interview Questions", self._search_edit, top_add_btn))
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll, self._cards_layout = scroll_area()
         outer.addWidget(scroll, 1)
-
-        self._container = QWidget()
-        self._container.setObjectName("scroll-inner")
-        self._cards_layout = QVBoxLayout(self._container)
-        self._cards_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self._cards_layout.setSpacing(14)
-        self._cards_layout.setContentsMargins(0, 0, 0, 16)
-        scroll.setWidget(self._container)
 
         bottom_row = QHBoxLayout()
         bottom_row.addStretch()
-        bottom_add_btn = _primary_btn("+ Add Question")
+        bottom_add_btn = button("+ Add Question")
         bottom_add_btn.clicked.connect(self._add_blank)
         bottom_row.addWidget(bottom_add_btn)
         bottom_row.addStretch()
         outer.addLayout(bottom_row)
 
-    def cleanup_threads(self) -> None:
-        from .._thread_cleanup import shutdown_threads
-        shutdown_threads(self._threads)
-        self._workers.clear()
+    # ── Data ────────────────────────────────────────────────────
+    def get_data(self) -> list[dict]:
+        return serialize_groups(self._snapshot())
 
-    # ------------------------------------------------------------------ #
-    # Snapshot / rebuild helpers
-    # ------------------------------------------------------------------ #
+    def load(self, value: list[dict] | None) -> None:
+        self._rebuild(default_groups() if value is None else parse_entries(value))
 
-    def _snapshot_groups(self) -> list[QuestionGroup]:
-        """Read current widget state into pure-data QuestionGroup objects."""
-        groups: list[QuestionGroup] = []
-        for card in self._all_cards():
-            edits: list[QLineEdit] = card.property("_question_edits") or []
-            answer_edit: QTextEdit = card.property("_answer")
-            gid = card.property("_group_id")
-            questions = [qe.text() for qe in edits]
-            if gid is not None and len(questions) < 2:
-                gid = None
-            groups.append(QuestionGroup(
-                group_id=gid,
-                questions=questions,
-                answer=answer_edit.toPlainText() if answer_edit else "",
-            ))
-        return groups
+    def _cards(self) -> list[QuestionGroupCard]:
+        return [w for w in iter_widgets(self._cards_layout) if isinstance(w, QuestionGroupCard)]
 
-    def _rebuild_from(self, groups: list[QuestionGroup]) -> None:
-        self._clear()
+    def _snapshot(self) -> list[QuestionGroup]:
+        return [card.snapshot() for card in self._cards()]
+
+    def _rebuild(self, groups: list[QuestionGroup]) -> None:
+        clear_layout(self._cards_layout)
         for g in groups:
             self._add_group(list(g.questions) or [""], g.answer, g.group_id)
 
-    # ------------------------------------------------------------------ #
-    # Card construction
-    # ------------------------------------------------------------------ #
-
-    def _add_blank(self):
+    def _add_blank(self) -> None:
         self._add_group([""], "", None)
 
-    def add_entry(self, data: dict | None = None):
-        """Backwards-compatible single-question entry."""
-        data = data or {}
-        self._add_group(
-            [data.get("question", "")],
-            data.get("answer", ""),
-            data.get("group_id") or None,
-        )
-
-    def _add_group(
-        self,
-        questions: list[str],
-        answer: str,
-        group_id: str | None,
-    ) -> QFrame:
-        card = QFrame()
-        card.setObjectName("card")
-        vbox = QVBoxLayout(card)
-        vbox.setContentsMargins(20, 18, 20, 16)
-        vbox.setSpacing(10)
-
-        header_row = QHBoxLayout()
-        header_row.setContentsMargins(0, 0, 0, 0)
-        header_row.setSpacing(8)
-        linked_label = QLabel("")
-        linked_label.setObjectName("linked-badge")
-        linked_label.setVisible(False)
-        header_row.addWidget(linked_label, 0, Qt.AlignmentFlag.AlignLeft)
-        header_row.addStretch()
-        vbox.addLayout(header_row)
-
-        rows_container = QWidget()
-        rows_layout = QVBoxLayout(rows_container)
-        rows_layout.setContentsMargins(0, 0, 0, 0)
-        rows_layout.setSpacing(6)
-        vbox.addWidget(rows_container)
-
-        answer_row = QHBoxLayout()
-        answer_row.setSpacing(8)
-        answer_edit = QTextEdit()
-        answer_edit.setPlaceholderText("Draft your answer here…")
-        answer_edit.setPlainText(answer or "")
-        answer_edit.setMinimumHeight(160)
-        answer_edit.setStyleSheet("QTextEdit { font-size: 15px; }")
-        answer_row.addWidget(answer_edit, 1)
-
-        grade_btn = _secondary_btn("✦ AI Feedback", 110)
-        grade_btn.setToolTip("Get AI feedback on your answer")
-        answer_row.addWidget(grade_btn, 0, Qt.AlignmentFlag.AlignTop)
-        vbox.addLayout(answer_row)
-
-        fb_panel = QFrame()
-        fb_panel.setObjectName("analyze-quote")
-        fb_panel.setVisible(False)
-        fb_layout = QVBoxLayout(fb_panel)
-        fb_layout.setContentsMargins(10, 8, 10, 8)
-        fb_layout.setSpacing(6)
-
-        fb_header = QHBoxLayout()
-        fb_header.setContentsMargins(0, 0, 0, 0)
-        fb_header.setSpacing(6)
-        fb_title = QLabel("")
-        fb_title.setObjectName("analyze-quote-title")
-        fb_header.addWidget(fb_title, 1)
-        fb_dismiss = _icon_btn("✕")
-        fb_dismiss.setToolTip("Dismiss")
-        fb_header.addWidget(fb_dismiss, 0, Qt.AlignmentFlag.AlignTop)
-        fb_layout.addLayout(fb_header)
-
-        fb_body = QLabel("")
-        fb_body.setObjectName("analyze-bullet-text")
-        fb_body.setWordWrap(True)
-        fb_body.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-            | Qt.TextInteractionFlag.TextSelectableByKeyboard
-        )
-        fb_body.setCursor(Qt.CursorShape.IBeamCursor)
-        fb_body.setAlignment(Qt.AlignmentFlag.AlignTop)
-        fb_layout.addWidget(fb_body)
-
-        vbox.addWidget(fb_panel)
-
-        card.setProperty("_group_id", group_id)
-        card.setProperty("_rows_container", rows_container)
-        card.setProperty("_rows_layout", rows_layout)
-        card.setProperty("_question_edits", [])
-        card.setProperty("_linked_label", linked_label)
-        card.setProperty("_answer", answer_edit)
-        card.setProperty("_fb_panel", fb_panel)
-        card.setProperty("_fb_title", fb_title)
-        card.setProperty("_fb_body", fb_body)
-        card.setProperty("_fb_buffer", "")
-
-        fb_dismiss.clicked.connect(lambda: self._hide_feedback(card))
-        grade_btn.clicked.connect(
-            lambda _checked=False, c=card, b=grade_btn: self._grade(c, b)
-        )
-
-        for q in (questions if questions else [""]):
-            self._append_question_row(card, q)
-
-        self._refresh_group_chrome(card)
-
+    def _add_group(self, questions: list[str], answer: str, group_id: str | None) -> None:
+        card = QuestionGroupCard(questions, answer, group_id)
+        card.edited.connect(lambda: self._apply_filter(self._search_edit.text()))
+        card.link_requested.connect(self._link)
+        card.remove_requested.connect(self._remove_question)
+        card.grade_requested.connect(self._grade)
         self._cards_layout.addWidget(card)
         self._apply_filter(self._search_edit.text())
-        return card
 
-    def _append_question_row(self, card: QFrame, text: str) -> None:
-        rows_layout: QVBoxLayout = card.property("_rows_layout")
-        row = QWidget()
-        row_layout = QHBoxLayout(row)
-        row_layout.setContentsMargins(0, 0, 0, 0)
-        row_layout.setSpacing(8)
+    def _apply_filter(self, text: str) -> None:
+        query = (text or "").strip().lower()
+        for card in self._cards():
+            card.setVisible(not query or card.matches(query))
 
-        question_edit = QLineEdit(text)
-        question_edit.setPlaceholderText("Question…")
-        question_edit.setStyleSheet(
-            "QLineEdit { font-size: 15px; font-weight: 600; border: none;"
-            " background: transparent; padding: 2px 0; }"
-        )
-        question_edit.textChanged.connect(
-            lambda _t=None: self._apply_filter(self._search_edit.text())
-        )
-
-        link_btn = _icon_btn("🔗")
-        link_btn.setToolTip("Link to another question")
-        link_btn.clicked.connect(
-            lambda _checked=False, c=card, qe=question_edit: self._open_link_picker(c, qe)
-        )
-
-        remove_btn = _icon_btn("✕")
-        remove_btn.setToolTip("Remove / unlink question")
-        remove_btn.clicked.connect(
-            lambda _checked=False, c=card, qe=question_edit: self._remove_row(c, qe)
-        )
-
-        row_layout.addWidget(question_edit, 1)
-        row_layout.addWidget(link_btn, 0, Qt.AlignmentFlag.AlignTop)
-        row_layout.addWidget(remove_btn, 0, Qt.AlignmentFlag.AlignTop)
-
-        row.setProperty("_question_edit", question_edit)
-
-        rows_layout.addWidget(row)
-
-        edits: list[QLineEdit] = list(card.property("_question_edits") or [])
-        edits.append(question_edit)
-        card.setProperty("_question_edits", edits)
-
-    def _refresh_group_chrome(self, card: QFrame) -> None:
-        edits: list[QLineEdit] = card.property("_question_edits") or []
-        linked_label: QLabel = card.property("_linked_label")
-        n = len(edits)
-        if n >= 2:
-            linked_label.setText(f"Linked · {n}")
-            linked_label.setVisible(True)
-        else:
-            linked_label.setVisible(False)
-            card.setProperty("_group_id", None)
-
-    # ------------------------------------------------------------------ #
-    # Linking
-    # ------------------------------------------------------------------ #
-
-    def _all_cards(self) -> list[QFrame]:
-        out: list[QFrame] = []
-        for i in range(self._cards_layout.count()):
-            w = self._cards_layout.itemAt(i).widget()
-            if isinstance(w, QFrame):
-                out.append(w)
-        return out
-
-    def _open_link_picker(self, source_card: QFrame, source_edit: QLineEdit) -> None:
-        cards = self._all_cards()
-        source_idx = cards.index(source_card)
-
-        candidates: list[tuple[str, str | None]] = []
-        index_map: list[int] = []  # candidate position -> target group index
-        for idx, card in enumerate(cards):
-            if card is source_card:
-                continue
-            edits: list[QLineEdit] = card.property("_question_edits") or []
-            first_text = edits[0].text() if edits else ""
-            group_label = None
-            if len(edits) >= 2:
-                group_label = f"linked group ({len(edits)})"
-            candidates.append((first_text, group_label))
-            index_map.append(idx)
-
-        if not candidates:
-            QMessageBox.information(
-                self, "Link question",
-                "There are no other questions to link to."
-            )
+    # ── Linking ─────────────────────────────────────────────────
+    def _link(self, source: QuestionGroupCard) -> None:
+        cards = self._cards()
+        source_idx = cards.index(source)
+        targets = [i for i, c in enumerate(cards) if c is not source]
+        if not targets:
+            QMessageBox.information(self, "Link question", "There are no other questions to link to.")
             return
 
-        dlg = _LinkPickerDialog(candidates, parent=self)
-        if dlg.exec() != QDialog.DialogCode.Accepted:
+        candidates = []
+        for i in targets:
+            questions = cards[i].questions()
+            group_label = f"linked group ({len(questions)})" if len(questions) >= 2 else None
+            candidates.append((questions[0] if questions else "", group_label))
+        dlg = LinkPickerDialog(candidates, parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted or dlg.selected_index() is None:
             return
-        picked = dlg.selected_index()
-        if picked is None:
-            return
-        target_idx = index_map[picked]
+        target_idx = targets[dlg.selected_index()]
 
-        # Snapshot live widget state, then ask the api layer to merge.
-        groups = self._snapshot_groups()
-        source_g = groups[source_idx]
-        target_g = groups[target_idx]
+        groups = self._snapshot()
+        answer_choice = self._choose_answer(groups[source_idx].answer, groups[target_idx].answer)
+        if answer_choice is not None:
+            self._rebuild(merge_groups(groups, source_idx, target_idx, answer_choice))
 
-        answer_choice = "auto"
-        s_ans = source_g.answer.strip()
-        t_ans = target_g.answer.strip()
-        if s_ans and t_ans and s_ans != t_ans:
-            box = QMessageBox(self)
-            box.setWindowTitle("Conflicting answers")
-            box.setText("Both questions have answers. Which one should the linked group keep?")
-            src_btn = box.addButton("Keep source", QMessageBox.ButtonRole.AcceptRole)
-            tgt_btn = box.addButton("Keep target", QMessageBox.ButtonRole.AcceptRole)
-            box.addButton(QMessageBox.StandardButton.Cancel)
-            box.exec()
-            clicked = box.clickedButton()
-            if clicked is src_btn:
-                answer_choice = "source"
-            elif clicked is tgt_btn:
-                answer_choice = "target"
-            else:
-                return
+    def _choose_answer(self, source_answer: str, target_answer: str) -> str | None:
+        """Which answer a merged group keeps: "auto", "source", "target", or None to cancel."""
+        s, t = source_answer.strip(), target_answer.strip()
+        if not (s and t and s != t):
+            return "auto"
+        box = QMessageBox(self)
+        box.setWindowTitle("Conflicting answers")
+        box.setText("Both questions have answers. Which one should the linked group keep?")
+        src_btn = box.addButton("Keep source", QMessageBox.ButtonRole.AcceptRole)
+        tgt_btn = box.addButton("Keep target", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.exec()
+        return {src_btn: "source", tgt_btn: "target"}.get(box.clickedButton())
 
-        new_groups = merge_groups(groups, source_idx, target_idx, answer_choice)
-        self._rebuild_from(new_groups)
-
-    # ------------------------------------------------------------------ #
-    # Unlinking / removal
-    # ------------------------------------------------------------------ #
-
-    def _remove_row(self, card: QFrame, question_edit: QLineEdit) -> None:
-        edits: list[QLineEdit] = card.property("_question_edits") or []
-        if question_edit not in edits:
-            return
-
-        # Standalone card: deleting the only question deletes the card itself.
-        if len(edits) == 1:
+    def _remove_question(self, card: QuestionGroupCard, question_idx: int) -> None:
+        if len(card.questions()) == 1:
+            # The only question of a standalone card: delete the card.
             self._cards_layout.removeWidget(card)
             card.setParent(None)
             card.deleteLater()
             return
+        group_idx = self._cards().index(card)
+        self._rebuild(unlink_question(self._snapshot(), group_idx, question_idx))
 
-        # Multi-member group: delegate the unlink to the api layer.
-        cards = self._all_cards()
-        group_idx = cards.index(card)
-        question_idx = edits.index(question_edit)
-
-        groups = self._snapshot_groups()
-        new_groups = unlink_question(groups, group_idx, question_idx)
-        self._rebuild_from(new_groups)
-
-    # ------------------------------------------------------------------ #
-    # Filter / feedback / persistence
-    # ------------------------------------------------------------------ #
-
-    def _apply_filter(self, text: str):
-        query = (text or "").strip().lower()
-        for card in self._all_cards():
-            if not query:
-                card.setVisible(True)
-                continue
-            edits: list[QLineEdit] = card.property("_question_edits") or []
-            answer_edit: QTextEdit = card.property("_answer")
-            haystack_parts = [qe.text() for qe in edits]
-            if answer_edit is not None:
-                haystack_parts.append(answer_edit.toPlainText())
-            haystack = "\n".join(haystack_parts).lower()
-            card.setVisible(query in haystack)
-
-    def _grade(self, card: QFrame, grade_btn: QPushButton):
-        edits: list[QLineEdit] = card.property("_question_edits") or []
-        answer_edit: QTextEdit = card.property("_answer")
-        questions = [qe.text().strip() for qe in edits if qe.text().strip()]
-        answer = answer_edit.toPlainText().strip()
+    # ── Grading ─────────────────────────────────────────────────
+    def _grade(self, card: QuestionGroupCard) -> None:
+        questions = [q.strip() for q in card.questions() if q.strip()]
+        answer = card.answer().strip()
         if not questions or not answer:
             return
+        card.feedback.begin("GENERATING…")
+        card.grade_btn.set_busy(True)
 
-        if len(questions) == 1:
-            question_arg = questions[0]
-        else:
-            bullets = "\n".join(f"{i+1}. {q}" for i, q in enumerate(questions))
-            question_arg = (
-                "You are evaluating one answer that the candidate uses for "
-                "multiple related questions:\n" + bullets
-            )
-
-        fb_panel: QFrame = card.property("_fb_panel")
-        fb_title: QLabel = card.property("_fb_title")
-        fb_body: QLabel = card.property("_fb_body")
-
-        card.setProperty("_fb_buffer", "")
-        fb_title.setText("GENERATING…")
-        fb_body.setText("")
-        fb_panel.setVisible(True)
-
-        grade_btn.setEnabled(False)
-        grade_btn.setText("…")
-
-        profile = self._get_profile()
-        ctx = self._get_job_context() if self._get_job_context else None
-        worker = _GradeWorker(
-            question_arg,
-            answer,
-            profile,
-            company_name=(ctx or {}).get("company_name"),
-            company_research=(ctx or {}).get("company_research"),
-            job_description=(ctx or {}).get("job_description"),
-        )
-        thread = QThread(self)
-        worker.moveToThread(thread)
-
-        def on_chunk(delta: str):
-            buf = (card.property("_fb_buffer") or "") + delta
-            card.setProperty("_fb_buffer", buf)
-
-        def on_finished():
-            grade_btn.setText("✦ AI Feedback")
-            grade_btn.setEnabled(True)
-            buf = card.property("_fb_buffer") or ""
-            try:
-                score, feedback = parse_grade_payload(buf)
-                fb_title.setText(f"AI FEEDBACK · SCORE {score:g}/10")
-                fb_body.setText(feedback if feedback else "No feedback — answer looks strong.")
-            except (ValueError, TypeError) as exc:
-                logger.error(
-                    "_GradeWorker.on_finished — parse failed: %s; raw=%r",
-                    exc, buf[:500],
-                )
-                fb_title.setText("AI FEEDBACK · ERROR")
-                fb_body.setText("AI returned unexpected format — please try again.")
-            thread.quit()
+        def on_finished(buf: str):
+            card.grade_btn.set_busy(False)
+            parsed = parse_grade(buf)
+            if parsed is None:
+                card.feedback.set_title("AI FEEDBACK · ERROR")
+                card.feedback.set_text(GRADE_FORMAT_ERROR)
+                return
+            score, feedback = parsed
+            card.feedback.set_title(f"AI FEEDBACK · SCORE {score}/10")
+            card.feedback.set_text(feedback or "No feedback — answer looks strong.")
 
         def on_error(msg: str):
-            grade_btn.setText("✦ AI Feedback")
-            grade_btn.setEnabled(True)
-            fb_title.setText("AI FEEDBACK · ERROR")
-            fb_body.setText(msg)
-            thread.quit()
+            card.grade_btn.set_busy(False)
+            card.feedback.set_title("AI FEEDBACK · ERROR")
+            card.feedback.set_text(msg)
 
-        worker.stream.connect(on_chunk)
-        worker.finished.connect(on_finished)
-        worker.error.connect(on_error)
-        thread.started.connect(worker.run)
-        thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(
-            lambda: self._workers.remove(worker) if worker in self._workers else None
+        job = self._get_job_context() if self._get_job_context else None
+        self._pool.start(
+            grade_worker(grading_question(questions), answer, self._get_profile(), job),
+            finished=on_finished,
+            error=on_error,
         )
-        self._threads.append(thread)
-        self._workers.append(worker)
-        thread.start()
-
-    def _hide_feedback(self, card: QFrame):
-        fb_panel: QFrame = card.property("_fb_panel")
-        if fb_panel is not None:
-            fb_panel.setVisible(False)
-        card.setProperty("_fb_buffer", "")
-
-    def _clear(self):
-        while self._cards_layout.count():
-            item = self._cards_layout.takeAt(0)
-            w = item.widget()
-            if w is not None:
-                w.deleteLater()
-
-    def get_data(self) -> list[dict]:
-        return serialize_groups(self._snapshot_groups())
-
-    def load(self, value: list[dict] | None):
-        self._clear()
-        groups = default_groups() if value is None else parse_entries(value)
-        for g in groups:
-            self._add_group(list(g.questions) or [""], g.answer, g.group_id)

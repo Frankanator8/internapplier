@@ -31,7 +31,10 @@ from api.generate_resume.persist import (
     apply_label_drops as _apply_label_drops,
     build_feedback as _build_feedback,
     build_header_from_general_info as _build_header_from_general_info,
+    move_persisted_resume as _move_persisted_resume,
     persist_pdf as _persist_pdf,
+    read_tex_sidecar as _read_tex_sidecar,
+    tex_sidecar as _tex_sidecar,
 )
 
 
@@ -192,6 +195,24 @@ class TestPersistPdf:
         assert written == dest and desired == dest
         assert collided is False
         assert dest.exists()
+        assert not _tex_sidecar(dest).exists()
+
+    def test_latex_writes_sidecar_next_to_pdf(self, tmp_path):
+        src = tmp_path / "src.pdf"
+        src.write_bytes(b"%PDF")
+        dest = tmp_path / "out" / "x.pdf"
+        written, _, _ = _persist_pdf(src, dest, latex=_SAMPLE_LATEX)
+        sidecar = _tex_sidecar(written)
+        assert sidecar.is_file()
+        assert sidecar.read_text(encoding="utf-8") == _SAMPLE_LATEX
+        assert _read_tex_sidecar(written) == _SAMPLE_LATEX
+
+    def test_empty_latex_does_not_create_sidecar(self, tmp_path):
+        src = tmp_path / "src.pdf"
+        src.write_bytes(b"%PDF")
+        dest = tmp_path / "x.pdf"
+        _persist_pdf(src, dest, latex="")
+        assert not _tex_sidecar(dest).exists()
 
     def test_collision_appends_uuid(self, tmp_path, monkeypatch):
         src = tmp_path / "src.pdf"
@@ -206,6 +227,53 @@ class TestPersistPdf:
         assert desired == existing
         assert written != existing
         assert written.exists()
+
+    def test_collision_writes_sidecar_next_to_suffixed_pdf(self, tmp_path, monkeypatch):
+        src = tmp_path / "src.pdf"
+        src.write_bytes(b"%PDF")
+        out_dir = tmp_path / "outdir"
+        out_dir.mkdir()
+        existing = out_dir / "Acme.pdf"
+        existing.write_bytes(b"prev")
+        (out_dir / "Acme.tex").write_text("old", encoding="utf-8")
+        monkeypatch.setattr(persist_mod, "get_resume_output_dir", lambda: out_dir)
+        written, desired, collided = _persist_pdf(
+            src, None, company="Acme", latex=_SAMPLE_LATEX,
+        )
+        assert collided is True
+        assert _tex_sidecar(written).read_text(encoding="utf-8") == _SAMPLE_LATEX
+        assert _tex_sidecar(desired).read_text(encoding="utf-8") == "old"
+
+    def test_move_persisted_resume_replaces_dest_and_removes_src(self, tmp_path):
+        dest_pdf = tmp_path / "Acme.pdf"
+        dest_pdf.write_bytes(b"old-pdf")
+        dest_tex = tmp_path / "Acme.tex"
+        dest_tex.write_text("old-tex", encoding="utf-8")
+        src_pdf = tmp_path / "Acme-abcd1234.pdf"
+        src_pdf.write_bytes(b"new-pdf")
+        src_tex = tmp_path / "Acme-abcd1234.tex"
+        src_tex.write_text("new-tex", encoding="utf-8")
+
+        _move_persisted_resume(src_pdf, dest_pdf)
+
+        assert dest_pdf.read_bytes() == b"new-pdf"
+        assert dest_tex.read_text(encoding="utf-8") == "new-tex"
+        assert not src_pdf.exists()
+        assert not src_tex.exists()
+
+    def test_move_persisted_resume_drops_stale_dest_sidecar(self, tmp_path):
+        dest_pdf = tmp_path / "Acme.pdf"
+        dest_pdf.write_bytes(b"old-pdf")
+        dest_tex = tmp_path / "Acme.tex"
+        dest_tex.write_text("old-tex", encoding="utf-8")
+        src_pdf = tmp_path / "Acme-abcd1234.pdf"
+        src_pdf.write_bytes(b"new-pdf")
+
+        _move_persisted_resume(src_pdf, dest_pdf)
+
+        assert dest_pdf.read_bytes() == b"new-pdf"
+        assert not dest_tex.exists()
+        assert not src_pdf.exists()
 
 
 class TestResumeGeneratorIntegration:
@@ -245,6 +313,9 @@ class TestResumeGeneratorIntegration:
         assert result["chosen_attempt"] == 1
         assert result["grade"]["score"] == 9.9
         assert result["pdf"] is not None
+        sidecar = _tex_sidecar(result["pdf"])
+        assert sidecar.is_file()
+        assert sidecar.read_text(encoding="utf-8")
         # The grader must receive the extracted plain text, not the LaTeX source.
         assert grade_calls == [_SAMPLE_RESUME_TEXT]
 

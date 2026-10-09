@@ -5,6 +5,7 @@ from typing import Callable
 
 from . import data_store
 from .research_cache import lookup as _research_from_cache
+from .research_cache import research_company_site
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,6 @@ def run_resume_pipeline(
     Returns a payload shaped like the desktop worker's `finished` signal so
     both the desktop app and the HTTP server can share rendering.
     """
-    from .ai_provider import get_provider
     from .generate_resume import ResumeGenerator
 
     cache = research_cache or {}
@@ -42,13 +42,7 @@ def run_resume_pipeline(
         if progress_cb:
             progress_cb(f"Using cached research for {company!r}…")
     elif company and url:
-        from .web_scraper import fetch_company_pages
-        if progress_cb:
-            progress_cb(f"Scraping {url}…")
-        text = fetch_company_pages(url)
-        if progress_cb:
-            progress_cb(f"Scraped {len(text):,} chars — analyzing…")
-        research = get_provider().research_company(company, text)
+        research = research_company_site(company, url, progress_cb)
         new_research = True
     else:
         research = {

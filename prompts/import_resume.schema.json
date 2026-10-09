@@ -39,7 +39,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["company", "title", "start", "end", "bullets", "skills", "category"],
+        "required": ["company", "title", "start", "end", "bullets", "category"],
         "properties": {
           "company": { "type": "string", "description": "Employer or organization name." },
           "title": { "type": "string", "description": "Role held, e.g. 'Software Engineer Intern'." },
@@ -48,11 +48,6 @@
           "bullets": {
             "type": "array",
             "description": "One entry per bullet in the source, verbatim, with the leading glyph or dash stripped.",
-            "items": { "type": "string" }
-          },
-          "skills": {
-            "type": "array",
-            "description": "Technologies named inside this entry. Empty array when none are named.",
             "items": { "type": "string" }
           },
           "category": {
@@ -69,14 +64,13 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name", "url", "start", "end", "bullets", "skills"],
+        "required": ["name", "url", "start", "end", "bullets"],
         "properties": {
           "name": { "type": "string" },
           "url": { "type": "string", "description": "Link printed with the project. Empty string when none." },
           "start": { "type": "string" },
           "end": { "type": "string" },
-          "bullets": { "type": "array", "items": { "type": "string" } },
-          "skills": { "type": "array", "items": { "type": "string" } }
+          "bullets": { "type": "array", "items": { "type": "string" } }
         }
       }
     },
@@ -115,13 +109,12 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["title", "issuer", "date", "bullets", "skills"],
+        "required": ["title", "issuer", "date", "bullets"],
         "properties": {
           "title": { "type": "string" },
           "issuer": { "type": "string", "description": "Awarding organization. Empty string when not stated." },
           "date": { "type": "string" },
-          "bullets": { "type": "array", "items": { "type": "string" } },
-          "skills": { "type": "array", "items": { "type": "string" } }
+          "bullets": { "type": "array", "items": { "type": "string" } }
         }
       }
     },

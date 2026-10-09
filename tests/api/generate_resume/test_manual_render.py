@@ -86,7 +86,6 @@ def _sections():
                     "url": "https://example.com/engine",
                     "start": "1842",
                     "end": "1843",
-                    "skills": ["Math", "Notes"],
                     "bullets": ["Described a general-purpose computer"],
                 },
             }],

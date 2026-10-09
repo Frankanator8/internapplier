@@ -205,3 +205,14 @@ def unlink_question(
 def default_groups() -> list[QuestionGroup]:
     """Initial set of standalone groups used when no template exists yet."""
     return [QuestionGroup(group_id=None, questions=[q], answer="") for q in _DEFAULT_QUESTIONS]
+
+
+def grading_question(questions: list[str]) -> str:
+    """The question text to grade a group's shared answer against."""
+    if len(questions) == 1:
+        return questions[0]
+    bullets = "\n".join(f"{i + 1}. {q}" for i, q in enumerate(questions))
+    return (
+        "You are evaluating one answer that the candidate uses for "
+        "multiple related questions:\n" + bullets
+    )

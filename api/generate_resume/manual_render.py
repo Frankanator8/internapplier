@@ -250,7 +250,7 @@ def _render_education(data: dict) -> str:
 def _education_detail(data: dict) -> str:
     degree = escape_latex(data.get("degree") or "")
     gpa = (data.get("gpa") or "").strip()
-    courses = _course_names(data)
+    courses = course_names(data)
     rows: list[str] = []
     if degree and gpa:
         rows.append(f"{degree} $|$ GPA: {escape_latex(gpa)}")
@@ -267,7 +267,7 @@ def _education_detail(data: dict) -> str:
     return r"\parbox[t]{0.8\textwidth}{" + r"\\".join(rows) + "}"
 
 
-def _course_names(data: dict) -> list[str]:
+def course_names(data: dict) -> list[str]:
     names: list[str] = []
     for course in data.get("courses") or []:
         if isinstance(course, dict):
@@ -289,9 +289,6 @@ def _render_project(data: dict) -> str:
         )
     else:
         left = r"\textbf{" + name + "}"
-    skills = _skill_list(data.get("skills") or [])
-    if skills:
-        left += r" $|$ \emph{" + skills + "}"
     dates = escape_latex(_date_range(data.get("start"), data.get("end")))
     lines = [
         r"    \resumeProjectHeading",
@@ -372,11 +369,6 @@ def _date_range(start, end) -> str:
     if a and b:
         return f"{a} -- {b}"
     return a or b
-
-
-def _skill_list(skills: list) -> str:
-    names = [str(s).strip() for s in skills if str(s).strip()]
-    return escape_latex(", ".join(names))
 
 
 def _string_items(data: dict) -> list[str]:

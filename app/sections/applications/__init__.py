@@ -1,3 +1,3 @@
-from .page import ApplicationsPage
+from .tracker_page import TrackerPage
 
-__all__ = ["ApplicationsPage"]
+__all__ = ["TrackerPage"]

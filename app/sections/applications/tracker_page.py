@@ -2,21 +2,23 @@ from __future__ import annotations
 
 import html
 import logging
-from typing import Callable
 
-from PyQt6.QtCore import Qt, QThread
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QComboBox, QDialog, QHBoxLayout,
-    QHeaderView, QLabel, QLineEdit, QMessageBox, QPushButton, QTableWidget,
-    QTableWidgetItem, QVBoxLayout, QWidget,
+    QHeaderView, QMessageBox, QTableWidget, QTableWidgetItem, QWidget,
 )
 
-from ..base import _danger_btn, _label, _primary_btn, _secondary_btn
-from .entry_dialog import _EntryDialog, _empty_entry, _STATUS_OPTIONS
+from api.applications import app_label
+from api.constants import STATUS_OPTIONS
+from app.context import AppContext
+from app.ui.widgets import button, icon_button, label, line_edit, page_layout, section_header, status_label
+
+from .entry_dialog import EntryDialog, empty_entry
+from .prep_runner import PrepAllRunner
 
 logger = logging.getLogger(__name__)
-
 
 _COLUMNS = ["Company", "Role", "Date Applied", "Status", "Notes", "JD", "Resume", ""]
 (
@@ -29,60 +31,79 @@ _COLUMNS = ["Company", "Role", "Date Applied", "Status", "Notes", "JD", "Resume"
     _COL_RESUME,
     _COL_DEL,
 ) = range(8)
+# (column, resize mode, initial width)
+_COLUMN_SIZING = [
+    (_COL_COMPANY, QHeaderView.ResizeMode.Interactive, 160),
+    (_COL_ROLE, QHeaderView.ResizeMode.Interactive, 160),
+    (_COL_DATE, QHeaderView.ResizeMode.Interactive, 110),
+    (_COL_STATUS, QHeaderView.ResizeMode.Interactive, 120),
+    (_COL_NOTES, QHeaderView.ResizeMode.Stretch, None),
+    (_COL_JD, QHeaderView.ResizeMode.Interactive, 220),
+    (_COL_RESUME, QHeaderView.ResizeMode.Fixed, 70),
+    (_COL_DEL, QHeaderView.ResizeMode.Fixed, 48),
+]
 
 _JD_PREVIEW_MAX = 80
 _DELETE_SELECTED_LABEL = "🗑  Delete Selected"
+_PREP_LABEL = "⚙  Prep All Materials"
+_PREPPED_STATUS = "Materials Prepped"
+
+
+def _jd_preview(description: str) -> str:
+    collapsed = " ".join(description.split())
+    if len(collapsed) > _JD_PREVIEW_MAX:
+        return collapsed[: _JD_PREVIEW_MAX - 1].rstrip() + "…"
+    return collapsed
+
+
+def _search_text(entry: dict) -> str:
+    parts = [entry.get(k, "") for k in ("company", "role", "date", "status", "notes", "description")]
+    links = entry.get("links")
+    if isinstance(links, list):
+        parts.extend(str(link) for link in links)
+    return " ".join(p for p in parts if p).lower()
 
 
 class TrackerPage(QWidget):
-    def __init__(
-        self,
-        parent=None,
-        get_profile: Callable[[], dict] | None = None,
-        get_research_cache: Callable[[], dict] | None = None,
-        save_fn: Callable[[], None] | None = None,
-    ):
+    """The Applications tab: a table of tracked job applications.
+
+    ``self._entries`` holds the application dicts in table-row order. Row
+    widgets capture the entry dict itself (never its row index), and edits
+    update it in place, so callbacks stay correct as rows come and go.
+    """
+
+    def __init__(self, ctx: AppContext, parent=None):
         super().__init__(parent)
-        self._rows: list[dict] = []
-        self._get_profile = get_profile
-        self._get_research_cache = get_research_cache
-        self._save_fn = save_fn
-        self._prep_queue: list[int] = []
-        self._prep_threads: list[QThread] = []
-        self._prep_workers: list = []
-        self._prep_btn: QPushButton | None = None
-        self._prep_status: QLabel | None = None
+        self._ctx = ctx
+        self._entries: list[dict] = []
 
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(28, 24, 28, 16)
-        outer.setSpacing(14)
+        self._prep = PrepAllRunner(ctx, self)
+        self._prep.progress.connect(lambda msg: self._prep_status.setText(msg))
+        self._prep.job_done.connect(self._on_prepped)
+        self._prep.all_done.connect(self._on_prep_all_done)
 
-        header_row = QHBoxLayout()
-        header_row.addWidget(_label("Application Tracker", "section-title"))
-        header_row.addStretch()
-        self._search_edit = QLineEdit()
-        self._search_edit.setPlaceholderText("Search applications…")
+        outer = page_layout(self)
+
+        self._search_edit = line_edit("Search applications…")
         self._search_edit.setFixedWidth(240)
         self._search_edit.textChanged.connect(self._apply_filter)
-        header_row.addWidget(self._search_edit)
-        self._prep_status = QLabel("")
-        self._prep_status.setObjectName("status-neutral")
-        header_row.addWidget(self._prep_status)
-        self._del_selected_btn = _danger_btn(_DELETE_SELECTED_LABEL, 150)
+        self._prep_status = status_label()
+        self._prep_status.setWordWrap(False)
+        self._del_selected_btn = button(_DELETE_SELECTED_LABEL, "danger", 150)
         self._del_selected_btn.setEnabled(False)
         self._del_selected_btn.setToolTip(
             "Delete every selected application.\n"
             "Select a range with Shift-click, or pick individual rows with ⌘-click."
         )
         self._del_selected_btn.clicked.connect(self._on_delete_selected_clicked)
-        header_row.addWidget(self._del_selected_btn)
-        self._prep_btn = _secondary_btn("⚙  Prep All Materials", 170)
+        self._prep_btn = button(_PREP_LABEL, "secondary", 170)
         self._prep_btn.clicked.connect(self._on_prep_all_clicked)
-        header_row.addWidget(self._prep_btn)
-        add_btn = _primary_btn("+ Add Application")
+        add_btn = button("+ Add Application")
         add_btn.clicked.connect(self._on_add_clicked)
-        header_row.addWidget(add_btn)
-        outer.addLayout(header_row)
+        outer.addLayout(section_header(
+            "Application Tracker",
+            self._search_edit, self._prep_status, self._del_selected_btn, self._prep_btn, add_btn,
+        ))
 
         self._table = QTableWidget(0, len(_COLUMNS))
         self._table.setHorizontalHeaderLabels(_COLUMNS)
@@ -96,89 +117,61 @@ class TrackerPage(QWidget):
         self._table.cellClicked.connect(self._on_cell_clicked)
         self._table.itemSelectionChanged.connect(self._on_selection_changed)
 
-        del_shortcut = QShortcut(QKeySequence.StandardKey.Delete, self._table)
-        del_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
-        del_shortcut.activated.connect(self._on_delete_selected_clicked)
-        backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self._table)
-        backspace_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
-        backspace_shortcut.activated.connect(self._on_delete_selected_clicked)
+        for key in (QKeySequence(QKeySequence.StandardKey.Delete), QKeySequence(Qt.Key.Key_Backspace)):
+            shortcut = QShortcut(key, self._table)
+            shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+            shortcut.activated.connect(self._on_delete_selected_clicked)
 
         hdr = self._table.horizontalHeader()
-        hdr.setSectionResizeMode(_COL_COMPANY, QHeaderView.ResizeMode.Interactive)
-        hdr.setSectionResizeMode(_COL_ROLE, QHeaderView.ResizeMode.Interactive)
-        hdr.setSectionResizeMode(_COL_DATE, QHeaderView.ResizeMode.Interactive)
-        hdr.setSectionResizeMode(_COL_STATUS, QHeaderView.ResizeMode.Interactive)
-        hdr.setSectionResizeMode(_COL_NOTES, QHeaderView.ResizeMode.Stretch)
-        hdr.setSectionResizeMode(_COL_JD, QHeaderView.ResizeMode.Interactive)
-        hdr.setSectionResizeMode(_COL_RESUME, QHeaderView.ResizeMode.Fixed)
-        hdr.setSectionResizeMode(_COL_DEL, QHeaderView.ResizeMode.Fixed)
-
-        self._table.setColumnWidth(_COL_COMPANY, 160)
-        self._table.setColumnWidth(_COL_ROLE, 160)
-        self._table.setColumnWidth(_COL_DATE, 110)
-        self._table.setColumnWidth(_COL_STATUS, 120)
-        self._table.setColumnWidth(_COL_JD, 220)
-        self._table.setColumnWidth(_COL_RESUME, 70)
-        self._table.setColumnWidth(_COL_DEL, 48)
+        for col, mode, width in _COLUMN_SIZING:
+            hdr.setSectionResizeMode(col, mode)
+            if width is not None:
+                self._table.setColumnWidth(col, width)
 
         outer.addWidget(self._table)
 
-    def cleanup_threads(self) -> None:
-        from .._thread_cleanup import shutdown_threads
-        shutdown_threads(self._prep_threads)
+    # ── Public API ──────────────────────────────────────────────
+    def load(self, entries: list[dict] | None) -> None:
+        self.clear()
+        for entry in entries or []:
+            self.add_entry(entry)
 
-    def _on_add_clicked(self):
-        dlg = _EntryDialog(self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            self.add_entry(dlg.get_data())
-
-    def add_entry(self, data: dict | None = None):
-        entry = {**_empty_entry(), **(data or {})}
+    def add_entry(self, data: dict | None = None) -> None:
+        entry = {**empty_entry(), **(data or {})}
         row = self._table.rowCount()
         self._table.insertRow(row)
         self._table.setRowHeight(row, 34)
-        self._rows.append(entry)
-
-        self._refresh_row(row)
+        self._entries.append(entry)
+        self._render_row(row)
         self._apply_filter(self._search_edit.text())
 
-    def _apply_filter(self, text: str):
-        query = (text or "").strip().lower()
-        for r, entry in enumerate(self._rows):
-            if not query:
-                self._table.setRowHidden(r, False)
-                continue
-            haystack_parts = [
-                entry.get("company", ""),
-                entry.get("role", ""),
-                entry.get("date", ""),
-                entry.get("status", ""),
-                entry.get("notes", ""),
-                entry.get("description", ""),
-            ]
-            links = entry.get("links")
-            if isinstance(links, list):
-                haystack_parts.extend(str(l) for l in links)
-            haystack = " ".join(p for p in haystack_parts if p).lower()
-            self._table.setRowHidden(r, query not in haystack)
+    def get_data(self) -> list[dict]:
+        return [dict(entry) for entry in self._entries]
 
-    def _refresh_row(self, row: int):
-        entry = self._rows[row]
+    def set_interview_questions(self, row: int, value: list[dict]) -> None:
+        if 0 <= row < len(self._entries):
+            self._entries[row]["interview_questions"] = value
 
+    def clear(self) -> None:
+        self._table.setRowCount(0)
+        self._entries.clear()
+        self._on_selection_changed()
+
+    # ── Rendering ───────────────────────────────────────────────
+    def _row_of(self, entry: dict) -> int:
+        """Current row of ``entry`` (by identity), or -1 if it was deleted."""
+        return next((i for i, e in enumerate(self._entries) if e is entry), -1)
+
+    def _render_row(self, row: int) -> None:
+        entry = self._entries[row]
         self._table.setItem(row, _COL_COMPANY, QTableWidgetItem(entry["company"]))
         links = entry.get("links") if isinstance(entry.get("links"), list) else []
-        primary_link = links[0] if links else ""
-        self._render_role_cell(row, entry["role"], primary_link)
+        self._render_role_cell(row, entry["role"], links[0] if links else "")
         self._table.setItem(row, _COL_DATE, QTableWidgetItem(entry["date"]))
         self._table.setItem(row, _COL_NOTES, QTableWidgetItem(entry["notes"]))
 
-        description = (entry.get("description") or "")
-        collapsed = " ".join(description.split())
-        if len(collapsed) > _JD_PREVIEW_MAX:
-            preview = collapsed[: _JD_PREVIEW_MAX - 1].rstrip() + "…"
-        else:
-            preview = collapsed
-        jd_item = QTableWidgetItem(preview)
+        description = entry.get("description") or ""
+        jd_item = QTableWidgetItem(_jd_preview(description))
         if description:
             jd_item.setToolTip(description)
         self._table.setItem(row, _COL_JD, jd_item)
@@ -190,70 +183,72 @@ class TrackerPage(QWidget):
             resume_item.setToolTip(str(resume_path))
         self._table.setItem(row, _COL_RESUME, resume_item)
 
-        existing_combo = self._table.cellWidget(row, _COL_STATUS)
-        if isinstance(existing_combo, QComboBox):
-            if entry["status"] in _STATUS_OPTIONS:
-                existing_combo.setCurrentText(entry["status"])
-        else:
+        combo = self._table.cellWidget(row, _COL_STATUS)
+        if not isinstance(combo, QComboBox):
             combo = QComboBox()
-            combo.setObjectName("status-combo")
-            for s in _STATUS_OPTIONS:
-                combo.addItem(s)
-            if entry["status"] in _STATUS_OPTIONS:
-                combo.setCurrentText(entry["status"])
-            combo.currentTextChanged.connect(lambda txt, r=row: self._on_status_changed(r, txt))
+            combo.addItems(STATUS_OPTIONS)
+            combo.currentTextChanged.connect(lambda text, e=entry: e.update(status=text))
             self._table.setCellWidget(row, _COL_STATUS, combo)
+        if entry["status"] in STATUS_OPTIONS:
+            combo.setCurrentText(entry["status"])
 
         if self._table.cellWidget(row, _COL_DEL) is None:
-            del_btn = QPushButton("✕")
-            del_btn.setObjectName("icon-btn")
-            del_btn.setFixedSize(28, 28)
-            del_btn.setToolTip("Delete application")
+            del_btn = icon_button(size=28, tooltip="Delete application")
             del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            del_btn.clicked.connect(lambda _checked=False, b=del_btn: self._remove_row(b))
-
-            cell_widget = QWidget()
-            cell_layout = QHBoxLayout(cell_widget)
+            del_btn.clicked.connect(lambda _checked=False, e=entry: self._delete([self._row_of(e)]))
+            cell = QWidget()
+            cell_layout = QHBoxLayout(cell)
             cell_layout.setContentsMargins(0, 0, 0, 0)
             cell_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
             cell_layout.addWidget(del_btn)
-            self._table.setCellWidget(row, _COL_DEL, cell_widget)
+            self._table.setCellWidget(row, _COL_DEL, cell)
 
-    def _render_role_cell(self, row: int, role: str, link: str):
+    def _render_role_cell(self, row: int, role: str, link: str) -> None:
         if link:
-            label = QLabel(f'<a href="{html.escape(link, quote=True)}">{html.escape(role)}</a>')
-            label.setOpenExternalLinks(True)
-            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
-            label.setContentsMargins(6, 0, 6, 0)
+            link_label = label(f'<a href="{html.escape(link, quote=True)}">{html.escape(role)}</a>', "")
+            link_label.setOpenExternalLinks(True)
+            link_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+            link_label.setContentsMargins(6, 0, 6, 0)
             self._table.setItem(row, _COL_ROLE, QTableWidgetItem())
-            self._table.setCellWidget(row, _COL_ROLE, label)
+            self._table.setCellWidget(row, _COL_ROLE, link_label)
         else:
             self._table.removeCellWidget(row, _COL_ROLE)
             self._table.setItem(row, _COL_ROLE, QTableWidgetItem(role))
 
-    def _on_status_changed(self, row: int, text: str):
-        if 0 <= row < len(self._rows):
-            self._rows[row]["status"] = text
+    def _apply_filter(self, text: str) -> None:
+        query = (text or "").strip().lower()
+        for r, entry in enumerate(self._entries):
+            self._table.setRowHidden(r, bool(query) and query not in _search_text(entry))
 
-    def _on_cell_clicked(self, row: int, col: int):
-        if col in (_COL_STATUS, _COL_DEL):
-            return
-        if not (0 <= row < len(self._rows)):
+    # ── Editing ─────────────────────────────────────────────────
+    def _on_add_clicked(self) -> None:
+        dlg = EntryDialog(self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.add_entry(dlg.get_data())
+
+    def _on_cell_clicked(self, row: int, col: int) -> None:
+        if col in (_COL_STATUS, _COL_DEL) or not (0 <= row < len(self._entries)):
             return
         # Shift/⌘-click is the user building a multi-row selection, not asking to edit.
-        mods = QApplication.keyboardModifiers()
-        if mods & (
+        if QApplication.keyboardModifiers() & (
             Qt.KeyboardModifier.ShiftModifier
             | Qt.KeyboardModifier.ControlModifier
             | Qt.KeyboardModifier.MetaModifier
         ):
             return
-        dlg = _EntryDialog(self, self._rows[row])
+        dlg = EntryDialog(self, self._entries[row])
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            self._rows[row] = {**self._rows[row], **dlg.get_data()}
-            self._refresh_row(row)
+            self._entries[row].update(dlg.get_data())
+            self._render_row(row)
             self._apply_filter(self._search_edit.text())
 
+    def _save(self) -> None:
+        try:
+            self._ctx.save()
+        except Exception:
+            logger.exception("TrackerPage — save failed")
+
+    # ── Deletion ────────────────────────────────────────────────
     def _selected_rows(self) -> list[int]:
         """Selected row indices, ascending. Rows hidden by the search filter never count."""
         model = self._table.selectionModel()
@@ -262,195 +257,65 @@ class TrackerPage(QWidget):
         return sorted(
             idx.row()
             for idx in model.selectedRows()
-            if not self._table.isRowHidden(idx.row()) and 0 <= idx.row() < len(self._rows)
+            if not self._table.isRowHidden(idx.row()) and 0 <= idx.row() < len(self._entries)
         )
 
-    def _on_selection_changed(self):
+    def _on_selection_changed(self) -> None:
         count = len(self._selected_rows())
         self._del_selected_btn.setEnabled(count > 0)
         self._del_selected_btn.setText(
             f"{_DELETE_SELECTED_LABEL} ({count})" if count else _DELETE_SELECTED_LABEL
         )
 
-    def _on_delete_selected_clicked(self):
+    def _on_delete_selected_clicked(self) -> None:
         rows = self._selected_rows()
         if not rows:
             return
-
-        names = [
-            " — ".join(p for p in (self._rows[r].get("company"), self._rows[r].get("role")) if p)
-            or "(untitled)"
-            for r in rows
-        ]
+        names = [app_label(self._entries[r]) for r in rows]
         preview = "\n".join(f"  • {n}" for n in names[:8])
         if len(names) > 8:
             preview += f"\n  … and {len(names) - 8} more"
-
         noun = "application" if len(rows) == 1 else "applications"
-        confirm = QMessageBox.warning(
+        reply = QMessageBox.warning(
             self,
             "Delete Applications",
             f"Permanently delete {len(rows)} {noun}?\n\n{preview}\n\nThis cannot be undone.",
             QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes,
             QMessageBox.StandardButton.Cancel,
         )
-        if confirm != QMessageBox.StandardButton.Yes:
-            return
+        if reply == QMessageBox.StandardButton.Yes:
+            self._delete(rows)
 
+    def _delete(self, rows: list[int]) -> None:
+        rows = sorted(r for r in rows if 0 <= r < len(self._entries))
         for r in reversed(rows):
             self._table.removeRow(r)
-            del self._rows[r]
-
-        self._rebind_row_callbacks()
+            del self._entries[r]
         self._table.clearSelection()
         self._on_selection_changed()
-        if self._save_fn:
-            try:
-                self._save_fn()
-            except Exception:
-                logger.exception("Delete selected: save_fn failed")
+        self._save()
         logger.info("Deleted %d application(s) from the tracker", len(rows))
 
-    def _remove_row(self, btn: QPushButton):
-        for r in range(self._table.rowCount()):
-            w = self._table.cellWidget(r, _COL_DEL)
-            if w and w.findChild(QPushButton) is btn:
-                self._table.removeRow(r)
-                del self._rows[r]
-                self._rebind_row_callbacks()
-                if self._save_fn:
-                    try:
-                        self._save_fn()
-                    except Exception:
-                        logger.exception("Delete row: save_fn failed")
-                return
-
-    def _rebind_row_callbacks(self):
-        for r in range(self._table.rowCount()):
-            combo = self._table.cellWidget(r, _COL_STATUS)
-            if isinstance(combo, QComboBox):
-                try:
-                    combo.currentTextChanged.disconnect()
-                except TypeError:
-                    pass
-                combo.currentTextChanged.connect(lambda txt, row=r: self._on_status_changed(row, txt))
-
-    def _on_prep_all_clicked(self):
-        if self._get_profile is None:
-            QMessageBox.warning(self, "Prep All Materials", "Profile not available.")
-            return
-
-        queue = [i for i, e in enumerate(self._rows) if e.get("status") == "Added"]
+    # ── Prep All ────────────────────────────────────────────────
+    def _on_prep_all_clicked(self) -> None:
+        queue = [e for e in self._entries if e.get("status") == "Added"]
         if not queue:
-            QMessageBox.information(
-                self, "Prep All Materials", "No applications with status 'Added'."
-            )
+            QMessageBox.information(self, "Prep All Materials", "No applications with status 'Added'.")
             return
+        self._prep_btn.setEnabled(False)
+        self._prep_btn.setText("Prepping…")
+        self._prep.start(queue)
 
-        self._prep_queue = queue
-        if self._prep_btn is not None:
-            self._prep_btn.setEnabled(False)
-            self._prep_btn.setText("Prepping…")
-        self._prep_next()
+    def _on_prepped(self, entry: dict) -> None:
+        row = self._row_of(entry)
+        if row >= 0:
+            entry["status"] = _PREPPED_STATUS
+            combo = self._table.cellWidget(row, _COL_STATUS)
+            if isinstance(combo, QComboBox):
+                combo.setCurrentText(_PREPPED_STATUS)
+        self._save()
 
-    def _prep_next(self):
-        if not self._prep_queue:
-            if self._prep_btn is not None:
-                self._prep_btn.setEnabled(True)
-                self._prep_btn.setText("⚙  Prep All Materials")
-            if self._prep_status is not None:
-                self._prep_status.setText("✓  Done.")
-            if self._save_fn:
-                try:
-                    self._save_fn()
-                except Exception:
-                    logger.exception("Prep All: save_fn failed")
-            return
-
-        row = self._prep_queue.pop(0)
-        if not (0 <= row < len(self._rows)):
-            self._prep_next()
-            return
-
-        entry = self._rows[row]
-        jd = (entry.get("description") or "").strip()
-        company = (entry.get("company") or "").strip()
-        if not jd:
-            logger.info("Prep All: skipping row %d (%r) — no description", row, company)
-            if self._prep_status is not None:
-                self._prep_status.setText(f"Skipped {company or 'row'} — no JD.")
-            self._prep_next()
-            return
-
-        from ..applier.workers import _GenerateResumeWorker  # lazy import to avoid cycle
-
-        profile = self._get_profile() if self._get_profile else {}
-        cache = self._get_research_cache() if self._get_research_cache else {}
-        links_val = entry.get("links") or []
-        url = (links_val[0] if links_val else "").strip()
-
-        remaining = len(self._prep_queue)
-        if self._prep_status is not None:
-            self._prep_status.setText(
-                f"Generating for {company or 'application'}… ({remaining} more queued)"
-            )
-
-        role = (entry.get("role") or "").strip()
-        worker = _GenerateResumeWorker(
-            profile, jd, company, url, cache, role,
-            application_uuid=entry.get("uuid"),
-        )
-        thread = QThread(self)
-        worker.moveToThread(thread)
-        self._prep_threads.append(thread)
-        self._prep_workers.append(worker)
-
-        def cleanup():
-            thread.quit()
-
-        def on_finished(_payload: dict):
-            if 0 <= row < len(self._rows):
-                self._rows[row]["status"] = "Materials Prepped"
-                combo = self._table.cellWidget(row, _COL_STATUS)
-                if isinstance(combo, QComboBox):
-                    combo.setCurrentText("Materials Prepped")
-            if self._save_fn:
-                try:
-                    self._save_fn()
-                except Exception:
-                    logger.exception("Prep All: save_fn failed mid-batch")
-            cleanup()
-            self._prep_next()
-
-        def on_error(msg: str):
-            logger.error("Prep All: row %d (%r) failed — %s", row, company, msg)
-            if self._prep_status is not None:
-                self._prep_status.setText(f"Error on {company or 'row'}: {msg}")
-            cleanup()
-            self._prep_next()
-
-        def on_progress(msg: str):
-            if self._prep_status is not None:
-                self._prep_status.setText(f"{company}: {msg}")
-
-        worker.finished.connect(on_finished)
-        worker.error.connect(on_error)
-        worker.progress.connect(on_progress)
-        thread.started.connect(worker.run)
-        thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(
-            lambda: self._prep_workers.remove(worker) if worker in self._prep_workers else None
-        )
-        thread.start()
-
-    def get_data(self) -> list[dict]:
-        return [dict(entry) for entry in self._rows]
-
-    def set_interview_questions(self, row: int, value: list[dict]) -> None:
-        if 0 <= row < len(self._rows):
-            self._rows[row]["interview_questions"] = value
-
-    def clear(self):
-        self._table.setRowCount(0)
-        self._rows.clear()
-        self._on_selection_changed()
+    def _on_prep_all_done(self) -> None:
+        self._prep_btn.setEnabled(True)
+        self._prep_btn.setText(_PREP_LABEL)
+        self._save()

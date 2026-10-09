@@ -1,96 +1,62 @@
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QFont
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QCheckBox, QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QScrollArea,
-    QStackedWidget, QTabBar, QVBoxLayout, QWidget,
+    QCheckBox, QFrame, QLabel, QPlainTextEdit, QScrollArea, QStackedWidget,
+    QStatusBar, QTabBar, QVBoxLayout, QWidget,
 )
 
 from api import ai_provider, app_settings
+from app.ui.widgets import button, hint, mono_font
 
-from ..base import _primary_btn, _secondary_btn, _set_status
+from .common import SettingsCard, SettingsPane
+
+_SUFFIXES = (".schema.json", ".tool.json", ".txt")
+
+
+def _stem(filename: str) -> str:
+    for suffix in _SUFFIXES:
+        if filename.endswith(suffix):
+            return filename[: -len(suffix)]
+    return filename.rsplit(".", 1)[0]
 
 
 def _prompt_label(filename: str) -> str:
-    if filename.endswith(".schema.json"):
-        stem = filename[: -len(".schema.json")]
-    elif filename.endswith(".tool.json"):
-        stem = filename[: -len(".tool.json")]
-    elif filename.endswith(".txt"):
-        stem = filename[: -len(".txt")]
-    else:
-        stem = filename.rsplit(".", 1)[0]
-    return stem.replace("_", " ").replace(".", " ").title()
+    return _stem(filename).replace("_", " ").replace(".", " ").title()
 
 
-class PromptsMixin:
-    def _build_prompts_page(self) -> QWidget:
-        self._prompt_editors: dict[str, QPlainTextEdit] = {}
-        self._prompt_statuses: dict[str, QLabel] = {}
-
+class PromptsSettings(SettingsPane):
+    def __init__(self, status_bar: QStatusBar):
+        super().__init__(status_bar)
         all_files = ai_provider.list_prompt_files()
-        schema_stems = {
-            f[: -len(".schema.json")] for f in all_files if f.endswith(".schema.json")
-        }
+        schema_stems = {_stem(f) for f in all_files if f.endswith(".schema.json")}
+        # Prompts that have a JSON schema first, then alphabetical.
         txt_files = sorted(
             (f for f in all_files if f.endswith(".txt")),
-            key=lambda f: (f[: -len(".txt")] not in schema_stems, _prompt_label(f)),
+            key=lambda f: (_stem(f) not in schema_stems, _prompt_label(f)),
         )
-        schema_files = sorted(
-            (f for f in all_files if not f.endswith(".txt")), key=_prompt_label
+        schema_files = sorted((f for f in all_files if not f.endswith(".txt")), key=_prompt_label)
+
+        self._set_cards(
+            self._auto_reload_card(),
+            self._prompts_card("System Prompts", txt_files),
+            self._prompts_card("JSON Schemas", schema_files),
         )
 
-        container = QWidget()
-        container_layout = QVBoxLayout(container)
-        container_layout.setContentsMargins(0, 0, 0, 0)
-        container_layout.setSpacing(20)
-
-        container_layout.addWidget(self._build_auto_reload_card())
-        container_layout.addWidget(self._build_prompts_card("System Prompts", txt_files))
-        container_layout.addWidget(self._build_prompts_card("JSON Schemas", schema_files))
-
-        return self._wrap_scroll(container)
-
-    def _build_auto_reload_card(self) -> QFrame:
-        card = QFrame()
-        card.setObjectName("card")
-        card.setMaximumWidth(800)
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(28, 24, 28, 28)
-        layout.setSpacing(12)
-
-        title = QLabel("Auto Reload")
-        title.setObjectName("card-title")
-        layout.addWidget(title)
-
-        hint = QLabel(
+    def _auto_reload_card(self) -> QFrame:
+        card = SettingsCard("Auto Reload", spacing=12)
+        card.body.addWidget(hint(
             "Customize the AI instructions for each feature. "
             "Changes take effect on the next use."
-        )
-        hint.setWordWrap(True)
-        hint.setObjectName("hint")
-        layout.addWidget(hint)
-
-        self._auto_resync_checkbox = QCheckBox("Auto resync all prompts to default on app load")
-        self._auto_resync_checkbox.setChecked(app_settings.get_auto_resync_prompts())
-        self._auto_resync_checkbox.stateChanged.connect(self._toggle_auto_resync)
-        layout.addWidget(self._auto_resync_checkbox)
-
+        ))
+        checkbox = QCheckBox("Auto resync all prompts to default on app load")
+        checkbox.setChecked(app_settings.get_auto_resync_prompts())
+        checkbox.stateChanged.connect(self._toggle_auto_resync)
+        card.body.addWidget(checkbox)
         return card
 
-    def _build_prompts_card(self, title_text: str, filenames: list[str]) -> QFrame:
-        card = QFrame()
-        card.setObjectName("card")
-        card.setMaximumWidth(800)
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(28, 24, 28, 28)
-        layout.setSpacing(16)
-
-        title = QLabel(title_text)
-        title.setObjectName("card-title")
-        layout.addWidget(title)
-
+    def _prompts_card(self, title: str, filenames: list[str]) -> QFrame:
+        card = SettingsCard(title)
         tab_bar = QTabBar()
         tab_bar.setUsesScrollButtons(False)
         tab_bar.setElideMode(Qt.TextElideMode.ElideNone)
@@ -99,47 +65,9 @@ class PromptsMixin:
         stack = QStackedWidget()
         tab_bar.currentChanged.connect(stack.setCurrentIndex)
 
-        mono = QFont("Menlo")
-        mono.setStyleHint(QFont.StyleHint.Monospace)
-        mono.setPointSize(11)
-
         for filename in filenames:
-            tab = QWidget()
-            tab_layout = QVBoxLayout(tab)
-            tab_layout.setContentsMargins(12, 12, 12, 12)
-            tab_layout.setSpacing(10)
-
-            editor = QPlainTextEdit()
-            editor.setFont(mono)
-            editor.setMinimumHeight(260)
-            editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
-            editor.setPlainText(ai_provider.load_prompt_raw(filename))
-            tab_layout.addWidget(editor)
-
-            btn_row = QHBoxLayout()
-            btn_row.setSpacing(12)
-            save_btn = _primary_btn("Save", width=100)
-            sync_btn = _secondary_btn("Sync with Default", width=160)
-            status_lbl = QLabel("")
-            status_lbl.setObjectName("status-ok")
-
-            save_btn.clicked.connect(
-                lambda checked, fn=filename, ed=editor, sl=status_lbl: self._save_prompt(fn, ed, sl)
-            )
-            sync_btn.clicked.connect(
-                lambda checked, fn=filename, ed=editor, sl=status_lbl: self._sync_prompt(fn, ed, sl)
-            )
-
-            btn_row.addWidget(save_btn)
-            btn_row.addWidget(sync_btn)
-            btn_row.addWidget(status_lbl)
-            btn_row.addStretch()
-            tab_layout.addLayout(btn_row)
-
             tab_bar.addTab(_prompt_label(filename))
-            stack.addWidget(tab)
-            self._prompt_editors[filename] = editor
-            self._prompt_statuses[filename] = status_lbl
+            stack.addWidget(self._prompt_editor(filename))
 
         bar_scroll = QScrollArea()
         bar_scroll.setWidgetResizable(True)
@@ -148,32 +76,42 @@ class PromptsMixin:
         bar_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         bar_scroll.setFixedHeight(tab_bar.sizeHint().height() + 16)
         bar_scroll.setWidget(tab_bar)
-        layout.addWidget(bar_scroll)
-        layout.addWidget(stack)
-
+        card.body.addWidget(bar_scroll)
+        card.body.addWidget(stack)
         return card
+
+    def _prompt_editor(self, filename: str) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+
+        editor = QPlainTextEdit()
+        editor.setFont(mono_font())
+        editor.setMinimumHeight(260)
+        editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        editor.setPlainText(ai_provider.load_prompt_raw(filename))
+        layout.addWidget(editor)
+
+        sync_btn = button("Sync with Default", "secondary", 160)
+        row, status = self._save_row(lambda: self._save_prompt(filename, editor, status), sync_btn)
+        sync_btn.clicked.connect(lambda: self._sync_prompt(filename, editor, status))
+        layout.addLayout(row)
+        return tab
 
     def _toggle_auto_resync(self, state: int) -> None:
         enabled = bool(state)
         app_settings.save_auto_resync_prompts(enabled)
-        if self._status_bar:
-            msg = "✓  Auto resync on load enabled." if enabled else "✓  Auto resync on load disabled."
-            self._status_bar.showMessage(msg, 3000)
+        self._status_bar.showMessage(
+            f"✓  Auto resync on load {'enabled' if enabled else 'disabled'}.", 3000
+        )
 
-    def _sync_prompt(self, filename: str, editor: QPlainTextEdit, status_lbl: QLabel) -> None:
+    def _sync_prompt(self, filename: str, editor: QPlainTextEdit, status: QLabel) -> None:
         default = ai_provider.default_prompt(filename)
         editor.setPlainText(default)
         ai_provider.save_prompt(filename, default)
-        _set_status(status_lbl, "ok")
-        status_lbl.setText("✓  Synced with default")
-        QTimer.singleShot(3000, lambda: status_lbl.setText(""))
-        if self._status_bar:
-            self._status_bar.showMessage(f"✓  Prompt '{filename}' reset to default.", 3000)
+        self._announce(status, f"✓  Prompt '{filename}' reset to default.", "✓  Synced with default")
 
-    def _save_prompt(self, filename: str, editor: QPlainTextEdit, status_lbl: QLabel) -> None:
+    def _save_prompt(self, filename: str, editor: QPlainTextEdit, status: QLabel) -> None:
         ai_provider.save_prompt(filename, editor.toPlainText())
-        _set_status(status_lbl, "ok")
-        status_lbl.setText("✓  Saved")
-        QTimer.singleShot(3000, lambda: status_lbl.setText(""))
-        if self._status_bar:
-            self._status_bar.showMessage(f"✓  Prompt '{filename}' saved.", 3000)
+        self._announce(status, f"✓  Prompt '{filename}' saved.")

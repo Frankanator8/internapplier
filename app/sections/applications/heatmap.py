@@ -15,17 +15,16 @@ _COLUMNS = 7
 _ROWS = 2  # row 0 = weeks, row 1 = days
 _CELL = 12
 _GAP = 3
+_DEFAULT_TOOLTIP = "Applications — last 7 weeks (top) and last 7 days (bottom)"
 
 
 def _heatmap_colors() -> list[QColor]:
     p = current_palette()
-    return [
-        QColor(p["heatmap_0"]),
-        QColor(p["heatmap_1"]),
-        QColor(p["heatmap_2"]),
-        QColor(p["heatmap_3"]),
-        QColor(p["heatmap_4"]),
-    ]
+    return [QColor(p[f"heatmap_{i}"]) for i in range(5)]
+
+
+def _count_text(count: int) -> str:
+    return f"{count} application" if count == 1 else f"{count} applications"
 
 
 def _bucket(count: int, edges: list[int]) -> int:
@@ -38,13 +37,12 @@ class ApplicationsHeatmap(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._counts: dict[date, int] = {}
-        self._day_edges = app_settings.get_heatmap_day_thresholds()
-        self._week_edges = app_settings.get_heatmap_week_thresholds()
+        self.reload_thresholds()
         width = _COLUMNS * _CELL + (_COLUMNS - 1) * _GAP
         height = _ROWS * _CELL + (_ROWS - 1) * _GAP
         self.setFixedSize(width, height)
         self.setMouseTracking(True)
-        self.setToolTip("Applications — last 7 weeks (top) and last 7 days (bottom)")
+        self.setToolTip(_DEFAULT_TOOLTIP)
 
     def reload_thresholds(self) -> None:
         self._day_edges = app_settings.get_heatmap_day_thresholds()
@@ -94,10 +92,10 @@ class ApplicationsHeatmap(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
         painter.setPen(Qt.PenStyle.NoPen)
+        colors = _heatmap_colors()
         for col in range(_COLUMNS):
             start, end = self._week_range_for_col(col)
             week_count = self._week_count(start, end)
-            colors = _heatmap_colors()
             painter.setBrush(colors[_bucket(week_count, self._week_edges)])
             painter.drawRect(self._cell_rect(col, 0))
 
@@ -119,15 +117,12 @@ class ApplicationsHeatmap(QWidget):
         if 0 <= col < _COLUMNS and 0 <= row < _ROWS and self._cell_rect(col, row).contains(pos):
             if row == 1:
                 d = self._day_for_col(col)
-                count = self._counts.get(d, 0)
-                noun = "application" if count == 1 else "applications"
-                self.setToolTip(f"{d.isoformat()} — {count} {noun}")
+                self.setToolTip(f"{d.isoformat()} — {_count_text(self._counts.get(d, 0))}")
             else:
                 start, end = self._week_range_for_col(col)
-                count = self._week_count(start, end)
-                noun = "application" if count == 1 else "applications"
                 self.setToolTip(
-                    f"Week {start.isoformat()} → {end.isoformat()} — {count} {noun}"
+                    f"Week {start.isoformat()} → {end.isoformat()} — "
+                    f"{_count_text(self._week_count(start, end))}"
                 )
             return
-        self.setToolTip("Applications — last 7 weeks (top) and last 7 days (bottom)")
+        self.setToolTip(_DEFAULT_TOOLTIP)

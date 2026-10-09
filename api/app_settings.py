@@ -30,7 +30,8 @@ def save_theme_preference(mode: str) -> None:
     _set("theme_preference", mode)
 
 
-def _valid_thresholds(val: Any) -> list[int] | None:
+def valid_thresholds(val: Any) -> list[int] | None:
+    """Four strictly ascending ints, or None if `val` isn't that."""
     if not isinstance(val, list) or len(val) != 4:
         return None
     try:
@@ -43,7 +44,7 @@ def _valid_thresholds(val: Any) -> list[int] | None:
 
 
 def get_heatmap_day_thresholds() -> list[int]:
-    val = _valid_thresholds(_load_settings().get("heatmap_day_thresholds"))
+    val = valid_thresholds(_load_settings().get("heatmap_day_thresholds"))
     return val if val is not None else list(DEFAULT_HEATMAP_DAY_THRESHOLDS)
 
 
@@ -52,7 +53,7 @@ def save_heatmap_day_thresholds(values: list[int]) -> None:
 
 
 def get_heatmap_week_thresholds() -> list[int]:
-    val = _valid_thresholds(_load_settings().get("heatmap_week_thresholds"))
+    val = valid_thresholds(_load_settings().get("heatmap_week_thresholds"))
     return val if val is not None else list(DEFAULT_HEATMAP_WEEK_THRESHOLDS)
 
 

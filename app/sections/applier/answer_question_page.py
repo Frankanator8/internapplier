@@ -1,188 +1,111 @@
 from __future__ import annotations
 
-import logging
+from PyQt6.QtWidgets import QHBoxLayout, QTextEdit, QWidget
 
-from PyQt6.QtCore import Qt, QThread
-from PyQt6.QtGui import QGuiApplication, QTextCursor
-from PyQt6.QtWidgets import (
-    QComboBox, QHBoxLayout, QLabel, QLineEdit, QSplitter, QTextEdit, QVBoxLayout, QWidget,
+from app.context import AppContext
+from app.ui.application_picker import ApplicationPicker
+from app.ui.widgets import (
+    BusyButton, append_stream_text, button, copy_text, hsplitter, label,
+    line_edit, set_status, set_titled_content, status_label, vbox_widget,
 )
+from app.ui.workers import StreamWorker, WorkerPool
 
-from api import data_store
-from api.research_cache import lookup as _research_from_cache
-
-from ..base import _label, _primary_btn, _secondary_btn, _set_status
-from .workers import _QuestionWorker
-
-logger = logging.getLogger(__name__)
+from .generate_resume_page import saved_applications
 
 
-class AnswerQuestionMixin:
-    def _build_answer_question_page(self) -> QWidget:
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setChildrenCollapsible(False)
+class AnswerQuestionPage(QWidget):
+    """Draft an answer to an application question from the profile (and research)."""
 
-        left = QWidget()
+    def __init__(self, ctx: AppContext, parent=None):
+        super().__init__(parent)
+        self._ctx = ctx
+        self._pool = WorkerPool(self)
+
+        left, left_layout = vbox_widget((0, 8, 0, 0), spacing=10)
         left.setMinimumWidth(320)
-        left_layout = QVBoxLayout(left)
-        left_layout.setContentsMargins(0, 8, 0, 0)
-        left_layout.setSpacing(10)
+        left_layout.addWidget(label("Fill from Application"))
+        self._app_picker = ApplicationPicker(saved_applications)
+        self._app_picker.picked.connect(self._fill_from_application)
+        left_layout.addWidget(self._app_picker)
 
-        left_layout.addWidget(_label("Fill from Application"))
-        self._answer_app_picker = QComboBox()
-        self._answer_app_picker.currentIndexChanged.connect(self._on_fill_answer_from_application)
-        left_layout.addWidget(self._answer_app_picker)
-        self._refresh_answer_app_picker()
+        left_layout.addWidget(label("Company (optional)"))
+        self._company_input = line_edit("Match a researched company to tailor the answer")
+        left_layout.addWidget(self._company_input)
 
-        left_layout.addWidget(_label("Company (optional)"))
-        self._answer_company_input = QLineEdit()
-        self._answer_company_input.setPlaceholderText(
-            "Match a researched company to tailor the answer"
-        )
-        left_layout.addWidget(self._answer_company_input)
+        left_layout.addWidget(label("Question"))
+        self._question_input = QTextEdit()
+        self._question_input.setPlaceholderText("e.g. Why are you interested in this role?")
+        left_layout.addWidget(self._question_input, 1)
 
-        left_layout.addWidget(_label("Question"))
-        self._answer_question_input = QTextEdit()
-        self._answer_question_input.setPlaceholderText(
-            "e.g. Why are you interested in this role?"
-        )
-        left_layout.addWidget(self._answer_question_input, 1)
+        left_layout.addWidget(label("Job Description (optional)"))
+        self._jd_input = QTextEdit()
+        self._jd_input.setPlaceholderText("Paste the job description to tailor the answer to the role…")
+        left_layout.addWidget(self._jd_input, 2)
 
-        left_layout.addWidget(_label("Job Description (optional)"))
-        self._answer_jd_input = QTextEdit()
-        self._answer_jd_input.setPlaceholderText(
-            "Paste the job description to tailor the answer to the role…"
-        )
-        left_layout.addWidget(self._answer_jd_input, 2)
-
-        self._answer_btn = _primary_btn("❓  Answer Question")
-        self._answer_btn.clicked.connect(self._answer_question)
+        self._answer_btn = BusyButton("❓  Answer Question", "Answering…")
+        self._answer_btn.clicked.connect(self._answer)
         left_layout.addWidget(self._answer_btn)
+        self._status = status_label()
+        left_layout.addWidget(self._status)
 
-        self._answer_status = QLabel("")
-        self._answer_status.setWordWrap(True)
-        self._answer_status.setObjectName("status-neutral")
-        left_layout.addWidget(self._answer_status)
-
-        splitter.addWidget(left)
-
-        right = QWidget()
-        right_layout = QVBoxLayout(right)
-        right_layout.setContentsMargins(0, 8, 0, 0)
-        right_layout.setSpacing(8)
-
-        self._answer_output = QTextEdit()
-        self._answer_output.setReadOnly(True)
-        self._answer_output.setPlaceholderText(
-            "The generated answer will stream here."
-        )
-        right_layout.addWidget(self._answer_output, 1)
-
+        right, right_layout = vbox_widget((0, 8, 0, 0), spacing=8)
+        self._output = QTextEdit()
+        self._output.setReadOnly(True)
+        self._output.setPlaceholderText("The generated answer will stream here.")
+        right_layout.addWidget(self._output, 1)
+        copy_btn = button("Copy Answer", "secondary", 120)
+        copy_btn.clicked.connect(lambda: copy_text(self._output.toPlainText()))
         btn_row = QHBoxLayout()
-        btn_row.setSpacing(8)
-        self._answer_copy_btn = _secondary_btn("Copy Answer", 120)
-        self._answer_copy_btn.clicked.connect(
-            lambda: QGuiApplication.clipboard().setText(
-                self._answer_output.toPlainText()
-            )
-        )
-        btn_row.addWidget(self._answer_copy_btn)
+        btn_row.addWidget(copy_btn)
         btn_row.addStretch()
         right_layout.addLayout(btn_row)
 
-        splitter.addWidget(right)
-        splitter.setSizes([360, 600])
+        set_titled_content(self, "Answer Question", hsplitter(left, right, sizes=[360, 600]))
 
-        return self._wrap_page("Answer Question", splitter)
+    def on_shown(self) -> None:
+        self._app_picker.refresh()
 
-    def _answer_question(self):
-        question = self._answer_question_input.toPlainText().strip()
+    def _fill_from_application(self, entry: dict) -> None:
+        self._company_input.setText(entry.get("company", "") or "")
+        self._jd_input.setPlainText(entry.get("description", "") or "")
+
+    def _answer(self) -> None:
+        question = self._question_input.toPlainText().strip()
         if not question:
-            _set_status(self._answer_status, "error")
-            self._answer_status.setText("Type a question first.")
+            set_status(self._status, "error", "Type a question first.")
             return
+        company = self._company_input.text().strip()
+        jd = self._jd_input.toPlainText().strip()
+        research = self._ctx.research.lookup(company) if company else None
 
-        company = self._answer_company_input.text().strip()
-        jd = self._answer_jd_input.toPlainText().strip()
-        profile = self._get_profile()
-
-        self._answer_output.clear()
-        self._answer_btn.setEnabled(False)
-        self._answer_btn.setText("Answering…")
-        _set_status(self._answer_status, "neutral")
-        if company and _research_from_cache(self._research_cache, company):
-            self._answer_status.setText(f"Using cached research for {company!r}…")
+        if research:
+            message = f"Using cached research for {company!r}…"
         elif company:
-            self._answer_status.setText(
-                f"No cached research for {company!r} — answering from profile only."
-            )
+            message = f"No cached research for {company!r} — answering from profile only."
         else:
-            self._answer_status.setText("Answering from profile…")
+            message = "Answering from profile…"
+        self._output.clear()
+        self._answer_btn.set_busy(True)
+        set_status(self._status, "neutral", message)
 
-        worker = _QuestionWorker(question, profile, company, jd, self._research_cache)
-        thread = QThread(self)
-        worker.moveToThread(thread)
-
-        def on_finished():
-            self._answer_btn.setEnabled(True)
-            self._answer_btn.setText("❓  Answer Question")
-            self._answer_status.setText("")
-            thread.quit()
+        def on_finished(_text: str):
+            self._answer_btn.set_busy(False)
+            self._status.setText("")
 
         def on_error(msg: str):
-            self._answer_btn.setEnabled(True)
-            self._answer_btn.setText("❓  Answer Question")
-            _set_status(self._answer_status, "error")
-            self._answer_status.setText(f"Error: {msg}")
-            thread.quit()
+            self._answer_btn.set_busy(False)
+            set_status(self._status, "error", f"Error: {msg}")
 
-        worker.finished.connect(on_finished)
-        worker.error.connect(on_error)
-        worker.stream.connect(self._on_answer_chunk)
-        thread.started.connect(worker.run)
-        thread.finished.connect(thread.deleteLater)
-        self._threads.append(thread)
-        self._workers.append(worker)
-        thread.finished.connect(lambda: self._workers.remove(worker) if worker in self._workers else None)
-        thread.start()
-
-    def _on_answer_chunk(self, chunk: str):
-        self._answer_output.moveCursor(QTextCursor.MoveOperation.End)
-        self._answer_output.insertPlainText(chunk)
-        sb = self._answer_output.verticalScrollBar()
-        sb.setValue(sb.maximum())
-
-    def _refresh_answer_app_picker(self):
-        if not hasattr(self, "_answer_app_picker"):
-            return
-        picker = self._answer_app_picker
-        picker.blockSignals(True)
-        picker.clear()
-        picker.addItem("— Select an application —", None)
-        try:
-            entries = data_store.load().get("applications") or []
-        except Exception:
-            logger.exception("_refresh_answer_app_picker — failed to load applications")
-            entries = []
-        for entry in entries:
-            company = (entry.get("company") or "").strip()
-            role = (entry.get("role") or "").strip()
-            if company and role:
-                label = f"{company} — {role}"
-            else:
-                label = company or role or "(untitled)"
-            picker.addItem(label, entry)
-        picker.setCurrentIndex(0)
-        picker.blockSignals(False)
-
-    def _on_fill_answer_from_application(self, idx: int):
-        if idx <= 0:
-            return
-        entry = self._answer_app_picker.itemData(idx)
-        if not isinstance(entry, dict):
-            return
-        self._answer_company_input.setText(entry.get("company", "") or "")
-        self._answer_jd_input.setPlainText(entry.get("description", "") or "")
-        self._answer_app_picker.blockSignals(True)
-        self._answer_app_picker.setCurrentIndex(0)
-        self._answer_app_picker.blockSignals(False)
+        self._pool.start(
+            StreamWorker.provider(
+                "answer_question_stream",
+                question=question,
+                profile=self._ctx.get_profile(),
+                company_research=research,
+                company_name=company or None,
+                job_description=jd or None,
+            ),
+            chunk=lambda text: append_stream_text(self._output, text),
+            finished=on_finished,
+            error=on_error,
+        )

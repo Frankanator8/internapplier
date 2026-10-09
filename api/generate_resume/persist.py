@@ -237,11 +237,85 @@ def _build_pdf_filename(company: str | None, job_title: str | None) -> str:
     return "resume.pdf"
 
 
+def list_generated_resumes() -> list[tuple[pathlib.Path, str]]:
+    """Saved resume PDFs in the output folder, newest first, with display labels."""
+    out_dir = get_resume_output_dir()
+    if not out_dir.exists():
+        return []
+    try:
+        pdfs = sorted(out_dir.glob("*.pdf"), key=lambda p: p.stat().st_mtime, reverse=True)
+    except OSError:
+        return []
+    result = []
+    for p in pdfs:
+        stem = p.stem.removesuffix("_resume")  # older builds named files *_resume.pdf
+        result.append((p, stem.replace("_", " ").replace("-", " ").strip().title() or p.name))
+    return result
+
+
+def tex_sidecar(pdf: pathlib.Path | str) -> pathlib.Path:
+    """Return the ``.tex`` path that sits next to ``pdf``."""
+    return pathlib.Path(pdf).with_suffix(".tex")
+
+
+def write_tex_sidecar(pdf: pathlib.Path | str, latex: str) -> None:
+    """Write ``latex`` to the sidecar next to ``pdf``."""
+    path = tex_sidecar(pdf)
+    path.write_text(latex, encoding="utf-8")
+    logger.info("write_tex_sidecar — wrote %s", path)
+
+
+def read_tex_sidecar(pdf: pathlib.Path | str) -> str | None:
+    """Return sidecar LaTeX, or ``None`` if it is missing or unreadable."""
+    path = tex_sidecar(pdf)
+    try:
+        if not path.is_file():
+            return None
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        logger.exception("read_tex_sidecar — failed to read %s", path)
+        return None
+
+
+def remove_tex_sidecar(pdf: pathlib.Path | str) -> None:
+    """Delete the sidecar next to ``pdf`` if it exists."""
+    path = tex_sidecar(pdf)
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        logger.exception("remove_tex_sidecar — failed to remove %s", path)
+
+
+def move_persisted_resume(src: pathlib.Path | str, dest: pathlib.Path | str) -> None:
+    """Move a library PDF and its ``.tex`` sidecar, replacing ``dest``.
+
+    If ``src`` has no sidecar, any existing dest sidecar is removed so the
+    overwritten PDF is not paired with stale source.
+    """
+    src_pdf = pathlib.Path(src)
+    dest_pdf = pathlib.Path(dest)
+    dest_pdf.parent.mkdir(parents=True, exist_ok=True)
+    if src_pdf.resolve() == dest_pdf.resolve():
+        return
+
+    src_tex = tex_sidecar(src_pdf)
+    dest_tex = tex_sidecar(dest_pdf)
+    shutil.move(str(src_pdf), str(dest_pdf))
+    logger.info("move_persisted_resume — PDF %s → %s", src_pdf, dest_pdf)
+    if src_tex.is_file():
+        shutil.move(str(src_tex), str(dest_tex))
+        logger.info("move_persisted_resume — tex %s → %s", src_tex, dest_tex)
+    elif dest_tex.exists():
+        dest_tex.unlink()
+        logger.info("move_persisted_resume — removed stale dest sidecar %s", dest_tex)
+
+
 def persist_pdf(
     src: pathlib.Path | None,
     dest: pathlib.Path | str | None,
     company: str | None = None,
     job_title: str | None = None,
+    latex: str | None = None,
 ) -> tuple[pathlib.Path | None, pathlib.Path | None, bool]:
     """Copy ``src`` to the output location.
 
@@ -249,6 +323,9 @@ def persist_pdf(
     preferred filename already exists, the file is written with a short
     UUID suffix and ``had_collision`` is True so the caller can prompt
     the user.
+
+    When ``latex`` is non-empty, a ``.tex`` sidecar is written next to the
+    **written** PDF (including UUID-suffixed collision names).
     """
     if src is None or not src.exists():
         return None, None, False
@@ -257,6 +334,8 @@ def persist_pdf(
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(src, target)
         logger.info("persist_pdf — PDF written to %s", target)
+        if latex:
+            write_tex_sidecar(target, latex)
         return target, target, False
 
     out_dir = get_resume_output_dir()
@@ -270,4 +349,6 @@ def persist_pdf(
         target = desired
     shutil.copyfile(src, target)
     logger.info("persist_pdf — PDF written to %s", target)
+    if latex:
+        write_tex_sidecar(target, latex)
     return target, desired, collided
